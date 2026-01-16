@@ -10,6 +10,8 @@ import { contextTools, contextHandlers } from './handlers/context';
 import { queryTools, queryHandlers } from './handlers/query';
 import { vectorTools, vectorHandlers } from './handlers/vector';
 import { sessionTools, sessionHandlers } from './handlers/session';
+import { learningTools, learningHandlers } from './handlers/learning';
+import { analyticsTools, analyticsHandlers } from './handlers/analytics';
 import type { ToolDefinition, ToolHandler } from '../types';
 
 // Aggregate all tools
@@ -21,6 +23,8 @@ export const allTools: ToolDefinition[] = [
   ...queryTools,    // SQLite query tools
   ...vectorTools,   // Vector search tools
   ...sessionTools,  // Session persistence tools
+  ...learningTools, // Learning management tools
+  ...analyticsTools, // Analytics and export tools
 ];
 
 // Aggregate all handlers
@@ -32,6 +36,8 @@ export const allHandlers: Record<string, ToolHandler> = {
   ...queryHandlers,  // SQLite query handlers
   ...vectorHandlers, // Vector search handlers
   ...sessionHandlers, // Session persistence handlers
+  ...learningHandlers, // Learning management handlers
+  ...analyticsHandlers, // Analytics and export handlers
 };
 
 // Dynamic registration for Phase 1/2 tools

@@ -7,7 +7,14 @@
     "download-model": "bun run scripts/download-embedding-model.ts",
     "test:embeddings": "bun run scripts/test-embeddings.ts",
     "test:transformers": "bun run scripts/test-embeddings.ts transformers",
-    "test:semantic": "bun run scripts/test-semantic-search.ts"
+    "test:semantic": "bun run scripts/test-semantic-search.ts",
+    "memory": "bun run scripts/memory/index.ts",
+    "memory:save": "bun run scripts/memory/save-session.ts",
+    "memory:recall": "bun run scripts/memory/recall.ts",
+    "memory:export": "bun run scripts/memory/export.ts",
+    "memory:stats": "bun run scripts/memory/stats.ts",
+    "memory:list": "bun run scripts/memory/list.ts",
+    "memory:context": "bun run scripts/memory/context.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

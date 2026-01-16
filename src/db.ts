@@ -85,6 +85,74 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id)`);
 
+// ============ Session Memory Schema ============
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    previous_session_id TEXT,
+    summary TEXT NOT NULL,
+    full_context TEXT,
+    duration_mins INTEGER,
+    commits_count INTEGER,
+    tags TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (previous_session_id) REFERENCES sessions(id)
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS learnings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    context TEXT,
+    source_session_id TEXT,
+    confidence TEXT DEFAULT 'medium' CHECK(confidence IN ('low', 'medium', 'high', 'proven')),
+    times_validated INTEGER DEFAULT 1,
+    last_validated_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_session_id) REFERENCES sessions(id)
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS session_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_session_id TEXT NOT NULL,
+    to_session_id TEXT NOT NULL,
+    link_type TEXT NOT NULL,
+    similarity_score REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (from_session_id) REFERENCES sessions(id),
+    FOREIGN KEY (to_session_id) REFERENCES sessions(id),
+    UNIQUE(from_session_id, to_session_id)
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS learning_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_learning_id INTEGER NOT NULL,
+    to_learning_id INTEGER NOT NULL,
+    link_type TEXT NOT NULL,
+    similarity_score REAL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (from_learning_id) REFERENCES learnings(id),
+    FOREIGN KEY (to_learning_id) REFERENCES learnings(id),
+    UNIQUE(from_learning_id, to_learning_id)
+  )
+`);
+
+// Session memory indexes
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_tags ON sessions(tags)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_category ON learnings(category)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_confidence ON learnings(confidence)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_session_links_from ON session_links(from_session_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learning_links_from ON learning_links(from_learning_id)`);
+
 // ============ Agent Functions ============
 
 export function registerAgent(id: number, paneId: string, pid: number, name?: string) {
@@ -362,5 +430,321 @@ export function getDashboardData() {
     recentMessages,
     recentEvents,
     taskStats,
+  };
+}
+
+// ============ Session Memory Functions ============
+
+export interface FullContext {
+  what_worked?: string[];
+  what_didnt_work?: string[];
+  learnings?: string[];
+  future_ideas?: string[];
+  key_decisions?: string[];
+  blockers_resolved?: string[];
+}
+
+export interface SessionRecord {
+  id: string;
+  previous_session_id?: string;
+  summary: string;
+  full_context?: FullContext;
+  duration_mins?: number;
+  commits_count?: number;
+  tags?: string[];
+  created_at?: string;
+}
+
+export function createSession(session: SessionRecord): void {
+  db.run(
+    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      session.id,
+      session.previous_session_id || null,
+      session.summary,
+      session.full_context ? JSON.stringify(session.full_context) : null,
+      session.duration_mins || null,
+      session.commits_count || null,
+      session.tags?.join(',') || null,
+    ]
+  );
+}
+
+export function getSessionById(sessionId: string): SessionRecord | null {
+  const row = db.query(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as any;
+  if (!row) return null;
+  return {
+    ...row,
+    full_context: row.full_context ? JSON.parse(row.full_context) : null,
+    tags: row.tags ? row.tags.split(',') : [],
+  };
+}
+
+export function listSessionsFromDb(options?: { tag?: string; since?: string; limit?: number }): SessionRecord[] {
+  const { tag, since, limit = 20 } = options || {};
+  let query = `SELECT * FROM sessions WHERE 1=1`;
+  const params: any[] = [];
+
+  if (tag) {
+    query += ` AND tags LIKE ?`;
+    params.push(`%${tag}%`);
+  }
+  if (since) {
+    query += ` AND created_at >= ?`;
+    params.push(since);
+  }
+  query += ` ORDER BY created_at DESC LIMIT ?`;
+  params.push(limit);
+
+  const rows = db.query(query).all(...params) as any[];
+  return rows.map(row => ({
+    ...row,
+    full_context: row.full_context ? JSON.parse(row.full_context) : null,
+    tags: row.tags ? row.tags.split(',') : [],
+  }));
+}
+
+// ============ Learning Functions ============
+
+export interface LearningRecord {
+  id?: number;
+  category: string;
+  title: string;
+  description?: string;
+  context?: string;
+  source_session_id?: string;
+  confidence?: 'low' | 'medium' | 'high' | 'proven';
+  times_validated?: number;
+  last_validated_at?: string;
+  created_at?: string;
+}
+
+export function createLearning(learning: LearningRecord): number {
+  const result = db.run(
+    `INSERT INTO learnings (category, title, description, context, source_session_id, confidence)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      learning.category,
+      learning.title,
+      learning.description || null,
+      learning.context || null,
+      learning.source_session_id || null,
+      learning.confidence || 'medium',
+    ]
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export function getLearningById(learningId: number): LearningRecord | null {
+  return db.query(`SELECT * FROM learnings WHERE id = ?`).get(learningId) as LearningRecord | null;
+}
+
+export function listLearningsFromDb(options?: { category?: string; confidence?: string; limit?: number }): LearningRecord[] {
+  const { category, confidence, limit = 50 } = options || {};
+  let query = `SELECT * FROM learnings WHERE 1=1`;
+  const params: any[] = [];
+
+  if (category) {
+    query += ` AND category = ?`;
+    params.push(category);
+  }
+  if (confidence) {
+    query += ` AND confidence = ?`;
+    params.push(confidence);
+  }
+  query += ` ORDER BY times_validated DESC, created_at DESC LIMIT ?`;
+  params.push(limit);
+
+  return db.query(query).all(...params) as LearningRecord[];
+}
+
+export function validateLearning(learningId: number): LearningRecord | null {
+  const learning = getLearningById(learningId);
+  if (!learning) return null;
+
+  const newCount = (learning.times_validated || 1) + 1;
+  let newConfidence = learning.confidence || 'medium';
+
+  // Confidence progression
+  if (newCount >= 5) newConfidence = 'proven';
+  else if (newCount >= 3) newConfidence = 'high';
+  else if (newCount >= 2) newConfidence = 'medium';
+
+  db.run(
+    `UPDATE learnings SET times_validated = ?, confidence = ?, last_validated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [newCount, newConfidence, learningId]
+  );
+
+  return getLearningById(learningId);
+}
+
+export function getLearningsBySession(sessionId: string): LearningRecord[] {
+  return db.query(
+    `SELECT * FROM learnings WHERE source_session_id = ? ORDER BY created_at`
+  ).all(sessionId) as LearningRecord[];
+}
+
+// ============ Link Functions ============
+
+export function createSessionLink(fromId: string, toId: string, linkType: string, similarity?: number): boolean {
+  try {
+    db.run(
+      `INSERT OR IGNORE INTO session_links (from_session_id, to_session_id, link_type, similarity_score)
+       VALUES (?, ?, ?, ?)`,
+      [fromId, toId, linkType, similarity || null]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function createLearningLink(fromId: number, toId: number, linkType: string, similarity?: number): boolean {
+  try {
+    db.run(
+      `INSERT OR IGNORE INTO learning_links (from_learning_id, to_learning_id, link_type, similarity_score)
+       VALUES (?, ?, ?, ?)`,
+      [fromId, toId, linkType, similarity || null]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getLinkedSessions(sessionId: string): Array<{ session: SessionRecord; link_type: string; similarity?: number }> {
+  const links = db.query(
+    `SELECT s.*, sl.link_type, sl.similarity_score
+     FROM sessions s
+     JOIN session_links sl ON s.id = sl.to_session_id
+     WHERE sl.from_session_id = ?`
+  ).all(sessionId) as any[];
+
+  return links.map(row => ({
+    session: {
+      ...row,
+      full_context: row.full_context ? JSON.parse(row.full_context) : null,
+      tags: row.tags ? row.tags.split(',') : [],
+    },
+    link_type: row.link_type,
+    similarity: row.similarity_score,
+  }));
+}
+
+export function getLinkedLearnings(learningId: number): Array<{ learning: LearningRecord; link_type: string; similarity?: number }> {
+  const links = db.query(
+    `SELECT l.*, ll.link_type, ll.similarity_score
+     FROM learnings l
+     JOIN learning_links ll ON l.id = ll.to_learning_id
+     WHERE ll.from_learning_id = ?`
+  ).all(learningId) as any[];
+
+  return links.map(row => ({
+    learning: row as LearningRecord,
+    link_type: row.link_type,
+    similarity: row.similarity_score,
+  }));
+}
+
+// ============ Analytics Functions ============
+
+export function getSessionStats() {
+  const total = db.query(`SELECT COUNT(*) as count FROM sessions`).get() as { count: number };
+  const avgDuration = db.query(`SELECT AVG(duration_mins) as avg FROM sessions WHERE duration_mins IS NOT NULL`).get() as { avg: number };
+  const totalCommits = db.query(`SELECT SUM(commits_count) as sum FROM sessions WHERE commits_count IS NOT NULL`).get() as { sum: number };
+
+  // Sessions this week and month
+  const thisWeek = db.query(`
+    SELECT COUNT(*) as count FROM sessions
+    WHERE created_at >= datetime('now', '-7 days')
+  `).get() as { count: number };
+
+  const thisMonth = db.query(`
+    SELECT COUNT(*) as count FROM sessions
+    WHERE created_at >= datetime('now', '-30 days')
+  `).get() as { count: number };
+
+  // Sessions by month
+  const sessionsByMonth = db.query(`
+    SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as count
+    FROM sessions
+    GROUP BY month
+    ORDER BY month DESC
+    LIMIT 12
+  `).all() as { month: string; count: number }[];
+
+  // Top tags
+  const sessions = db.query(`SELECT tags FROM sessions WHERE tags IS NOT NULL`).all() as { tags: string }[];
+  const tagCounts: Record<string, number> = {};
+  for (const s of sessions) {
+    for (const tag of s.tags.split(',')) {
+      const t = tag.trim();
+      if (t) tagCounts[t] = (tagCounts[t] || 0) + 1;
+    }
+  }
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([tag, count]) => ({ tag, count }));
+
+  return {
+    total_sessions: total.count,
+    avg_duration_mins: avgDuration.avg ? Math.round(avgDuration.avg) : null,
+    total_commits: totalCommits.sum || 0,
+    sessions_this_week: thisWeek.count,
+    sessions_this_month: thisMonth.count,
+    sessions_by_month: sessionsByMonth,
+    top_tags: topTags,
+  };
+}
+
+export function getImprovementReport() {
+  const totalLearnings = db.query(`SELECT COUNT(*) as count FROM learnings`).get() as { count: number };
+
+  // By category (aggregated)
+  const byCategory = db.query(`
+    SELECT category, COUNT(*) as count
+    FROM learnings
+    GROUP BY category
+    ORDER BY count DESC
+  `).all() as { category: string; count: number }[];
+
+  // By confidence level
+  const byConfidence = db.query(`
+    SELECT confidence, COUNT(*) as count
+    FROM learnings
+    GROUP BY confidence
+    ORDER BY
+      CASE confidence
+        WHEN 'proven' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+      END
+  `).all() as { confidence: string; count: number }[];
+
+  // Recently validated learnings
+  const recentlyValidated = db.query(`
+    SELECT * FROM learnings
+    WHERE last_validated_at IS NOT NULL
+    ORDER BY last_validated_at DESC
+    LIMIT 5
+  `).all() as LearningRecord[];
+
+  // Proven learnings (best practices)
+  const provenLearnings = db.query(`
+    SELECT * FROM learnings
+    WHERE confidence = 'proven'
+    ORDER BY times_validated DESC
+    LIMIT 10
+  `).all() as LearningRecord[];
+
+  return {
+    total_learnings: totalLearnings.count,
+    by_category: byCategory,
+    by_confidence: byConfidence,
+    recently_validated: recentlyValidated,
+    proven_learnings: provenLearnings,
   };
 }

@@ -25,6 +25,41 @@ echo '{"id":"task1","prompt":"Your task here"}' > /tmp/agent_inbox/1/task1.json
 cat /tmp/agent_outbox/1/*.json
 ```
 
+## Memory Commands (Slash-style)
+
+Use these to manage session context and learnings:
+
+```bash
+# Save session context before /clear
+bun memory save
+
+# Search past sessions and learnings
+bun memory recall "embedding performance"
+
+# Export learnings to markdown
+bun memory export [path]
+
+# View statistics
+bun memory stats
+
+# List recent sessions or learnings
+bun memory list sessions
+bun memory list learnings
+
+# Get context bundle for new session
+bun memory context ["query"]
+```
+
+Or use the direct scripts:
+```bash
+bun run memory:save
+bun run memory:recall "query"
+bun run memory:export
+bun run memory:stats
+bun run memory:list sessions
+bun run memory:context
+```
+
 ## Architecture
 
 ```
@@ -55,11 +90,17 @@ cat /tmp/agent_outbox/1/*.json
 | `src/claude-agent.ts` | Wrapper for running `claude -p` CLI |
 | `src/agent-watcher.ts` | Watches inbox, runs Claude CLI, writes results |
 | `src/mcp-server.ts` | MCP server with orchestration tools |
-| `src/db.ts` | SQLite schema for agent status/messages |
+| `src/db.ts` | SQLite schema for agents, sessions, learnings |
+| `src/vector-db.ts` | ChromaDB integration with auto-linking |
+| `src/mcp/tools/handlers/session.ts` | Session persistence tools |
+| `src/mcp/tools/handlers/learning.ts` | Learning management tools |
+| `src/mcp/tools/handlers/analytics.ts` | Stats and export tools |
 | `spawn_claude_agents.sh` | Launches real Claude agents in tmux |
+| `LEARNINGS.md` | Auto-generated learnings documentation |
 
 ## MCP Tools Available
 
+### Agent Orchestration
 | Tool | Arguments | Description |
 |------|-----------|-------------|
 | `assign_task` | agent_id, task, context? | Send task to specific agent |
@@ -68,6 +109,33 @@ cat /tmp/agent_outbox/1/*.json
 | `get_agents` | none | List agents with status |
 | `update_shared_context` | content | Update shared context |
 | `get_all_results` | agent_id | Get all results from agent |
+
+### Session Memory
+| Tool | Arguments | Description |
+|------|-----------|-------------|
+| `save_session` | summary, full_context?, tags?, duration_mins?, commits_count? | Save session with auto-linking |
+| `recall_session` | query, limit? | Semantic search past sessions |
+| `get_session` | session_id | Get full session details + links |
+| `list_sessions` | tag?, since?, limit? | List sessions with filters |
+| `link_sessions` | from_id, to_id, link_type | Create session relationship |
+
+### Learnings
+| Tool | Arguments | Description |
+|------|-----------|-------------|
+| `add_learning` | category, title, description?, context? | Add learning with auto-linking |
+| `recall_learnings` | query, category?, limit? | Semantic search learnings |
+| `get_learning` | learning_id | Get learning details + links |
+| `list_learnings` | category?, confidence?, limit? | List learnings with filters |
+| `validate_learning` | learning_id | Increase confidence level |
+| `link_learnings` | from_id, to_id, link_type | Create learning relationship |
+
+### Analytics
+| Tool | Arguments | Description |
+|------|-----------|-------------|
+| `get_session_stats` | none | Session statistics |
+| `get_improvement_report` | none | Learning confidence distribution |
+| `get_context_bundle` | query?, include_learnings?, include_recent_sessions? | Context bundle for new session |
+| `export_learnings` | output_path?, format? | Export to LEARNINGS.md or JSON |
 
 ## Task JSON Format
 
@@ -96,3 +164,52 @@ agents.db                        # SQLite database for status
 - Results are JSON files in `/tmp/agent_outbox/{id}/`
 - SQLite tracks agent status and message history
 - MCP server provides structured tool access
+
+## Memory System
+
+The enhanced session memory system captures context across sessions:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    MCP Tools Layer                       │
+│  save_session | recall_session | add_learning | export   │
+└────────────────────────┬─────────────────────────────────┘
+                         │
+         ┌───────────────┼───────────────┐
+         ▼               ▼               ▼
+   ┌──────────┐   ┌──────────────┐  ┌─────────────┐
+   │ SQLite   │   │   ChromaDB   │  │ LEARNINGS.md│
+   │ (Truth)  │◄──│   (Search)   │  │   (Human)   │
+   └──────────┘   └──────────────┘  └─────────────┘
+```
+
+**SQLite Tables:**
+- `sessions` - Full session context with what_worked, learnings, etc.
+- `learnings` - Accumulated knowledge with confidence levels
+- `session_links` - Relationships between sessions
+- `learning_links` - Relationships between learnings
+
+**Auto-Linking:**
+- Similarity > 0.85 = automatic link
+- Similarity 0.70-0.85 = suggested link
+
+**Confidence Progression:**
+```
+low → medium → high → proven
+```
+Use `validate_learning` to increase confidence based on validation count.
+
+**Workflow:**
+```bash
+# Before /clear - save context
+bun memory save
+
+# In new session - get context
+bun memory context "what you're working on"
+
+# Search for relevant past work
+bun memory recall "embeddings"
+
+# Export learnings periodically
+bun memory export
+```

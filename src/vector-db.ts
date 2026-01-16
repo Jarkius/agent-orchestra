@@ -46,6 +46,7 @@ interface VectorCollections {
   messagesOut: Collection;
   context: Collection;
   sessions: Collection;
+  learnings: Collection;
 }
 
 let collections: VectorCollections | null = null;
@@ -90,9 +91,14 @@ export async function initVectorDB(): Promise<void> {
         metadata: { "hnsw:space": "cosine" },
         embeddingFunction: embedFn,
       }),
+      learnings: await chromaClient.getOrCreateCollection({
+        name: "orchestrator_learnings",
+        metadata: { "hnsw:space": "cosine" },
+        embeddingFunction: embedFn,
+      }),
     };
     initialized = true;
-    console.error("[VectorDB] Initialized with 6 collections");
+    console.error("[VectorDB] Initialized with 7 collections");
   } catch (error) {
     console.error("[VectorDB] Failed to initialize:", error);
     throw error;
@@ -363,6 +369,8 @@ export async function getCollectionStats(): Promise<Record<string, number>> {
     cols.sessions.count(),
   ]);
 
+  const learnings = await cols.learnings.count();
+
   return {
     task_prompts: tasks,
     task_results: results,
@@ -370,6 +378,7 @@ export async function getCollectionStats(): Promise<Record<string, number>> {
     messages_outbound: messagesOut,
     shared_context: context,
     orchestrator_sessions: sessions,
+    orchestrator_learnings: learnings,
   };
 }
 
@@ -432,6 +441,140 @@ export async function listSessions(limit = 10): Promise<{
   };
 }
 
+// ============ LEARNING PERSISTENCE ============
+
+export async function saveLearning(
+  learningId: number,
+  title: string,
+  description: string,
+  metadata: { category: string; confidence: string; source_session_id?: string; created_at: string }
+): Promise<void> {
+  const cols = ensureInitialized();
+  try {
+    const content = `${title}. ${description}`;
+    const chromaMetadata: Record<string, string | number | boolean> = {
+      category: metadata.category,
+      confidence: metadata.confidence,
+      source_session_id: metadata.source_session_id || '',
+      created_at: metadata.created_at,
+    };
+
+    await cols.learnings.add({
+      ids: [String(learningId)],
+      documents: [content],
+      metadatas: [chromaMetadata],
+    });
+  } catch (error) {
+    console.error(`[VectorDB] Failed to save learning ${learningId}:`, error);
+    throw error;
+  }
+}
+
+export async function searchLearnings(
+  query: string,
+  limit = 5,
+  category?: string
+): Promise<SearchResult> {
+  const cols = ensureInitialized();
+  const where = category ? { category } : undefined;
+  return await cols.learnings.query({
+    queryTexts: [query],
+    nResults: limit,
+    where,
+  }) as SearchResult;
+}
+
+export async function listLearningsFromVector(limit = 20): Promise<{
+  ids: string[];
+  contents: (string | null)[];
+  metadatas: (Record<string, unknown> | null)[];
+}> {
+  const cols = ensureInitialized();
+  const result = await cols.learnings.get({ limit });
+  return {
+    ids: result.ids,
+    contents: result.documents,
+    metadatas: result.metadatas,
+  };
+}
+
+// ============ AUTO-LINKING ============
+
+export interface AutoLinkResult {
+  autoLinked: Array<{ id: string; similarity: number }>;
+  suggested: Array<{ id: string; similarity: number; summary?: string }>;
+}
+
+export async function findSimilarSessions(
+  content: string,
+  excludeId?: string,
+  limit = 5
+): Promise<AutoLinkResult> {
+  const cols = ensureInitialized();
+  const results = await cols.sessions.query({
+    queryTexts: [content],
+    nResults: limit + 1, // +1 to account for self if present
+  });
+
+  const autoLinked: AutoLinkResult['autoLinked'] = [];
+  const suggested: AutoLinkResult['suggested'] = [];
+
+  const ids = results.ids[0] || [];
+  const distances = results.distances?.[0] || [];
+  const documents = results.documents[0] || [];
+
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (id === excludeId) continue;
+
+    const distance = distances[i];
+    const similarity = 1 - distance; // ChromaDB returns distance, not similarity
+
+    if (similarity > 0.85) {
+      autoLinked.push({ id, similarity });
+    } else if (similarity > 0.70) {
+      suggested.push({ id, similarity, summary: documents[i]?.substring(0, 100) });
+    }
+  }
+
+  return { autoLinked, suggested };
+}
+
+export async function findSimilarLearnings(
+  content: string,
+  excludeId?: number,
+  limit = 5
+): Promise<AutoLinkResult> {
+  const cols = ensureInitialized();
+  const results = await cols.learnings.query({
+    queryTexts: [content],
+    nResults: limit + 1,
+  });
+
+  const autoLinked: AutoLinkResult['autoLinked'] = [];
+  const suggested: AutoLinkResult['suggested'] = [];
+
+  const ids = results.ids[0] || [];
+  const distances = results.distances?.[0] || [];
+  const documents = results.documents[0] || [];
+
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (excludeId && id === String(excludeId)) continue;
+
+    const distance = distances[i];
+    const similarity = 1 - distance;
+
+    if (similarity > 0.85) {
+      autoLinked.push({ id, similarity });
+    } else if (similarity > 0.70) {
+      suggested.push({ id, similarity, summary: documents[i]?.substring(0, 100) });
+    }
+  }
+
+  return { autoLinked, suggested };
+}
+
 export function isInitialized(): boolean {
   return initialized;
 }
@@ -449,7 +592,9 @@ export async function resetVectorCollections(): Promise<void> {
     'task_results',
     'messages_inbound',
     'messages_outbound',
-    'shared_context'
+    'shared_context',
+    'orchestrator_sessions',
+    'orchestrator_learnings',
   ];
 
   for (const name of collectionNames) {
