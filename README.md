@@ -80,21 +80,91 @@ The `.mcp.json` file is already configured. Enable it in Claude Code:
 
 Then restart Claude Code in this directory.
 
+## Semantic Search & Embeddings
+
+The system includes a vector database (ChromaDB) for semantic search across tasks, results, and messages. Two embedding providers are available:
+
+### Embedding Providers
+
+| Provider | Model | Dims | Init Time | Query Time | Best For |
+|----------|-------|------|-----------|------------|----------|
+| **fastembed** (default) | bge-small-en-v1.5 | 384 | ~280ms | ~70ms | Simplicity, low memory |
+| **transformers** | bge-small-en-v1.5 | 384 | ~2.6s | ~2ms | Fast queries after init |
+
+### Configuration
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+# Choose provider: "fastembed" (default) or "transformers"
+EMBEDDING_PROVIDER=fastembed
+
+# Model (both providers support the same models)
+EMBEDDING_MODEL=bge-small-en-v1.5
+
+# ChromaDB server URL
+CHROMA_URL=http://localhost:8000
+```
+
+### Available Models
+
+| Model | Provider | Dimensions | Notes |
+|-------|----------|------------|-------|
+| `bge-small-en-v1.5` | Both | 384 | Default, fast, good quality |
+| `bge-base-en-v1.5` | Both | 768 | Higher quality, slower |
+| `all-minilm-l6-v2` | Both | 384 | Classic, well-tested |
+| `nomic-embed-text-v1` | transformers | 768 | Higher quality |
+| `nomic-embed-text-v1.5` | transformers | 768 | Matryoshka support |
+
+### Testing Embeddings
+
+```bash
+# Test default provider (fastembed)
+bun run test:fastembed
+
+# Test Transformers.js provider
+bun run test:transformers
+
+# Compare both providers
+bun run test:compare
+
+# Test semantic search with ChromaDB
+bun run test:semantic
+```
+
+### Pre-download Models
+
+```bash
+# Download fastembed model (~33MB, first run)
+bun run download-model
+
+# Transformers.js models download automatically on first use
+```
+
 ## File Structure
 
 ```
 test-spawns/
 ├── src/
-│   ├── claude-agent.ts    # Claude CLI wrapper
-│   ├── agent-watcher.ts   # Inbox watcher for agents
-│   ├── mcp-server.ts      # MCP server for orchestration
-│   ├── orchestrator.ts    # Dashboard UI
-│   └── db.ts              # SQLite helpers
-├── spawn_claude_agents.sh # Launch real Claude agents
-├── spawn_mcp.sh           # Launch MCP-enabled agents
-├── .mcp.json              # MCP server config
-├── LEARNING.md            # Evolution journey documentation
-└── CLAUDE.md              # Claude Code guidance
+│   ├── embeddings/           # Embedding providers
+│   │   ├── index.ts          # Factory & config
+│   │   ├── fastembed-provider.ts   # FastEmbed (ONNX)
+│   │   └── transformers-provider.ts # Transformers.js
+│   ├── vector-db.ts          # ChromaDB integration
+│   ├── claude-agent.ts       # Claude CLI wrapper
+│   ├── agent-watcher.ts      # Inbox watcher for agents
+│   ├── db.ts                 # SQLite helpers
+│   └── mcp/                  # MCP server & tools
+├── scripts/
+│   ├── test-embeddings.ts    # Provider comparison tests
+│   ├── test-semantic-search.ts # ChromaDB integration test
+│   └── download-embedding-model.ts # Pre-download model
+├── spawn_claude_agents.sh    # Launch real Claude agents
+├── spawn_mcp.sh              # Launch MCP-enabled agents
+├── .env.example              # Environment configuration
+├── .mcp.json                 # MCP server config
+├── LEARNING.md               # Evolution journey documentation
+└── CLAUDE.md                 # Claude Code guidance
 ```
 
 ---

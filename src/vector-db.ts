@@ -8,96 +8,19 @@
  * - messages_inbound: Orchestrator → Agent communication
  * - messages_outbound: Agent → Orchestrator communication
  * - shared_context: Version history of shared context
+ *
+ * Embedding Providers (set via EMBEDDING_PROVIDER env var):
+ * - fastembed: Local ONNX models (bge-small-en-v1.5, default)
+ * - transformers: Transformers.js (nomic, bge, minilm)
  */
 
 import { ChromaClient, type Collection, type IEmbeddingFunction } from 'chromadb';
-import { EmbeddingModel, FlagEmbedding } from "fastembed";
-
-// FastEmbed configuration from environment
-const FASTEMBED_CONFIG = {
-  model: process.env.FASTEMBED_MODEL || "BGESmallENV15",
-  cacheDir: process.env.FASTEMBED_CACHE_DIR,
-  batchSize: parseInt(process.env.FASTEMBED_BATCH_SIZE || "32"),
-};
-
-// FastEmbed embedding function using local ONNX models
-// Default model: bge-small-en-v1.5 (384 dims, ~33MB, 91.2 MTEB score)
-class FastEmbedFunction implements IEmbeddingFunction {
-  private model: FlagEmbedding | null = null;
-  private initPromise: Promise<void> | null = null;
-  private initError: Error | null = null;
-
-  async generate(texts: string[]): Promise<number[][]> {
-    await this.ensureInitialized();
-    if (texts.length === 0) return [];
-
-    try {
-      const allEmbeddings: number[][] = [];
-      for await (const batch of this.model!.embed(texts, FASTEMBED_CONFIG.batchSize)) {
-        // Convert Float32Array to regular number[] for ChromaDB compatibility
-        for (const embedding of batch) {
-          allEmbeddings.push(Array.from(embedding));
-        }
-      }
-      return allEmbeddings;
-    } catch (error) {
-      console.error("[FastEmbed] Embedding failed:", error);
-      throw new Error(`Failed to generate embeddings: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  private async ensureInitialized(): Promise<void> {
-    if (this.initError) {
-      throw this.initError;
-    }
-    if (this.model) return;
-    if (!this.initPromise) {
-      this.initPromise = this.initializeModel();
-    }
-    await this.initPromise;
-  }
-
-  private async initializeModel(): Promise<void> {
-    try {
-      console.error("[FastEmbed] Initializing model...");
-      const startTime = Date.now();
-
-      const modelMap: Record<string, EmbeddingModel> = {
-        "BGESmallENV15": EmbeddingModel.BGESmallENV15,
-        "BGESmallEN": EmbeddingModel.BGESmallEN,
-        "BGEBaseEN": EmbeddingModel.BGEBaseEN,
-        "BGEBaseENV15": EmbeddingModel.BGEBaseENV15,
-        "AllMiniLML6V2": EmbeddingModel.AllMiniLML6V2,
-      };
-
-      const selectedModel = modelMap[FASTEMBED_CONFIG.model] || EmbeddingModel.BGESmallENV15;
-      if (!modelMap[FASTEMBED_CONFIG.model]) {
-        console.error(`[FastEmbed] Unknown model "${FASTEMBED_CONFIG.model}", using BGESmallENV15`);
-      }
-
-      this.model = await FlagEmbedding.init({
-        model: selectedModel,
-        cacheDir: FASTEMBED_CONFIG.cacheDir,
-      });
-
-      const duration = Date.now() - startTime;
-      console.error(`[FastEmbed] Model initialized in ${duration}ms`);
-    } catch (error) {
-      this.initError = error instanceof Error ? error : new Error(String(error));
-      console.error("[FastEmbed] Failed to initialize:", this.initError);
-      throw this.initError;
-    }
-  }
-
-  isReady(): boolean {
-    return this.model !== null && this.initError === null;
-  }
-}
+import { createEmbeddingFunction, getEmbeddingConfig } from './embeddings';
 
 // ChromaDB client - connects to server at localhost:8000
 // Start server with: chroma run --path ./chroma_data
 let client: ChromaClient | null = null;
-let embeddingFunction: FastEmbedFunction | null = null;
+let embeddingFunction: IEmbeddingFunction | null = null;
 
 function getClient(): ChromaClient {
   if (!client) {
@@ -108,9 +31,11 @@ function getClient(): ChromaClient {
   return client;
 }
 
-function getEmbeddingFunction(): FastEmbedFunction {
+async function getEmbeddingFunction(): Promise<IEmbeddingFunction> {
   if (!embeddingFunction) {
-    embeddingFunction = new FastEmbedFunction();
+    const config = getEmbeddingConfig();
+    console.error(`[VectorDB] Using embedding provider: ${config.provider}`);
+    embeddingFunction = await createEmbeddingFunction(config);
   }
   return embeddingFunction;
 }
@@ -133,7 +58,7 @@ export async function initVectorDB(): Promise<void> {
 
   try {
     const chromaClient = getClient();
-    const embedFn = getEmbeddingFunction();
+    const embedFn = await getEmbeddingFunction();
     collections = {
       tasks: await chromaClient.getOrCreateCollection({
         name: "task_prompts",
@@ -482,7 +407,18 @@ export async function resetVectorCollections(): Promise<void> {
  * Call at startup to avoid initialization delay on first embedding.
  */
 export async function preloadEmbeddingModel(): Promise<void> {
-  const embedFn = getEmbeddingFunction();
+  const embedFn = await getEmbeddingFunction();
   await embedFn.generate(["warmup"]); // Trigger initialization
   console.error("[VectorDB] Embedding model pre-loaded");
+}
+
+/**
+ * Get current embedding provider info
+ */
+export function getEmbeddingProviderInfo(): { provider: string; model?: string } {
+  const config = getEmbeddingConfig();
+  return {
+    provider: config.provider,
+    model: config.model,
+  };
 }
