@@ -45,6 +45,7 @@ interface VectorCollections {
   messagesIn: Collection;
   messagesOut: Collection;
   context: Collection;
+  sessions: Collection;
 }
 
 let collections: VectorCollections | null = null;
@@ -84,9 +85,14 @@ export async function initVectorDB(): Promise<void> {
         metadata: { "hnsw:space": "cosine" },
         embeddingFunction: embedFn,
       }),
+      sessions: await chromaClient.getOrCreateCollection({
+        name: "orchestrator_sessions",
+        metadata: { "hnsw:space": "cosine" },
+        embeddingFunction: embedFn,
+      }),
     };
     initialized = true;
-    console.error("[VectorDB] Initialized with 5 collections");
+    console.error("[VectorDB] Initialized with 6 collections");
   } catch (error) {
     console.error("[VectorDB] Failed to initialize:", error);
     throw error;
@@ -348,12 +354,13 @@ export async function getRelatedMemory(
 export async function getCollectionStats(): Promise<Record<string, number>> {
   const cols = ensureInitialized();
 
-  const [tasks, results, messagesIn, messagesOut, context] = await Promise.all([
+  const [tasks, results, messagesIn, messagesOut, context, sessions] = await Promise.all([
     cols.tasks.count(),
     cols.results.count(),
     cols.messagesIn.count(),
     cols.messagesOut.count(),
     cols.context.count(),
+    cols.sessions.count(),
   ]);
 
   return {
@@ -362,6 +369,60 @@ export async function getCollectionStats(): Promise<Record<string, number>> {
     messages_inbound: messagesIn,
     messages_outbound: messagesOut,
     shared_context: context,
+    orchestrator_sessions: sessions,
+  };
+}
+
+// ============ SESSION PERSISTENCE ============
+
+export interface SessionMetadata {
+  tags?: string[];
+  created_at: string;
+  [key: string]: unknown;
+}
+
+export async function saveSession(
+  sessionId: string,
+  summary: string,
+  metadata: SessionMetadata
+): Promise<void> {
+  const cols = ensureInitialized();
+  try {
+    await cols.sessions.add({
+      ids: [sessionId],
+      documents: [summary],
+      metadatas: [metadata as Record<string, unknown>],
+    });
+  } catch (error) {
+    console.error(`[VectorDB] Failed to save session ${sessionId}:`, error);
+    throw error;
+  }
+}
+
+export async function searchSessions(
+  query: string,
+  limit = 3
+): Promise<SearchResult> {
+  const cols = ensureInitialized();
+  return await cols.sessions.query({
+    queryTexts: [query],
+    nResults: limit,
+  }) as SearchResult;
+}
+
+export async function listSessions(limit = 10): Promise<{
+  ids: string[];
+  summaries: (string | null)[];
+  metadatas: (Record<string, unknown> | null)[];
+}> {
+  const cols = ensureInitialized();
+  const result = await cols.sessions.get({
+    limit,
+  });
+  return {
+    ids: result.ids,
+    summaries: result.documents,
+    metadatas: result.metadatas,
   };
 }
 
@@ -462,10 +523,10 @@ export async function checkChromaHealth(timeoutMs = 5000): Promise<boolean> {
 }
 
 /**
- * Start ChromaDB server if not running
- * Returns the spawned process or null if already running
+ * Start ChromaDB via Docker if not running
+ * Uses container name 'chromadb' - will start existing or create new
  */
-export async function ensureChromaRunning(): Promise<{ started: boolean; pid?: number }> {
+export async function ensureChromaRunning(): Promise<{ started: boolean; containerId?: string }> {
   const isHealthy = await checkChromaHealth(2000);
 
   if (isHealthy) {
@@ -473,39 +534,65 @@ export async function ensureChromaRunning(): Promise<{ started: boolean; pid?: n
     return { started: false };
   }
 
-  console.error("[VectorDB] Starting ChromaDB server...");
+  console.error("[VectorDB] Starting ChromaDB via Docker...");
 
-  const chromaDataPath = process.env.CHROMA_DATA_PATH || "./chroma_data";
   const chromaPort = process.env.CHROMA_PORT || "8100";
+  const containerName = process.env.CHROMA_CONTAINER || "chromadb";
 
   try {
-    // Spawn ChromaDB in background
-    const proc = Bun.spawn(["chroma", "run", "--path", chromaDataPath, "--port", chromaPort], {
-      stdout: "ignore",
+    // Try to start existing container first
+    const startResult = Bun.spawnSync(["docker", "start", containerName], {
+      stdout: "pipe",
       stderr: "pipe",
-      stdin: "ignore",
     });
 
-    // Wait for it to become healthy (max 30 seconds)
-    const maxWait = 30000;
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < maxWait) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (await checkChromaHealth(1000)) {
-        console.error(`[VectorDB] ChromaDB started (PID: ${proc.pid})`);
-        return { started: true, pid: proc.pid };
-      }
+    if (startResult.exitCode === 0) {
+      // Container existed and started
+      await waitForChromaHealth();
+      console.error(`[VectorDB] ChromaDB container '${containerName}' started`);
+      return { started: true, containerId: containerName };
     }
 
-    // Timeout - kill the process
-    proc.kill();
-    throw new Error("ChromaDB failed to start within 30 seconds");
+    // Container doesn't exist - create new one with auto-restart
+    console.error("[VectorDB] Creating new ChromaDB container...");
+    const runResult = Bun.spawnSync([
+      "docker", "run", "-d",
+      "--name", containerName,
+      "--restart", "unless-stopped",
+      "-p", `${chromaPort}:8000`,
+      "-v", "chromadb_data:/chroma/chroma",
+      "chromadb/chroma"
+    ], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    if (runResult.exitCode !== 0) {
+      const stderr = runResult.stderr.toString();
+      throw new Error(`Docker run failed: ${stderr}`);
+    }
+
+    await waitForChromaHealth();
+    const containerId = runResult.stdout.toString().trim().slice(0, 12);
+    console.error(`[VectorDB] ChromaDB container created (${containerId})`);
+    return { started: true, containerId };
+
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[VectorDB] Failed to start ChromaDB: ${message}`);
     throw error;
   }
+}
+
+async function waitForChromaHealth(maxWaitMs = 30000): Promise<void> {
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (await checkChromaHealth(1000)) {
+      return;
+    }
+  }
+  throw new Error("ChromaDB failed to become healthy within timeout");
 }
 
 /**

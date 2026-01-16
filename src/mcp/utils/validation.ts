@@ -115,8 +115,28 @@ export const GetRelatedMemorySchema = z.object({
   limit: z.number().int().min(1).max(20).default(5),
 });
 
+// ============ Session Persistence Schemas ============
+
+export const SaveSessionSchema = z.object({
+  summary: z.string().min(1, "Session summary cannot be empty"),
+  tags: z.array(z.string()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const RecallSessionSchema = z.object({
+  query: z.string().min(1, "Search query cannot be empty"),
+  limit: z.number().int().min(1).max(10).default(3),
+});
+
+export const ListSessionsSchema = z.object({
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
 // ============ Type Exports ============
 
+export type SaveSessionInput = z.infer<typeof SaveSessionSchema>;
+export type RecallSessionInput = z.infer<typeof RecallSessionSchema>;
+export type ListSessionsInput = z.infer<typeof ListSessionsSchema>;
 export type AssignTaskInput = z.infer<typeof AssignTaskSchema>;
 export type BroadcastTaskInput = z.infer<typeof BroadcastTaskSchema>;
 export type CancelTaskInput = z.infer<typeof CancelTaskSchema>;

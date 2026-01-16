@@ -9,6 +9,7 @@ import { agentTools, agentHandlers } from './handlers/agents';
 import { contextTools, contextHandlers } from './handlers/context';
 import { queryTools, queryHandlers } from './handlers/query';
 import { vectorTools, vectorHandlers } from './handlers/vector';
+import { sessionTools, sessionHandlers } from './handlers/session';
 import type { ToolDefinition, ToolHandler } from '../types';
 
 // Aggregate all tools
@@ -17,8 +18,9 @@ export const allTools: ToolDefinition[] = [
   ...resultsTools,
   ...agentTools,
   ...contextTools,
-  ...queryTools,    // Phase 1: SQLite query tools
-  ...vectorTools,   // Phase 2: Vector search tools
+  ...queryTools,    // SQLite query tools
+  ...vectorTools,   // Vector search tools
+  ...sessionTools,  // Session persistence tools
 ];
 
 // Aggregate all handlers
@@ -27,8 +29,9 @@ export const allHandlers: Record<string, ToolHandler> = {
   ...resultsHandlers,
   ...agentHandlers,
   ...contextHandlers,
-  ...queryHandlers,  // Phase 1: SQLite query handlers
-  ...vectorHandlers, // Phase 2: Vector search handlers
+  ...queryHandlers,  // SQLite query handlers
+  ...vectorHandlers, // Vector search handlers
+  ...sessionHandlers, // Session persistence handlers
 };
 
 // Dynamic registration for Phase 1/2 tools
