@@ -49,7 +49,6 @@ export class TransformersEmbeddingFunction implements IEmbeddingFunction {
     this.modelConfig = MODEL_CONFIGS[modelName] || MODEL_CONFIGS.default;
 
     this.config = {
-      provider: "transformers",
       model: modelName,
       dimensions: config?.dimensions || this.modelConfig.dimensions,
       batchSize: config?.batchSize || 32,

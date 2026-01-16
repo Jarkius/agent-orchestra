@@ -6,9 +6,7 @@
   "scripts": {
     "download-model": "bun run scripts/download-embedding-model.ts",
     "test:embeddings": "bun run scripts/test-embeddings.ts",
-    "test:fastembed": "bun run scripts/test-embeddings.ts fastembed",
     "test:transformers": "bun run scripts/test-embeddings.ts transformers",
-    "test:compare": "bun run scripts/test-embeddings.ts compare",
     "test:semantic": "bun run scripts/test-semantic-search.ts"
   },
   "devDependencies": {
@@ -23,7 +21,6 @@
     "@modelcontextprotocol/sdk": "^1.25.2",
     "chromadb": "^3.2.2",
     "chromadb-default-embed": "^2.14.0",
-    "fastembed": "^2.1.0",
     "zod": "^4.3.5"
   }
 }

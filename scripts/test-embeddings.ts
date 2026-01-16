@@ -1,20 +1,18 @@
 #!/usr/bin/env bun
 /**
- * Embedding Provider Comparison Test Suite
+ * Embedding Test Suite
  *
- * Tests both FastEmbed and Transformers.js providers for:
+ * Tests Transformers.js provider for:
  * 1. Basic functionality (dimensions, output format)
  * 2. Semantic similarity quality
  * 3. Performance (latency)
  *
  * Usage:
- *   bun run scripts/test-embeddings.ts [provider]
- *   bun run scripts/test-embeddings.ts fastembed
+ *   bun run scripts/test-embeddings.ts
  *   bun run scripts/test-embeddings.ts transformers
- *   bun run scripts/test-embeddings.ts compare
+ *   bun run scripts/test-embeddings.ts nomic  # test nomic model
  */
 
-import { FastEmbedFunction } from "../src/embeddings/fastembed-provider";
 import { TransformersEmbeddingFunction } from "../src/embeddings/transformers-provider";
 
 // Test data - semantically grouped
@@ -164,66 +162,38 @@ async function testProvider(
   };
 }
 
-async function runComparison() {
+async function runTest(modelName: string = "bge-small-en-v1.5") {
   console.log("\n" + "=".repeat(60));
-  console.log("EMBEDDING PROVIDER COMPARISON TEST");
+  console.log("EMBEDDING TEST - Transformers.js");
   console.log("=".repeat(60));
 
-  const results: TestResult[] = [];
+  const provider = new TransformersEmbeddingFunction({ model: modelName });
+  const result = await testProvider(`Transformers.js (${modelName})`, provider);
 
-  // Test FastEmbed
-  try {
-    const fastembed = new FastEmbedFunction({ model: "bge-small-en-v1.5" });
-    results.push(await testProvider("FastEmbed (bge-small-en-v1.5)", fastembed));
-  } catch (error) {
-    console.error("FastEmbed test failed:", error);
-  }
+  console.log("\n" + "=".repeat(60));
+  console.log("SUMMARY");
+  console.log("=".repeat(60));
+  console.log(`\n| Metric           | Value                          |`);
+  console.log(`|------------------|--------------------------------|`);
+  console.log(`| Model            | ${result.model.padEnd(30)} |`);
+  console.log(`| Dimensions       | ${String(result.dimensions).padEnd(30)} |`);
+  console.log(`| Init Time        | ${(result.initTime + "ms").padEnd(30)} |`);
+  console.log(`| Embed Time       | ${(result.embedTime + "ms").padEnd(30)} |`);
+  console.log(`| Avg Query Time   | ${(result.avgQueryTime.toFixed(1) + "ms").padEnd(30)} |`);
+  console.log(`| Semantic Score   | ${((result.semanticScore * 100).toFixed(0) + "%").padEnd(30)} |`);
 
-  // Test Transformers.js
-  try {
-    const transformers = new TransformersEmbeddingFunction({ model: "bge-small-en-v1.5" });
-    results.push(await testProvider("Transformers.js (bge-small-en-v1.5)", transformers));
-  } catch (error) {
-    console.error("Transformers.js test failed:", error);
-  }
-
-  // Summary comparison
-  if (results.length > 1) {
-    console.log("\n" + "=".repeat(60));
-    console.log("COMPARISON SUMMARY");
-    console.log("=".repeat(60));
-    console.log("\n| Metric              | " + results.map((r) => r.provider.padEnd(30)).join(" | ") + " |");
-    console.log("|---------------------|" + results.map(() => "-".repeat(32)).join("|") + "|");
-    console.log("| Model               | " + results.map((r) => r.model.padEnd(30)).join(" | ") + " |");
-    console.log("| Dimensions          | " + results.map((r) => String(r.dimensions).padEnd(30)).join(" | ") + " |");
-    console.log("| Init Time           | " + results.map((r) => `${r.initTime}ms`.padEnd(30)).join(" | ") + " |");
-    console.log("| Embed Time (12 docs)| " + results.map((r) => `${r.embedTime}ms`.padEnd(30)).join(" | ") + " |");
-    console.log("| Avg Query Time      | " + results.map((r) => `${r.avgQueryTime.toFixed(1)}ms`.padEnd(30)).join(" | ") + " |");
-    console.log("| Semantic Accuracy   | " + results.map((r) => `${(r.semanticScore * 100).toFixed(0)}%`.padEnd(30)).join(" | ") + " |");
-  }
-
-  return results;
-}
-
-async function runSingleProvider(providerName: string) {
-  if (providerName === "fastembed") {
-    const provider = new FastEmbedFunction({ model: "bge-small-en-v1.5" });
-    await testProvider("FastEmbed (bge-small-en-v1.5)", provider);
-  } else if (providerName === "transformers") {
-    const provider = new TransformersEmbeddingFunction({ model: "bge-small-en-v1.5" });
-    await testProvider("Transformers.js (bge-small-en-v1.5)", provider);
-  } else {
-    console.error(`Unknown provider: ${providerName}`);
-    console.log("Available: fastembed, transformers, compare");
-    process.exit(1);
-  }
+  return result;
 }
 
 // Main
-const arg = process.argv[2] || "compare";
+const arg = process.argv[2] || "transformers";
 
-if (arg === "compare") {
-  runComparison().catch(console.error);
-} else {
-  runSingleProvider(arg).catch(console.error);
-}
+const modelMap: Record<string, string> = {
+  transformers: "bge-small-en-v1.5",
+  bge: "bge-small-en-v1.5",
+  nomic: "nomic-embed-text-v1.5",
+  minilm: "all-minilm-l6-v2",
+};
+
+const modelName = modelMap[arg] || arg;
+runTest(modelName).catch(console.error);

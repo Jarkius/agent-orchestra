@@ -1,20 +1,19 @@
 /**
  * Embedding Providers Module
- * Supports multiple embedding backends for semantic search
+ * Supports Transformers.js for semantic search embeddings
  *
- * Providers:
- * - fastembed: Local ONNX models via fastembed (bge-small-en-v1.5)
- * - transformers: Transformers.js with EmbeddingGemma or Nomic
+ * Available models:
+ * - bge-small-en-v1.5 (384 dims, fast, default)
+ * - nomic-embed-text-v1 (768 dims)
+ * - nomic-embed-text-v1.5 (768 dims, Matryoshka support)
+ * - all-minilm-l6-v2 (384 dims)
  *
- * Configure via EMBEDDING_PROVIDER env var
+ * Configure via EMBEDDING_MODEL env var
  */
 
 import type { IEmbeddingFunction } from "chromadb";
 
-export type EmbeddingProvider = "fastembed" | "transformers";
-
 export interface EmbeddingConfig {
-  provider: EmbeddingProvider;
   model?: string;
   dimensions?: number;
   cacheDir?: string;
@@ -23,35 +22,22 @@ export interface EmbeddingConfig {
 
 // Get config from environment
 export function getEmbeddingConfig(): EmbeddingConfig {
-  const provider = (process.env.EMBEDDING_PROVIDER || "transformers") as EmbeddingProvider;
-
   return {
-    provider,
-    model: process.env.EMBEDDING_MODEL,
+    model: process.env.EMBEDDING_MODEL || "bge-small-en-v1.5",
     dimensions: process.env.EMBEDDING_DIMS ? parseInt(process.env.EMBEDDING_DIMS) : undefined,
     cacheDir: process.env.EMBEDDING_CACHE_DIR,
     batchSize: parseInt(process.env.EMBEDDING_BATCH_SIZE || "32"),
   };
 }
 
-// Factory function to create the appropriate embedding function
+// Factory function to create the embedding function
 export async function createEmbeddingFunction(
   config?: Partial<EmbeddingConfig>
 ): Promise<IEmbeddingFunction> {
   const finalConfig = { ...getEmbeddingConfig(), ...config };
-
-  switch (finalConfig.provider) {
-    case "transformers":
-      const { TransformersEmbeddingFunction } = await import("./transformers-provider");
-      return new TransformersEmbeddingFunction(finalConfig);
-
-    case "fastembed":
-    default:
-      const { FastEmbedFunction } = await import("./fastembed-provider");
-      return new FastEmbedFunction(finalConfig);
-  }
+  const { TransformersEmbeddingFunction } = await import("./transformers-provider");
+  return new TransformersEmbeddingFunction(finalConfig);
 }
 
-// Export individual providers for direct use
-export { FastEmbedFunction } from "./fastembed-provider";
+// Export provider for direct use
 export { TransformersEmbeddingFunction } from "./transformers-provider";

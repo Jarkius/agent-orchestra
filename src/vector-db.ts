@@ -9,23 +9,22 @@
  * - messages_outbound: Agent → Orchestrator communication
  * - shared_context: Version history of shared context
  *
- * Embedding Providers (set via EMBEDDING_PROVIDER env var):
- * - fastembed: Local ONNX models (bge-small-en-v1.5, default)
- * - transformers: Transformers.js (nomic, bge, minilm)
+ * Embedding: Transformers.js (bge-small-en-v1.5, nomic, minilm)
+ * Configure model via EMBEDDING_MODEL env var
  */
 
 import { ChromaClient, type Collection, type IEmbeddingFunction } from 'chromadb';
 import { createEmbeddingFunction, getEmbeddingConfig } from './embeddings';
 
-// ChromaDB client - connects to server at localhost:8000
-// Start server with: chroma run --path ./chroma_data
+// ChromaDB client - connects to server at localhost:8100
+// Start server with: chroma run --path ./chroma_data --port 8100
 let client: ChromaClient | null = null;
 let embeddingFunction: IEmbeddingFunction | null = null;
 
 function getClient(): ChromaClient {
   if (!client) {
     client = new ChromaClient({
-      path: process.env.CHROMA_URL || "http://localhost:8000"
+      path: process.env.CHROMA_URL || "http://localhost:8100"
     });
   }
   return client;
@@ -446,12 +445,12 @@ export interface HealthStatus {
  * Check if ChromaDB server is reachable
  */
 export async function checkChromaHealth(timeoutMs = 5000): Promise<boolean> {
-  const url = process.env.CHROMA_URL || "http://localhost:8000";
+  const url = process.env.CHROMA_URL || "http://localhost:8100";
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const response = await fetch(`${url}/api/v1/heartbeat`, {
+    const response = await fetch(`${url}/api/v2/heartbeat`, {
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -477,7 +476,7 @@ export async function ensureChromaRunning(): Promise<{ started: boolean; pid?: n
   console.error("[VectorDB] Starting ChromaDB server...");
 
   const chromaDataPath = process.env.CHROMA_DATA_PATH || "./chroma_data";
-  const chromaPort = process.env.CHROMA_PORT || "8000";
+  const chromaPort = process.env.CHROMA_PORT || "8100";
 
   try {
     // Spawn ChromaDB in background
@@ -513,7 +512,7 @@ export async function ensureChromaRunning(): Promise<{ started: boolean; pid?: n
  * Get comprehensive health status
  */
 export async function getHealthStatus(): Promise<HealthStatus> {
-  const chromaUrl = process.env.CHROMA_URL || "http://localhost:8000";
+  const chromaUrl = process.env.CHROMA_URL || "http://localhost:8100";
   const embeddingConfig = getEmbeddingConfig();
 
   // Check ChromaDB
