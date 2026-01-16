@@ -33,7 +33,7 @@ function getClient(): ChromaClient {
 async function getEmbeddingFunction(): Promise<IEmbeddingFunction> {
   if (!embeddingFunction) {
     const config = getEmbeddingConfig();
-    console.error(`[VectorDB] Using embedding provider: ${config.provider}`);
+    console.error(`[VectorDB] Using Transformers.js with model: ${config.model}`);
     embeddingFunction = await createEmbeddingFunction(config);
   }
   return embeddingFunction;
