@@ -154,12 +154,16 @@ async function handleListSessions(args: unknown) {
   try {
     const result = await listSessions(limit);
 
-    const sessions = result.ids.map((id, i) => ({
-      session_id: id,
-      summary: result.summaries[i]?.substring(0, 200) + (result.summaries[i] && result.summaries[i]!.length > 200 ? "..." : ""),
-      tags: (result.metadatas[i] as any)?.tags || [],
-      created_at: (result.metadatas[i] as any)?.created_at || null,
-    }));
+    const sessions = result.ids.map((id, i) => {
+      const meta = result.metadatas[i] as any;
+      const tagsStr = meta?.tags || '';
+      return {
+        session_id: id,
+        summary: result.summaries[i]?.substring(0, 200) + (result.summaries[i] && result.summaries[i]!.length > 200 ? "..." : ""),
+        tags: tagsStr ? tagsStr.split(',') : [],
+        created_at: meta?.created_at || null,
+      };
+    });
 
     return jsonResponse({
       count: sessions.length,

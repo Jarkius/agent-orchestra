@@ -388,10 +388,16 @@ export async function saveSession(
 ): Promise<void> {
   const cols = ensureInitialized();
   try {
+    // ChromaDB only supports primitive metadata values - convert arrays to CSV
+    const chromaMetadata: Record<string, string | number | boolean> = {
+      created_at: metadata.created_at,
+      tags: metadata.tags?.join(',') || '',
+    };
+
     await cols.sessions.add({
       ids: [sessionId],
       documents: [summary],
-      metadatas: [metadata as Record<string, unknown>],
+      metadatas: [chromaMetadata],
     });
   } catch (error) {
     console.error(`[VectorDB] Failed to save session ${sessionId}:`, error);
