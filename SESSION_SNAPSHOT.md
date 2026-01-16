@@ -1,36 +1,39 @@
-# Session Snapshot - FastEmbed & Transformers.js Integration
+# Session Snapshot - Claude Sub-Agent Orchestration System
 **Date:** 2026-01-16
 
-## Completed Work
+## Current State
 
-### 1. FastEmbed-JS Integration (Commit: bb76da9)
-- Added `fastembed` npm package for local ONNX embeddings
-- Replaced hash-based SimpleEmbeddingFunction with real semantic embeddings
-- Model: bge-small-en-v1.5 (384 dims, ~33MB)
-- Fixed Float32Array → number[] conversion for ChromaDB compatibility
+### Stack
+- **Runtime**: Bun/TypeScript
+- **Embeddings**: Transformers.js (bge-small-en-v1.5, nomic, minilm)
+- **Vector DB**: ChromaDB via Docker on port 8100
+- **Database**: SQLite (agents.db)
 
-### 2. Transformers.js Provider (Commit: ea8b22d)
-- Added `@huggingface/transformers` as alternative embedding provider
-- Created modular embedding system: `src/embeddings/`
-  - `index.ts` - Factory & config
-  - `fastembed-provider.ts` - FastEmbed wrapper
-  - `transformers-provider.ts` - Transformers.js wrapper
-- Configurable via `EMBEDDING_PROVIDER` env var
-- Both providers achieve 100% semantic accuracy
-
-### 3. Default Provider Switch (Commit: 8889828)
-- Switched default from fastembed to transformers
-- Reason: 28x faster queries (2ms vs 70ms after warmup)
-
-### 4. ChromaDB Health Check & Auto-Start (Commit: 7557c1b)
-- `checkChromaHealth()` - Ping server with timeout
-- `ensureChromaRunning()` - Auto-start if not running
-- `getHealthStatus()` - Full health report
-- `health_check` MCP tool
-- MCP server now auto-initializes everything on startup
-
-## Git Log (4 commits)
+### Architecture
 ```
+┌─────────────────────────────────────────────────────────────┐
+│                    YOU (Orchestrator)                        │
+│                    Claude Code (Max plan)                    │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ MCP Tools
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│               MCP Server (src/mcp-server.ts)                 │
+│  Vector Search | Task Assignment | Health Check              │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+    ┌──────────┐   ┌──────────┐   ┌──────────────┐
+    │ ChromaDB │   │ SQLite   │   │ Agent Pool   │
+    │ :8100    │   │ agents.db│   │ claude CLI   │
+    └──────────┘   └──────────┘   └──────────────┘
+```
+
+## Git Log (6 commits)
+```
+6c4db8f Simplify stack: remove FastEmbed, use Docker ChromaDB on port 8100
+9b04eba Add session snapshot for context continuity
 7557c1b Add ChromaDB health check and auto-start on MCP init
 8889828 Switch default embedding provider to Transformers.js
 ea8b22d Add configurable embedding providers with Transformers.js support
@@ -40,46 +43,50 @@ bb76da9 Add Claude Sub-Agent Orchestration System with FastEmbed semantic search
 ## Key Files
 | File | Purpose |
 |------|---------|
-| `src/vector-db.ts` | ChromaDB integration + health checks |
-| `src/embeddings/index.ts` | Embedding provider factory |
-| `src/embeddings/fastembed-provider.ts` | FastEmbed wrapper |
+| `src/vector-db.ts` | ChromaDB integration + health checks (port 8100) |
+| `src/embeddings/index.ts` | Embedding factory (Transformers.js) |
 | `src/embeddings/transformers-provider.ts` | Transformers.js wrapper |
 | `src/mcp/server.ts` | MCP server with auto-init |
-| `src/mcp/tools/handlers/vector.ts` | Vector search + health_check tools |
+| `src/mcp/tools/handlers/vector.ts` | Vector search tools |
+| `src/db.ts` | SQLite schema for agents |
 
 ## Configuration (.env)
 ```bash
-EMBEDDING_PROVIDER=transformers  # default (or "fastembed")
-EMBEDDING_MODEL=bge-small-en-v1.5
-CHROMA_URL=http://localhost:8000
+EMBEDDING_MODEL=bge-small-en-v1.5  # or nomic-embed-text-v1.5, all-minilm-l6-v2
+CHROMA_URL=http://localhost:8100
+CHROMA_PORT=8100
 SKIP_VECTORDB=true  # to disable auto-init
 ```
 
-## Test Commands
+## Commands
 ```bash
-bun run test:fastembed      # Test FastEmbed
-bun run test:transformers   # Test Transformers.js
-bun run test:compare        # Compare both
-bun run test:semantic       # ChromaDB integration
+# Start ChromaDB (Docker)
+docker run -d --name chromadb -p 8100:8000 chromadb/chroma
+
+# Test embeddings
+bun run test:transformers        # Default model (bge-small)
+bun run scripts/test-embeddings.ts nomic   # Nomic model
+
+# Test semantic search (requires ChromaDB running)
+bun run test:semantic
+
+# Run MCP server
+bun run src/mcp/server.ts
 ```
 
-## Performance Comparison
-| Provider | Init | Query | Accuracy |
-|----------|------|-------|----------|
-| FastEmbed | 280ms | 70ms | 100% |
-| Transformers.js | 200ms* | 2ms | 100% |
-
-*After model cached
+## Performance (Transformers.js)
+| Model | Init | Query | Dims | Accuracy |
+|-------|------|-------|------|----------|
+| bge-small-en-v1.5 | 826ms | 2ms | 384 | 100% |
+| nomic-embed-text-v1.5 | 5.7s | 4ms | 768 | 100% |
 
 ## To Resume
 1. Read this file: `SESSION_SNAPSHOT.md`
-2. Check git log: `git log --oneline -5`
-3. Install ChromaDB if needed: `pip install chromadb`
-4. Start ChromaDB: `chroma run --path ./chroma_data`
-5. Run tests: `bun run test:compare`
+2. Start ChromaDB: `docker start chromadb` (or run command above)
+3. Check health: `curl http://localhost:8100/api/v2/heartbeat`
+4. Run tests: `bun run test:semantic`
 
-## Next Steps (TODO)
-- [ ] Install ChromaDB CLI: `pip install chromadb`
-- [ ] Test full agent workflow with semantic search
-- [ ] Add nomic-embed-text-v1.5 model support
-- [ ] Performance tuning for production
+## Removed (this session)
+- FastEmbed provider (slower, more dependencies)
+- Python venv requirement (Docker handles ChromaDB)
+- Port 8000 (changed to 8100)
