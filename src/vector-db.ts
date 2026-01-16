@@ -47,6 +47,7 @@ interface VectorCollections {
   context: Collection;
   sessions: Collection;
   learnings: Collection;
+  sessionTasks: Collection;
 }
 
 let collections: VectorCollections | null = null;
@@ -96,9 +97,14 @@ export async function initVectorDB(): Promise<void> {
         metadata: { "hnsw:space": "cosine" },
         embeddingFunction: embedFn,
       }),
+      sessionTasks: await chromaClient.getOrCreateCollection({
+        name: "session_tasks",
+        metadata: { "hnsw:space": "cosine" },
+        embeddingFunction: embedFn,
+      }),
     };
     initialized = true;
-    console.error("[VectorDB] Initialized with 7 collections");
+    console.error("[VectorDB] Initialized with 8 collections");
   } catch (error) {
     console.error("[VectorDB] Failed to initialize:", error);
     throw error;
@@ -360,16 +366,16 @@ export async function getRelatedMemory(
 export async function getCollectionStats(): Promise<Record<string, number>> {
   const cols = ensureInitialized();
 
-  const [tasks, results, messagesIn, messagesOut, context, sessions] = await Promise.all([
+  const [tasks, results, messagesIn, messagesOut, context, sessions, learnings, sessionTasks] = await Promise.all([
     cols.tasks.count(),
     cols.results.count(),
     cols.messagesIn.count(),
     cols.messagesOut.count(),
     cols.context.count(),
     cols.sessions.count(),
+    cols.learnings.count(),
+    cols.sessionTasks.count(),
   ]);
-
-  const learnings = await cols.learnings.count();
 
   return {
     task_prompts: tasks,
@@ -379,6 +385,7 @@ export async function getCollectionStats(): Promise<Record<string, number>> {
     shared_context: context,
     orchestrator_sessions: sessions,
     orchestrator_learnings: learnings,
+    session_tasks: sessionTasks,
   };
 }
 
@@ -498,6 +505,102 @@ export async function listLearningsFromVector(limit = 20): Promise<{
   };
 }
 
+// ============ SESSION TASK EMBEDDINGS ============
+
+export interface SessionTaskSearchResult {
+  id: number;
+  description: string;
+  session_id: string;
+  status: string;
+  similarity: number;
+  notes?: string;
+}
+
+/**
+ * Embed a session task for semantic search
+ */
+export async function embedSessionTask(
+  taskId: number,
+  description: string,
+  metadata: {
+    session_id: string;
+    status: string;
+    priority?: string;
+    notes?: string;
+    created_at: string;
+  }
+): Promise<void> {
+  const cols = ensureInitialized();
+  try {
+    const chromaMetadata: Record<string, string | number | boolean> = {
+      session_id: metadata.session_id,
+      status: metadata.status,
+      priority: metadata.priority || 'normal',
+      notes: metadata.notes || '',
+      created_at: metadata.created_at,
+    };
+
+    await cols.sessionTasks.add({
+      ids: [String(taskId)],
+      documents: [description],
+      metadatas: [chromaMetadata],
+    });
+  } catch (error) {
+    console.error(`[VectorDB] Failed to embed session task ${taskId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Search session tasks by semantic similarity
+ */
+export async function searchSessionTasks(
+  query: string,
+  limit = 10,
+  sessionId?: string
+): Promise<SessionTaskSearchResult[]> {
+  const cols = ensureInitialized();
+  const where = sessionId ? { session_id: sessionId } : undefined;
+
+  const results = await cols.sessionTasks.query({
+    queryTexts: [query],
+    nResults: limit,
+    where,
+  });
+
+  const ids = results.ids[0] || [];
+  const documents = results.documents[0] || [];
+  const metadatas = results.metadatas?.[0] || [];
+  const distances = results.distances?.[0] || [];
+
+  return ids.map((id, i) => ({
+    id: parseInt(id),
+    description: documents[i] || '',
+    session_id: String(metadatas[i]?.session_id || ''),
+    status: String(metadatas[i]?.status || 'pending'),
+    similarity: 1 - (distances[i] || 0),
+    notes: metadatas[i]?.notes ? String(metadatas[i]?.notes) : undefined,
+  }));
+}
+
+/**
+ * Get all session tasks from vector DB (for listing)
+ */
+export async function listSessionTasksFromVector(limit = 50, sessionId?: string): Promise<{
+  ids: string[];
+  descriptions: (string | null)[];
+  metadatas: (Record<string, unknown> | null)[];
+}> {
+  const cols = ensureInitialized();
+  const where = sessionId ? { session_id: sessionId } : undefined;
+  const result = await cols.sessionTasks.get({ limit, where });
+  return {
+    ids: result.ids,
+    descriptions: result.documents,
+    metadatas: result.metadatas,
+  };
+}
+
 // ============ AUTO-LINKING ============
 
 export interface AutoLinkResult {
@@ -595,6 +698,7 @@ export async function resetVectorCollections(): Promise<void> {
     'shared_context',
     'orchestrator_sessions',
     'orchestrator_learnings',
+    'session_tasks',
   ];
 
   for (const name of collectionNames) {

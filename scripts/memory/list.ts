@@ -4,7 +4,7 @@
  * Usage: bun scripts/memory/list.ts [sessions|learnings]
  */
 
-import { listSessionsFromDb, listLearningsFromDb } from '../../src/db';
+import { listSessionsFromDb, listLearningsFromDb, getSessionTaskStats } from '../../src/db';
 
 const type = process.argv[2] || 'sessions';
 
@@ -24,6 +24,19 @@ async function list() {
       console.log(`\n${s.id}`);
       console.log(`  ${s.summary?.substring(0, 80)}${s.summary && s.summary.length > 80 ? '...' : ''}`);
       console.log(`  Tags: ${s.tags?.join(', ') || 'none'}`);
+
+      // Show task stats
+      const taskStats = getSessionTaskStats(s.id);
+      const totalTasks = taskStats.done + taskStats.pending + taskStats.blocked + taskStats.in_progress;
+      if (totalTasks > 0) {
+        const parts: string[] = [];
+        if (taskStats.done > 0) parts.push(`${taskStats.done} done`);
+        if (taskStats.pending > 0) parts.push(`${taskStats.pending} pending`);
+        if (taskStats.blocked > 0) parts.push(`${taskStats.blocked} blocked`);
+        if (taskStats.in_progress > 0) parts.push(`${taskStats.in_progress} in progress`);
+        console.log(`  Tasks: ${parts.join(', ')}`);
+      }
+
       if (s.duration_mins) {
         console.log(`  Duration: ${s.duration_mins} mins | Commits: ${s.commits_count || 0}`);
       }

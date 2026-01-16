@@ -12,16 +12,25 @@ import {
   createSession,
   createSessionLink,
   createLearning,
+  createSessionTask,
   getSessionStats,
   listSessionsFromDb,
   type SessionRecord,
   type FullContext,
+  type SessionTask,
 } from '../../src/db';
 import {
   initVectorDB,
   saveSession as saveSessionToChroma,
   findSimilarSessions,
+  embedSessionTask,
 } from '../../src/vector-db';
+
+interface TaskInput {
+  description: string;
+  status: 'done' | 'pending' | 'blocked' | 'in_progress';
+  notes?: string;
+}
 
 // Parse arguments
 const args = process.argv.slice(2);
@@ -42,6 +51,44 @@ async function promptInput(question: string): Promise<string> {
   const buf = Buffer.alloc(1024);
   const n = await Bun.stdin.read(buf);
   return buf.toString('utf-8', 0, n || 0).trim();
+}
+
+function parseStatus(input: string): 'done' | 'pending' | 'blocked' | 'in_progress' {
+  const normalized = input.toLowerCase().trim();
+  if (normalized === 'd' || normalized === 'done') return 'done';
+  if (normalized === 'p' || normalized === 'pending') return 'pending';
+  if (normalized === 'b' || normalized === 'blocked') return 'blocked';
+  if (normalized === 'i' || normalized === 'in_progress' || normalized === 'in-progress') return 'in_progress';
+  return 'pending'; // default
+}
+
+async function collectTasks(): Promise<TaskInput[]> {
+  const tasks: TaskInput[] = [];
+
+  console.log('\n📋 Tasks (enter tasks, empty description to finish):');
+  console.log('   Status shortcuts: [d]one, [p]ending, [b]locked, [i]n_progress\n');
+
+  let taskNum = 1;
+  while (true) {
+    const description = await promptInput(`${taskNum}. Task description: `);
+    if (!description) break;
+
+    const statusInput = await promptInput('   Status [d/p/b/i] (default: p): ');
+    const status = parseStatus(statusInput || 'p');
+
+    const notes = await promptInput('   Notes (optional): ');
+
+    tasks.push({
+      description,
+      status,
+      notes: notes || undefined,
+    });
+
+    taskNum++;
+    console.log('');
+  }
+
+  return tasks;
 }
 
 async function interactiveMode() {
@@ -93,11 +140,15 @@ async function interactiveMode() {
   const learningsInput = await promptInput('Key learnings? (comma-separated, optional): ');
   const learnings = learningsInput ? learningsInput.split(',').map(t => t.trim()) : [];
 
+  // Collect tasks
+  const tasks = await collectTasks();
+
   return {
     summary,
     tags,
     duration,
     commits,
+    tasks,
     fullContext: {
       what_worked: whatWorked.length > 0 ? whatWorked : undefined,
       what_didnt_work: whatDidnt.length > 0 ? whatDidnt : undefined,
@@ -112,6 +163,7 @@ async function quickMode() {
     tags,
     duration: undefined,
     commits: undefined,
+    tasks: [] as TaskInput[],
     fullContext: {} as FullContext,
   };
 }
@@ -183,7 +235,35 @@ async function saveCurrentSession() {
     }
   }
 
-  console.log('\n5. Session stats:');
+  // Save tasks if provided
+  const tasks = data.tasks || [];
+  const taskStats = { done: 0, pending: 0, blocked: 0, in_progress: 0 };
+  if (tasks.length > 0) {
+    console.log('\n5. Saving tasks...');
+    for (const task of tasks) {
+      const taskId = createSessionTask({
+        session_id: sessionId,
+        description: task.description,
+        status: task.status,
+        notes: task.notes,
+        completed_at: task.status === 'done' ? now : undefined,
+      });
+
+      // Embed task in vector DB for semantic search
+      await embedSessionTask(taskId, task.description, {
+        session_id: sessionId,
+        status: task.status,
+        notes: task.notes,
+        created_at: now,
+      });
+
+      taskStats[task.status]++;
+      const statusIcon = task.status === 'done' ? '✓' : task.status === 'blocked' ? '!' : '○';
+      console.log(`   ${statusIcon} Task #${taskId}: ${task.description.substring(0, 50)}... [${task.status}]`);
+    }
+  }
+
+  console.log('\n6. Session stats:');
   const stats = getSessionStats();
   console.log(`   Total sessions: ${stats.total_sessions}`);
   console.log(`   Average duration: ${stats.avg_duration_mins?.toFixed(1) || 'N/A'} mins`);
@@ -194,6 +274,9 @@ async function saveCurrentSession() {
   console.log(`   Summary: ${data.summary.substring(0, 60)}...`);
   if (data.tags.length > 0) {
     console.log(`   Tags: ${data.tags.join(', ')}`);
+  }
+  if (tasks.length > 0) {
+    console.log(`   Tasks: ${taskStats.done} done, ${taskStats.pending} pending, ${taskStats.blocked} blocked, ${taskStats.in_progress} in progress`);
   }
   console.log(`   Auto-linked: ${autoLinked.length} sessions`);
 
