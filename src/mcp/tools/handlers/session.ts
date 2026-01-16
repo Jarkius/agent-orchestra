@@ -40,6 +40,8 @@ const SaveSessionSchema = z.object({
   commits_count: z.number().optional(),
   tags: z.array(z.string()).optional(),
   previous_session_id: z.string().optional(),
+  next_steps: z.array(z.string()).optional(),
+  challenges: z.array(z.string()).optional(),
 });
 
 const RecallSessionSchema = z.object({
@@ -97,6 +99,8 @@ export const sessionTools: ToolDefinition[] = [
         commits_count: { type: "number", description: "Number of commits" },
         tags: { type: "array", items: { type: "string" }, description: "Tags for categorization" },
         previous_session_id: { type: "string", description: "ID of previous session (for continuation)" },
+        next_steps: { type: "array", items: { type: "string" }, description: "Planned next steps" },
+        challenges: { type: "array", items: { type: "string" }, description: "Current challenges or blockers" },
       },
       required: ["summary"],
     },
@@ -170,11 +174,15 @@ async function handleSaveSession(args: unknown) {
       duration_mins: input.duration_mins,
       commits_count: input.commits_count,
       tags: input.tags,
+      next_steps: input.next_steps,
+      challenges: input.challenges,
     };
     createSession(session);
 
     // 2. Save to ChromaDB (search index)
-    const searchContent = `${input.summary} ${input.tags?.join(' ') || ''}`;
+    const nextStepsText = input.next_steps?.length ? ` Next steps: ${input.next_steps.join('. ')}` : '';
+    const challengesText = input.challenges?.length ? ` Challenges: ${input.challenges.join('. ')}` : '';
+    const searchContent = `${input.summary} ${input.tags?.join(' ') || ''}${nextStepsText}${challengesText}`;
     await saveSessionToChroma(sessionId, searchContent, {
       tags: input.tags || [],
       created_at: now,
@@ -263,6 +271,8 @@ async function handleGetSession(args: unknown) {
         commits_count: session.commits_count,
         tags: session.tags,
         previous_session_id: session.previous_session_id,
+        next_steps: session.next_steps,
+        challenges: session.challenges,
         created_at: session.created_at,
       },
       linked_sessions: linkedSessions.map(l => ({

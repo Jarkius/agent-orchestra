@@ -8,8 +8,55 @@ import { $ } from "bun";
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { existsSync } from "fs";
 import { getAgent, getAgentTasks } from "./db";
+import { searchLearnings, isInitialized as isVectorDBInitialized } from "./vector-db";
 
 const SHARED_DIR = "/tmp/agent_shared";
+
+/**
+ * Query ChromaDB for learnings relevant to the task prompt
+ */
+async function getRelevantLearnings(taskPrompt: string, limit = 5): Promise<string> {
+  if (!isVectorDBInitialized()) {
+    return '';
+  }
+
+  try {
+    const results = await searchLearnings(taskPrompt, limit);
+
+    if (!results.ids[0]?.length) {
+      return '';
+    }
+
+    const parts: string[] = ['## Relevant Learnings from Past Sessions'];
+
+    for (let i = 0; i < results.ids[0].length; i++) {
+      const distance = results.distances?.[0]?.[i] ?? 1;
+      const similarity = 1 - distance;
+
+      // Only include if relevance is above threshold (distance < 0.5 means similarity > 0.5)
+      if (similarity < 0.5) continue;
+
+      const content = results.documents[0]?.[i];
+      const metadata = results.metadatas[0]?.[i] as any;
+
+      if (content) {
+        const confidence = metadata?.confidence || 'medium';
+        const category = metadata?.category || 'general';
+        const marker = confidence === 'proven' ? '✓' : confidence === 'high' ? '•' : '○';
+        parts.push(`${marker} [${category}] ${content}`);
+      }
+    }
+
+    // Only return if we found relevant learnings
+    if (parts.length > 1) {
+      return parts.join('\n') + '\n';
+    }
+  } catch (error) {
+    // Silently fail - learnings are optional enhancement
+  }
+
+  return '';
+}
 
 interface TaskResult {
   task_id: string;
@@ -76,7 +123,12 @@ export async function runClaudeTask(
   }
 
   agentContext += `\n\nComplete the task and provide a clear response.`;
-  fullPrompt = `${agentContext}\n\n${fullPrompt}`;
+
+  // Inject relevant learnings from ChromaDB
+  const relevantLearnings = await getRelevantLearnings(prompt);
+
+  // Build full prompt: Shared Context → Relevant Learnings → Agent Identity → Task Context → Task
+  fullPrompt = `${agentContext}\n\n${relevantLearnings}${fullPrompt}`;
 
   try {
     // Run claude CLI with --print flag for non-interactive output

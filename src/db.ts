@@ -153,6 +153,25 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_confidence ON learnings(confide
 db.run(`CREATE INDEX IF NOT EXISTS idx_session_links_from ON session_links(from_session_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_learning_links_from ON learning_links(from_learning_id)`);
 
+// ============ Schema Migrations (idempotent) ============
+
+// Add next_steps and challenges columns to sessions table
+try {
+  db.run(`ALTER TABLE sessions ADD COLUMN next_steps TEXT`);
+} catch { /* Column already exists */ }
+
+try {
+  db.run(`ALTER TABLE sessions ADD COLUMN challenges TEXT`);
+} catch { /* Column already exists */ }
+
+// Add session_id column to tasks table for task-session linking
+try {
+  db.run(`ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES sessions(id)`);
+} catch { /* Column already exists */ }
+
+// Create index for task-session queries
+db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id)`);
+
 // ============ Agent Functions ============
 
 export function registerAgent(id: number, paneId: string, pid: number, name?: string) {
@@ -442,6 +461,8 @@ export interface FullContext {
   future_ideas?: string[];
   key_decisions?: string[];
   blockers_resolved?: string[];
+  next_steps?: string[];
+  challenges?: string[];
 }
 
 export interface SessionRecord {
@@ -452,13 +473,15 @@ export interface SessionRecord {
   duration_mins?: number;
   commits_count?: number;
   tags?: string[];
+  next_steps?: string[];
+  challenges?: string[];
   created_at?: string;
 }
 
 export function createSession(session: SessionRecord): void {
   db.run(
-    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, next_steps, challenges)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session.id,
       session.previous_session_id || null,
@@ -467,6 +490,8 @@ export function createSession(session: SessionRecord): void {
       session.duration_mins || null,
       session.commits_count || null,
       session.tags?.join(',') || null,
+      session.next_steps ? JSON.stringify(session.next_steps) : null,
+      session.challenges ? JSON.stringify(session.challenges) : null,
     ]
   );
 }
@@ -478,6 +503,8 @@ export function getSessionById(sessionId: string): SessionRecord | null {
     ...row,
     full_context: row.full_context ? JSON.parse(row.full_context) : null,
     tags: row.tags ? row.tags.split(',') : [],
+    next_steps: row.next_steps ? JSON.parse(row.next_steps) : [],
+    challenges: row.challenges ? JSON.parse(row.challenges) : [],
   };
 }
 
@@ -502,6 +529,8 @@ export function listSessionsFromDb(options?: { tag?: string; since?: string; lim
     ...row,
     full_context: row.full_context ? JSON.parse(row.full_context) : null,
     tags: row.tags ? row.tags.split(',') : [],
+    next_steps: row.next_steps ? JSON.parse(row.next_steps) : [],
+    challenges: row.challenges ? JSON.parse(row.challenges) : [],
   }));
 }
 
@@ -747,4 +776,84 @@ export function getImprovementReport() {
     recently_validated: recentlyValidated,
     proven_learnings: provenLearnings,
   };
+}
+
+// ============ Task-Session Linking Functions ============
+
+/**
+ * Link a task to a session
+ */
+export function linkTaskToSession(taskId: string, sessionId: string): boolean {
+  try {
+    db.run(
+      `UPDATE tasks SET session_id = ? WHERE id = ?`,
+      [sessionId, taskId]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get all tasks for a specific session
+ */
+export function getTasksBySession(sessionId: string, limit = 50): any[] {
+  return db.query(
+    `SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`
+  ).all(sessionId, limit);
+}
+
+/**
+ * Get the session associated with a task
+ */
+export function getSessionByTask(taskId: string): SessionRecord | null {
+  const task = db.query(`SELECT session_id FROM tasks WHERE id = ?`).get(taskId) as any;
+  if (!task?.session_id) return null;
+  return getSessionById(task.session_id);
+}
+
+/**
+ * Get tasks that are not linked to any session
+ */
+export function getUnlinkedTasks(agentId?: number, limit = 50): any[] {
+  if (agentId) {
+    return db.query(
+      `SELECT * FROM tasks WHERE session_id IS NULL AND agent_id = ? ORDER BY created_at DESC LIMIT ?`
+    ).all(agentId, limit);
+  }
+  return db.query(
+    `SELECT * FROM tasks WHERE session_id IS NULL ORDER BY created_at DESC LIMIT ?`
+  ).all(limit);
+}
+
+/**
+ * Get high-confidence learnings for context injection
+ */
+export function getHighConfidenceLearnings(limit = 10): LearningRecord[] {
+  return db.query(`
+    SELECT * FROM learnings
+    WHERE confidence IN ('proven', 'high')
+    ORDER BY
+      CASE confidence WHEN 'proven' THEN 1 WHEN 'high' THEN 2 END,
+      times_validated DESC
+    LIMIT ?
+  `).all(limit) as LearningRecord[];
+}
+
+/**
+ * Get recent sessions for context bundle
+ */
+export function getRecentSessions(limit = 3): SessionRecord[] {
+  const rows = db.query(
+    `SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?`
+  ).all(limit) as any[];
+
+  return rows.map(row => ({
+    ...row,
+    full_context: row.full_context ? JSON.parse(row.full_context) : null,
+    tags: row.tags ? row.tags.split(',') : [],
+    next_steps: row.next_steps ? JSON.parse(row.next_steps) : [],
+    challenges: row.challenges ? JSON.parse(row.challenges) : [],
+  }));
 }

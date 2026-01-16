@@ -7,8 +7,23 @@
 import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { runClaudeTask, writeToScratchpad } from "./claude-agent";
-import { registerAgent, updateAgentStatus, sendMessage } from "./db";
-import { initVectorDB, embedTask, embedResult, isInitialized } from "./vector-db";
+import {
+  registerAgent,
+  updateAgentStatus,
+  sendMessage,
+  createSession,
+  createSessionLink,
+  linkTaskToSession,
+  type SessionRecord,
+} from "./db";
+import {
+  initVectorDB,
+  embedTask,
+  embedResult,
+  isInitialized,
+  saveSession as saveSessionToChroma,
+  findSimilarSessions,
+} from "./vector-db";
 
 const AGENT_ID = parseInt(process.argv[2] || "1");
 const INBOX = `/tmp/agent_inbox/${AGENT_ID}`;
@@ -36,6 +51,8 @@ interface Task {
   context?: string;
   priority?: "low" | "normal" | "high";
   working_dir?: string;
+  session_id?: string;
+  auto_save_session?: boolean;
 }
 
 function log(message: string) {
@@ -49,6 +66,74 @@ function logThinking() {
 
 function logError(message: string) {
   console.error(`${COLORS.red}[Agent-${AGENT_ID}] ERROR: ${message}${COLORS.reset}`);
+}
+
+/**
+ * Auto-save a mini-session after task completion
+ * Captures task context, result summary, and auto-links to similar sessions
+ */
+async function autoSaveTaskSession(
+  task: Task,
+  result: { status: string; output: string; duration_ms: number }
+): Promise<string | null> {
+  try {
+    const sessionId = `session_agent${AGENT_ID}_${Date.now()}`;
+    const now = new Date().toISOString();
+
+    // Create summary from task and result
+    const taskPreview = task.prompt.substring(0, 100);
+    const resultPreview = result.output.substring(0, 200);
+    const summary = `Agent ${AGENT_ID} task: ${taskPreview}${task.prompt.length > 100 ? '...' : ''}\n\nResult: ${resultPreview}${result.output.length > 200 ? '...' : ''}`;
+
+    // Determine what worked based on status
+    const whatWorked = result.status === 'completed'
+      ? [`Task completed successfully in ${result.duration_ms}ms`]
+      : [];
+
+    const whatDidntWork = result.status === 'error'
+      ? [`Task failed: ${result.output.substring(0, 100)}`]
+      : [];
+
+    // 1. Save to SQLite
+    const session: SessionRecord = {
+      id: sessionId,
+      summary,
+      full_context: {
+        what_worked: whatWorked,
+        what_didnt_work: whatDidntWork,
+      },
+      tags: [`agent-${AGENT_ID}`, 'auto-generated', task.priority || 'normal'],
+    };
+    createSession(session);
+
+    // 2. Link task to this session
+    linkTaskToSession(task.id, sessionId);
+
+    // 3. Save to ChromaDB for semantic search
+    if (isInitialized()) {
+      const searchContent = `${summary} Agent task ${task.priority || 'normal'} priority`;
+      await saveSessionToChroma(sessionId, searchContent, {
+        tags: session.tags || [],
+        created_at: now,
+      });
+
+      // 4. Auto-link to similar sessions
+      const { autoLinked, suggested } = await findSimilarSessions(searchContent, sessionId);
+      for (const link of autoLinked) {
+        createSessionLink(sessionId, link.id, 'auto_strong', link.similarity);
+      }
+
+      if (autoLinked.length > 0) {
+        log(`Auto-linked to ${autoLinked.length} similar sessions`);
+      }
+    }
+
+    log(`Created mini-session: ${sessionId}`);
+    return sessionId;
+  } catch (error) {
+    logError(`Failed to auto-save session: ${error}`);
+    return null;
+  }
 }
 
 async function ensureDirectories() {
@@ -121,6 +206,11 @@ async function processTask(taskFile: string): Promise<void> {
       logError(`Task failed: ${result.output}`);
       updateAgentStatus(AGENT_ID, "error", result.output.substring(0, 50));
       sendMessage(String(AGENT_ID), "orchestrator", `Failed task: ${task.id}`);
+    }
+
+    // Auto-save session if requested or high priority
+    if (task.auto_save_session || task.priority === 'high') {
+      await autoSaveTaskSession(task, result);
     }
 
     // Delete processed task file

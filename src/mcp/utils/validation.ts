@@ -20,6 +20,9 @@ export const AssignTaskSchema = z.object({
   task: z.string().min(1, "Task prompt cannot be empty"),
   context: z.string().optional(),
   priority: z.enum([TASK_PRIORITY.LOW, TASK_PRIORITY.NORMAL, TASK_PRIORITY.HIGH]).default(TASK_PRIORITY.NORMAL),
+  session_id: z.string().optional(),
+  include_context_bundle: z.boolean().default(false),
+  auto_save_session: z.boolean().default(false),
 });
 
 export const BroadcastTaskSchema = z.object({
