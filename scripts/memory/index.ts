@@ -22,11 +22,8 @@ async function main() {
 
     case 'recall':
     case 'search':
-      if (!arg) {
-        console.log('Usage: bun memory recall "search query"');
-        process.exit(1);
-      }
-      process.argv = [process.argv[0], process.argv[1], arg];
+      // No arg = resume last session, with arg = search/lookup
+      process.argv = [process.argv[0], process.argv[1], arg || ''];
       await import('./recall');
       break;
 
@@ -64,7 +61,10 @@ Usage: bun memory <command> [args]
 
 Commands:
   save              Save current session with full context
+  recall            Resume last session (show context to continue)
   recall "query"    Semantic search for sessions and learnings
+  recall "session_123"  Recall specific session by ID
+  recall "#5"       Recall specific learning by ID
   export [path]     Export learnings to LEARNINGS.md
   stats             Show session and learning statistics
   list [type]       List recent sessions or learnings
@@ -72,7 +72,9 @@ Commands:
 
 Examples:
   bun memory save
-  bun memory recall "embedding performance"
+  bun memory recall                        # Resume last session
+  bun memory recall "session_1768563283471"  # Specific session
+  bun memory recall "embedding performance"  # Semantic search
   bun memory export ./docs/LEARNINGS.md
   bun memory stats
   bun memory list sessions

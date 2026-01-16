@@ -33,7 +33,16 @@ Use these to manage session context and learnings:
 # Save session context before /clear
 bun memory save
 
-# Search past sessions and learnings
+# Resume last session (show pending tasks, next steps, context)
+bun memory recall
+
+# Recall specific session by ID
+bun memory recall "session_1768563283471"
+
+# Recall specific learning by ID
+bun memory recall "#5"
+
+# Semantic search for sessions and learnings
 bun memory recall "embedding performance"
 
 # Export learnings to markdown
@@ -53,11 +62,36 @@ bun memory context ["query"]
 Or use the direct scripts:
 ```bash
 bun run memory:save
-bun run memory:recall "query"
+bun run memory:recall              # Resume last session
+bun run memory:recall "query"      # Search or ID lookup
 bun run memory:export
 bun run memory:stats
 bun run memory:list sessions
 bun run memory:context
+```
+
+## Memory Recall Features
+
+### Resume Mode (No Args)
+When running `bun memory recall` without arguments, it shows the last session with actionable context:
+- Pending/blocked tasks to continue working on
+- Next steps defined in the session
+- Challenges encountered
+- Full session context (what worked, learnings, etc.)
+- Related sessions and key learnings
+
+### Exact ID Lookup
+Recall supports direct lookup by session or learning ID:
+```bash
+bun memory recall "session_1768559153258"  # Exact session lookup
+bun memory recall "#10"                     # Learning by ID
+bun memory recall "learning_10"             # Alternative learning ID format
+```
+
+### Semantic Search
+For non-ID queries, uses vector similarity search across sessions, learnings, and tasks:
+```bash
+bun memory recall "embedding performance"
 ```
 
 ## Architecture
@@ -92,6 +126,8 @@ bun run memory:context
 | `src/mcp-server.ts` | MCP server with orchestration tools |
 | `src/db.ts` | SQLite schema for agents, sessions, learnings |
 | `src/vector-db.ts` | ChromaDB integration with auto-linking |
+| `src/services/recall-service.ts` | Unified recall logic (ID detection + semantic search) |
+| `src/utils/formatters.ts` | Shared formatting (icons, badges, full_context) |
 | `src/mcp/tools/handlers/session.ts` | Session persistence tools |
 | `src/mcp/tools/handlers/learning.ts` | Learning management tools |
 | `src/mcp/tools/handlers/analytics.ts` | Stats and export tools |
