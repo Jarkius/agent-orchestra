@@ -422,3 +422,152 @@ export function getEmbeddingProviderInfo(): { provider: string; model?: string }
     model: config.model,
   };
 }
+
+// ============ HEALTH CHECK & AUTO-START ============
+
+export interface HealthStatus {
+  chromadb: {
+    status: "healthy" | "unhealthy" | "starting";
+    url: string;
+    message?: string;
+  };
+  embedding: {
+    status: "ready" | "not_initialized" | "error";
+    provider: string;
+    model?: string;
+  };
+  collections: {
+    initialized: boolean;
+    stats?: Record<string, number>;
+  };
+}
+
+/**
+ * Check if ChromaDB server is reachable
+ */
+export async function checkChromaHealth(timeoutMs = 5000): Promise<boolean> {
+  const url = process.env.CHROMA_URL || "http://localhost:8000";
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    const response = await fetch(`${url}/api/v1/heartbeat`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Start ChromaDB server if not running
+ * Returns the spawned process or null if already running
+ */
+export async function ensureChromaRunning(): Promise<{ started: boolean; pid?: number }> {
+  const isHealthy = await checkChromaHealth(2000);
+
+  if (isHealthy) {
+    console.error("[VectorDB] ChromaDB already running");
+    return { started: false };
+  }
+
+  console.error("[VectorDB] Starting ChromaDB server...");
+
+  const chromaDataPath = process.env.CHROMA_DATA_PATH || "./chroma_data";
+  const chromaPort = process.env.CHROMA_PORT || "8000";
+
+  try {
+    // Spawn ChromaDB in background
+    const proc = Bun.spawn(["chroma", "run", "--path", chromaDataPath, "--port", chromaPort], {
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    // Wait for it to become healthy (max 30 seconds)
+    const maxWait = 30000;
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (await checkChromaHealth(1000)) {
+        console.error(`[VectorDB] ChromaDB started (PID: ${proc.pid})`);
+        return { started: true, pid: proc.pid };
+      }
+    }
+
+    // Timeout - kill the process
+    proc.kill();
+    throw new Error("ChromaDB failed to start within 30 seconds");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[VectorDB] Failed to start ChromaDB: ${message}`);
+    throw error;
+  }
+}
+
+/**
+ * Get comprehensive health status
+ */
+export async function getHealthStatus(): Promise<HealthStatus> {
+  const chromaUrl = process.env.CHROMA_URL || "http://localhost:8000";
+  const embeddingConfig = getEmbeddingConfig();
+
+  // Check ChromaDB
+  const chromaHealthy = await checkChromaHealth();
+
+  // Check embedding
+  let embeddingStatus: HealthStatus["embedding"] = {
+    status: "not_initialized",
+    provider: embeddingConfig.provider,
+    model: embeddingConfig.model,
+  };
+
+  if (embeddingFunction) {
+    embeddingStatus.status = "ready";
+  }
+
+  // Check collections
+  let collectionStatus: HealthStatus["collections"] = {
+    initialized: initialized,
+  };
+
+  if (initialized && chromaHealthy) {
+    try {
+      collectionStatus.stats = await getCollectionStats();
+    } catch {
+      // Ignore stats errors
+    }
+  }
+
+  return {
+    chromadb: {
+      status: chromaHealthy ? "healthy" : "unhealthy",
+      url: chromaUrl,
+      message: chromaHealthy ? undefined : "ChromaDB server not reachable",
+    },
+    embedding: embeddingStatus,
+    collections: collectionStatus,
+  };
+}
+
+/**
+ * Initialize VectorDB with auto-start of ChromaDB
+ * Use this for MCP server startup
+ */
+export async function initVectorDBWithAutoStart(): Promise<HealthStatus> {
+  // Ensure ChromaDB is running
+  await ensureChromaRunning();
+
+  // Initialize vector DB
+  await initVectorDB();
+
+  // Pre-load embedding model
+  await preloadEmbeddingModel();
+
+  // Return health status
+  return getHealthStatus();
+}

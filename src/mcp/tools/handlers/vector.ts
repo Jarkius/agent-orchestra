@@ -23,6 +23,9 @@ import {
   getCollectionStats,
   isInitialized,
   initVectorDB,
+  getHealthStatus,
+  checkChromaHealth,
+  getEmbeddingProviderInfo,
 } from '../../../vector-db';
 import type { ToolDefinition, ToolHandler } from '../../types';
 
@@ -137,6 +140,14 @@ export const vectorTools: ToolDefinition[] = [
   {
     name: "get_vector_stats",
     description: "Get statistics about the vector database collections",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "health_check",
+    description: "Check health status of ChromaDB, embedding model, and vector collections",
     inputSchema: {
       type: "object",
       properties: {},
@@ -271,6 +282,25 @@ async function handleGetVectorStats() {
   }
 }
 
+async function handleHealthCheck() {
+  try {
+    const health = await getHealthStatus();
+    return jsonResponse({
+      status: health.chromadb.status === "healthy" && health.collections.initialized ? "healthy" : "degraded",
+      chromadb: health.chromadb,
+      embedding: health.embedding,
+      collections: health.collections,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return jsonResponse({
+      status: "unhealthy",
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
 // ============ Helper Functions ============
 
 function formatSearchResults(results: any) {
@@ -292,4 +322,5 @@ export const vectorHandlers: Record<string, ToolHandler> = {
   search_message_history: handleSearchMessageHistory,
   get_related_memory: handleGetRelatedMemory,
   get_vector_stats: handleGetVectorStats,
+  health_check: handleHealthCheck,
 };
