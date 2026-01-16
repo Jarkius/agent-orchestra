@@ -1,13 +1,13 @@
 # Session Snapshot - Claude Sub-Agent Orchestration System
-**Date:** 2026-01-16
+**Date:** 2026-01-16 (Updated)
 
 ## Current State
 
 ### Stack
 - **Runtime**: Bun/TypeScript
-- **Embeddings**: Transformers.js (bge-small-en-v1.5, nomic, minilm)
-- **Vector DB**: ChromaDB via Docker on port 8100 (auto-restart enabled)
-- **Database**: SQLite (agents.db)
+- **Embeddings**: Transformers.js (bge-small-en-v1.5) - 3ms queries
+- **Vector DB**: ChromaDB via Docker on port 8100 (auto-restart)
+- **Database**: SQLite (agents.db) - 3,500+ ops/sec
 
 ### Architecture
 ```
@@ -15,51 +15,61 @@
 │                    YOU (Orchestrator)                        │
 │                    Claude Code (Max plan)                    │
 └─────────────────────────┬───────────────────────────────────┘
-                          │ MCP Tools
+                          │ MCP Tools (27)
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │               MCP Server (src/mcp-server.ts)                 │
-│  Vector Search | Task Assignment | Session Persistence       │
+│  Agent Tools | Memory Tools | Vector Tools | Analytics       │
 └─────────────────────────┬───────────────────────────────────┘
                           │
           ┌───────────────┼───────────────┐
           ▼               ▼               ▼
     ┌──────────┐   ┌──────────┐   ┌──────────────┐
     │ ChromaDB │   │ SQLite   │   │ Agent Pool   │
-    │ :8100    │   │ agents.db│   │ claude CLI   │
+    │ :8100    │   │ agents.db│   │ tmux panes   │
     └──────────┘   └──────────┘   └──────────────┘
 ```
 
-## Git Log (8 commits)
-```
-ac809aa Add Docker auto-start and session persistence MCP tools
-6f5ed90 Update session snapshot with simplified stack
-6c4db8f Simplify stack: remove FastEmbed, use Docker ChromaDB on port 8100
-9b04eba Add session snapshot for context continuity
-7557c1b Add ChromaDB health check and auto-start on MCP init
-8889828 Switch default embedding provider to Transformers.js
-ea8b22d Add configurable embedding providers with Transformers.js support
-bb76da9 Add Claude Sub-Agent Orchestration System with FastEmbed semantic search
+## Memory Commands (Slash-style)
+```bash
+bun memory save           # Save session before /clear
+bun memory recall "query" # Semantic search
+bun memory export         # Generate LEARNINGS.md
+bun memory stats          # Show statistics
+bun memory list sessions  # List sessions
+bun memory context        # Context bundle for new session
 ```
 
 ## MCP Tools
 
-### Session Persistence (NEW)
+### Session Memory
 | Tool | Purpose |
 |------|---------|
-| `save_session` | Save session summary with tags for later recall |
-| `recall_session` | Semantic search past sessions |
-| `list_sessions` | List recent saved sessions |
+| `save_session` | Save with auto-linking |
+| `recall_session` | Semantic search |
+| `get_session` | Full details + links |
+| `list_sessions` | List with filters |
+| `link_sessions` | Create relationship |
 
-### Vector Search
+### Learnings
 | Tool | Purpose |
 |------|---------|
-| `search_similar_tasks` | Find similar past tasks |
-| `search_similar_results` | Find similar results |
-| `get_related_memory` | Combined memory search |
-| `health_check` | Check ChromaDB status |
+| `add_learning` | Add with auto-linking |
+| `recall_learnings` | Semantic search |
+| `get_learning` | Full details + links |
+| `list_learnings` | List with filters |
+| `validate_learning` | Increase confidence |
+| `link_learnings` | Create relationship |
 
-### Task Management
+### Analytics
+| Tool | Purpose |
+|------|---------|
+| `get_session_stats` | Statistics |
+| `get_improvement_report` | Learning metrics |
+| `get_context_bundle` | Context for new session |
+| `export_learnings` | Generate LEARNINGS.md |
+
+### Agent Orchestration
 | Tool | Purpose |
 |------|---------|
 | `assign_task` | Send task to specific agent |
@@ -70,63 +80,67 @@ bb76da9 Add Claude Sub-Agent Orchestration System with FastEmbed semantic search
 ## Key Files
 | File | Purpose |
 |------|---------|
-| `src/vector-db.ts` | ChromaDB + Docker auto-start |
-| `src/embeddings/index.ts` | Embedding factory (Transformers.js) |
-| `src/mcp/tools/handlers/session.ts` | Session persistence tools |
-| `src/mcp/tools/handlers/vector.ts` | Vector search tools |
-| `src/mcp/server.ts` | MCP server with auto-init |
+| `src/vector-db.ts` | ChromaDB + auto-linking |
+| `src/db.ts` | SQLite (sessions, learnings, links) |
+| `src/mcp/tools/handlers/session.ts` | Session tools |
+| `src/mcp/tools/handlers/learning.ts` | Learning tools |
+| `src/mcp/tools/handlers/analytics.ts` | Stats/export |
+| `scripts/memory/` | CLI commands |
+| `LEARNINGS.md` | Auto-generated |
 
-## ChromaDB Collections (6)
+## Performance Benchmarks
+| Operation | Latency | Notes |
+|-----------|---------|-------|
+| Embedding (short) | ~3ms | After warmup |
+| Embedding (long) | ~20ms | 150 words |
+| ChromaDB query | ~6ms | Semantic search |
+| SQLite insert | 0.28ms | 3,500 ops/sec |
+| SQLite query | 0.04ms | 24,000 ops/sec |
+
+Run: `bun run scripts/test-integration.ts`
+
+## ChromaDB Collections (7)
 | Collection | Purpose |
 |------------|---------|
-| `task_prompts` | What agents were asked |
-| `task_results` | What agents produced |
+| `task_prompts` | Agent task prompts |
+| `task_results` | Agent results |
 | `messages_inbound` | Orchestrator → Agent |
 | `messages_outbound` | Agent → Orchestrator |
 | `shared_context` | Agent shared context |
-| `orchestrator_sessions` | Session snapshots |
-
-## Configuration (.env)
-```bash
-EMBEDDING_MODEL=bge-small-en-v1.5  # or nomic-embed-text-v1.5
-CHROMA_URL=http://localhost:8100
-CHROMA_PORT=8100
-CHROMA_CONTAINER=chromadb
-```
+| `orchestrator_sessions` | Session memory |
+| `orchestrator_learnings` | Learning memory |
 
 ## Commands
 ```bash
-# ChromaDB auto-starts, but manual control:
+# Memory CLI
+bun memory save
+bun memory recall "query"
+bun memory export
+
+# ChromaDB
 docker start chromadb
-docker stop chromadb
+curl http://localhost:8100/api/v2/heartbeat
 
-# Test embeddings
-bun run test:transformers
-bun run scripts/test-embeddings.ts nomic
-
-# Test semantic search
+# Tests
+bun run scripts/test-integration.ts
 bun run test:semantic
 ```
 
 ## To Resume
-1. Read this file: `cat SESSION_SNAPSHOT.md`
-2. Docker auto-starts ChromaDB (restart policy: unless-stopped)
-3. Check health: `curl http://localhost:8100/api/v2/heartbeat`
-4. Use MCP tools: `save_session`, `recall_session`
+1. `bun memory context` - Get context bundle
+2. `bun memory recall "topic"` - Search relevant sessions
+3. `bun memory stats` - Check current state
 
-## Session Workflow
-```bash
-# Before /clear - save context
-save_session("Simplified stack, removed FastEmbed, Docker on 8100", tags=["embeddings", "docker"])
-
-# In new session - recall context
-recall_session("embedding provider changes")
-list_sessions()
-```
+## Integration Gaps (Future Work)
+1. **Inject learnings into agent prompts** - Agents could benefit from proven learnings
+2. **Auto-save agent sessions** - Track agent work as mini-sessions
+3. **Link agent tasks to sessions** - Enable "what did agents do?" queries
+4. **Context propagation** - Share session context with agents
 
 ## This Session Summary
-- Removed FastEmbed (Transformers.js is 25x faster)
-- Changed ChromaDB port 8000 → 8100
-- Switched to Docker for ChromaDB (auto-restart enabled)
-- Added session persistence MCP tools
-- All 6 collections initialized
+- Built enhanced memory system with SQLite + ChromaDB sync
+- Added learning.ts and analytics.ts MCP handlers (16 new tools)
+- Created memory CLI scripts (slash-command style)
+- Performance tested: embedding 3ms, query 6ms, SQLite 3,500 ops/sec
+- Analyzed agent integration gaps and created roadmap
+- Updated all documentation (CLAUDE.md, README.md, SESSION_SNAPSHOT.md)

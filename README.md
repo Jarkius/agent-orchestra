@@ -31,18 +31,53 @@ cat /tmp/agent_outbox/1/*.json
                           │ MCP Tools
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    MCP Server                                │
-│  assign_task | broadcast_task | get_task_result             │
-│  update_shared_context | get_agents                         │
+│               MCP Server (src/mcp-server.ts)                 │
+│  Agent Tools | Memory Tools | Vector Tools | Analytics       │
 └─────────────────────────┬───────────────────────────────────┘
-                          │ File-based task queue
-                          ▼
-┌───────────────┬───────────────┬───────────────┬─────────────┐
-│   Agent 1     │   Agent 2     │   Agent 3     │             │
-│  claude CLI   │  claude CLI   │  claude CLI   │             │
-│  (REAL AI!)   │  (REAL AI!)   │  (REAL AI!)   │             │
-└───────────────┴───────────────┴───────────────┴─────────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+    ┌──────────┐   ┌──────────┐   ┌──────────────┐
+    │ ChromaDB │   │ SQLite   │   │ Agent Pool   │
+    │ :8100    │   │ agents.db│   │ tmux panes   │
+    └──────────┘   └──────────┘   └──────────────┘
 ```
+
+## Memory System
+
+Save and recall session context across conversations:
+
+```bash
+# Save session before /clear
+bun memory save
+
+# Search past sessions and learnings
+bun memory recall "embedding performance"
+
+# Export learnings to markdown
+bun memory export
+
+# View statistics
+bun memory stats
+
+# List sessions or learnings
+bun memory list sessions
+
+# Get context for new session
+bun memory context
+```
+
+### Performance Benchmarks
+
+| Operation | Latency | Throughput |
+|-----------|---------|------------|
+| Embedding (short) | ~3ms | - |
+| Embedding (long) | ~20ms | - |
+| ChromaDB query | ~6ms | - |
+| SQLite insert | 0.28ms | 3,500 ops/sec |
+| SQLite query | 0.04ms | 24,000 ops/sec |
+
+Run benchmarks: `bun run scripts/test-integration.ts`
 
 ## Scripts Overview
 
@@ -84,12 +119,13 @@ Then restart Claude Code in this directory.
 
 The system includes a vector database (ChromaDB) for semantic search across tasks, results, and messages. Two embedding providers are available:
 
-### Embedding Providers
+### Embedding Provider
 
-| Provider | Model | Dims | Init Time | Query Time | Best For |
-|----------|-------|------|-----------|------------|----------|
-| **transformers** (default) | bge-small-en-v1.5 | 384 | ~200ms* | ~2ms | Fast queries, production |
-| **fastembed** | bge-small-en-v1.5 | 384 | ~280ms | ~70ms | Simpler setup |
+The system uses **Transformers.js** exclusively (FastEmbed was removed for better performance):
+
+| Provider | Model | Init Time | Query Time |
+|----------|-------|-----------|------------|
+| **transformers** | bge-small-en-v1.5 | ~200ms* | ~3ms |
 
 *First run downloads model (~50MB), subsequent runs use cache.
 
