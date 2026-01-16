@@ -23,7 +23,7 @@ export interface EmbeddingConfig {
 
 // Get config from environment
 export function getEmbeddingConfig(): EmbeddingConfig {
-  const provider = (process.env.EMBEDDING_PROVIDER || "fastembed") as EmbeddingProvider;
+  const provider = (process.env.EMBEDDING_PROVIDER || "transformers") as EmbeddingProvider;
 
   return {
     provider,

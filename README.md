@@ -88,16 +88,18 @@ The system includes a vector database (ChromaDB) for semantic search across task
 
 | Provider | Model | Dims | Init Time | Query Time | Best For |
 |----------|-------|------|-----------|------------|----------|
-| **fastembed** (default) | bge-small-en-v1.5 | 384 | ~280ms | ~70ms | Simplicity, low memory |
-| **transformers** | bge-small-en-v1.5 | 384 | ~2.6s | ~2ms | Fast queries after init |
+| **transformers** (default) | bge-small-en-v1.5 | 384 | ~200ms* | ~2ms | Fast queries, production |
+| **fastembed** | bge-small-en-v1.5 | 384 | ~280ms | ~70ms | Simpler setup |
+
+*First run downloads model (~50MB), subsequent runs use cache.
 
 ### Configuration
 
 Copy `.env.example` to `.env` and configure:
 
 ```bash
-# Choose provider: "fastembed" (default) or "transformers"
-EMBEDDING_PROVIDER=fastembed
+# Choose provider: "transformers" (default) or "fastembed"
+EMBEDDING_PROVIDER=transformers
 
 # Model (both providers support the same models)
 EMBEDDING_MODEL=bge-small-en-v1.5
