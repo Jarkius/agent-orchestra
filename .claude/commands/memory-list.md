@@ -9,7 +9,7 @@ List recent sessions or learnings with details.
 ## Usage
 
 ```
-/memory-list [sessions|learnings]
+/memory-list [sessions|learnings] [-i|--interactive]
 ```
 
 ## Examples
@@ -23,6 +23,10 @@ List recent sessions or learnings with details.
 # List recent learnings grouped by category
 /memory-list learnings
 /memory-list l
+
+# Interactive session browser
+/memory-list -i
+/memory-list sessions -i
 ```
 
 ## Session List Shows
@@ -56,5 +60,14 @@ bun memory list $ARGUMENTS
 Arguments:
 - `sessions` or `s` - List recent sessions
 - `learnings` or `l` - List recent learnings
+- `-i` or `--interactive` - Interactive session browser
 
 If no argument, default to sessions.
+
+## Interactive Mode
+
+Use `-i` flag for interactive browsing:
+- Arrow keys to navigate sessions
+- Enter to view full session details (summary, tasks, git context)
+- Back to return to list
+- Quit to exit
