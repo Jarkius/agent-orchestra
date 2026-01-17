@@ -8,6 +8,15 @@ import { listSessionsFromDb, listLearningsFromDb, getSessionTaskStats } from '..
 
 const type = process.argv[2] || 'sessions';
 
+/**
+ * Convert UTC timestamp to local time display
+ */
+function toLocalTime(utcString?: string): string {
+  if (!utcString) return 'unknown';
+  const date = new Date(utcString + (utcString.endsWith('Z') ? '' : 'Z'));
+  return date.toLocaleString();
+}
+
 async function list() {
   if (type === 'sessions' || type === 's') {
     console.log('\n📅 Recent Sessions\n');
@@ -40,7 +49,7 @@ async function list() {
       if (s.duration_mins) {
         console.log(`  Duration: ${s.duration_mins} mins | Commits: ${s.commits_count || 0}`);
       }
-      console.log(`  Created: ${s.created_at}`);
+      console.log(`  Created: ${toLocalTime(s.created_at)}`);
     }
 
     console.log('\n' + '─'.repeat(60));

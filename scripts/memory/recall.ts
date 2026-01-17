@@ -88,6 +88,15 @@ function formatTimeAgo(ms: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+/**
+ * Convert UTC timestamp to local time display
+ */
+function toLocalTime(utcString?: string): string {
+  if (!utcString) return 'unknown';
+  const date = new Date(utcString + (utcString.endsWith('Z') ? '' : 'Z'));
+  return date.toLocaleString();
+}
+
 const query = process.argv[2];
 const agentId = process.env.MEMORY_AGENT_ID ? parseInt(process.env.MEMORY_AGENT_ID) : undefined;
 
@@ -203,7 +212,7 @@ function displayResumeContext(result: RecallResult) {
   if (session.tags?.length) {
     console.log(`Tags: ${session.tags.join(', ')}`);
   }
-  console.log(`Created: ${session.created_at}`);
+  console.log(`Created: ${toLocalTime(session.created_at)}`);
 
   // Show pending/in-progress tasks first (actionable)
   const pendingTasks = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'blocked');
@@ -319,7 +328,7 @@ function displaySessionDetails(ctx: SessionWithContext) {
   // Show agent ownership
   const ownerLabel = session.agent_id === null ? 'orchestrator' : `Agent ${session.agent_id}`;
   console.log(`Owner: ${ownerLabel} | Visibility: ${session.visibility || 'public'}`);
-  console.log(`Created: ${session.created_at}`);
+  console.log(`Created: ${toLocalTime(session.created_at)}`);
 
   // Full context (includes next_steps, challenges, git info)
   if (session.full_context) {
@@ -384,7 +393,7 @@ function displayLearningDetails(ctx: LearningWithContext) {
   // Show agent ownership
   const ownerLabel = learning.agent_id === null ? 'orchestrator' : `Agent ${learning.agent_id}`;
   console.log(`Owner: ${ownerLabel} | Visibility: ${learning.visibility || 'public'}`);
-  console.log(`Created: ${learning.created_at}`);
+  console.log(`Created: ${toLocalTime(learning.created_at)}`);
 
   if (linkedLearnings.length > 0) {
     console.log('\n' + '─'.repeat(40));
