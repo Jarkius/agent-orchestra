@@ -45,39 +45,54 @@ cat /tmp/agent_outbox/1/*.json
 
 ## Memory System
 
-Save and recall session context across conversations:
+Persistent knowledge capture across Claude Code sessions. See [docs/memory-system.md](docs/memory-system.md) for full architecture.
+
+### Quick Reference
 
 ```bash
-# Save session before /clear
+# Save session (prompts for learnings with categories)
 bun memory save
 
-# Search past sessions and learnings
-bun memory recall "embedding performance"
+# Quick learning capture (12 categories)
+bun memory learn insight "Tests document behavior"
+bun memory learn philosophy "Simplicity over cleverness"
 
-# Export learnings to markdown
-bun memory export
+# Extract learnings from past sessions
+bun memory distill --last 5 --yes
 
-# View statistics
-bun memory stats
+# Search and recall
+bun memory recall "query"          # Semantic search
+bun memory recall                  # Resume last session
 
-# List sessions or learnings
-bun memory list sessions
-
-# Get context for new session
-bun memory context
+# Utilities
+bun memory stats                   # Statistics
+bun memory list learnings          # List learnings
+bun memory export                  # Export to markdown
 ```
 
-### Performance Benchmarks
+### Categories
 
-| Operation | Latency | Throughput |
-|-----------|---------|------------|
-| Embedding (short) | ~3ms | - |
-| Embedding (long) | ~20ms | - |
-| ChromaDB query | ~6ms | - |
-| SQLite insert | 0.28ms | 3,500 ops/sec |
-| SQLite query | 0.04ms | 24,000 ops/sec |
+| Technical | Wisdom |
+|-----------|--------|
+| performance, architecture, tooling | philosophy, principle, insight |
+| process, debugging, security, testing | pattern, retrospective |
 
-Run benchmarks: `bun run scripts/test-integration.ts`
+### Confidence Model
+
+| Source | Confidence |
+|--------|------------|
+| `save` (user confirmed) | medium |
+| `learn` / `distill` | low |
+
+Validate learnings over time: low → medium → high → proven
+
+### Performance
+
+| Operation | Latency |
+|-----------|---------|
+| Embedding | ~3ms |
+| ChromaDB query | ~6ms |
+| SQLite query | ~0.04ms |
 
 ## Scripts Overview
 
