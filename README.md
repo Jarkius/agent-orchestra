@@ -50,8 +50,9 @@ Persistent knowledge capture across Claude Code sessions. See [docs/memory-syste
 ### Quick Reference
 
 ```bash
-# Save session (prompts for learnings with categories)
+# Save session (auto-captures git context, prompts for learnings)
 bun memory save
+bun memory save "quick summary"    # Quick save with git context
 
 # Quick learning capture (12 categories)
 bun memory learn insight "Tests document behavior"
@@ -69,6 +70,13 @@ bun memory stats                   # Statistics
 bun memory list learnings          # List learnings
 bun memory export                  # Export to markdown
 ```
+
+### Auto-Captured Context
+
+Every save automatically captures:
+- Git branch, recent commits, files changed
+- Wins, issues, challenges, next steps
+- Indexed for semantic search (find sessions by file names, commit messages, etc.)
 
 ### Categories
 

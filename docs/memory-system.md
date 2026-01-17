@@ -152,7 +152,7 @@ Use `validate_learning` MCP tool to increase confidence based on real-world vali
 sessions (
   id TEXT PRIMARY KEY,
   summary TEXT,
-  full_context JSON,      -- what_worked, challenges, etc.
+  full_context JSON,      -- Rich context (see FullContext below)
   duration_mins INTEGER,
   commits_count INTEGER,
   tags JSON,
@@ -160,6 +160,27 @@ sessions (
   visibility TEXT,        -- private, shared, public
   created_at TEXT
 )
+
+-- FullContext JSON structure:
+{
+  -- Session outcomes
+  "wins": [],             -- What worked well
+  "issues": [],           -- Problems encountered
+  "key_decisions": [],    -- Decisions made
+  "challenges": [],       -- Difficulties faced
+  "next_steps": [],       -- What to do next
+
+  -- Ideas and learnings
+  "learnings": [],
+  "future_ideas": [],
+  "blockers_resolved": [],
+
+  -- Git context (auto-captured)
+  "git_branch": "main",
+  "git_commits": ["abc123 Commit message", ...],
+  "files_changed": ["src/file.ts", ...],
+  "diff_summary": "5 files changed, 100 insertions(+), 20 deletions(-)"
+}
 
 -- Learnings: Persistent knowledge
 learnings (
@@ -190,6 +211,21 @@ session_tasks (session_id, description, status, notes)
 | `task_search` | Task-based search |
 
 Embedding model: `bge-small-en-v1.5` via Transformers.js (~3ms per query)
+
+### Auto-Capture Features
+
+When saving a session, the system automatically captures:
+
+| Feature | What's Captured |
+|---------|-----------------|
+| Git branch | Current branch name |
+| Git commits | Last 10 commits with messages |
+| Files changed | Files modified in recent commits |
+| Diff summary | Insertions/deletions summary |
+
+This context is:
+- Indexed in ChromaDB for semantic search (e.g., search "statusline" to find sessions that modified statusline files)
+- Displayed in recall output for quick context
 
 ### Auto-Linking Algorithm
 

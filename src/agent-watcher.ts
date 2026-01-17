@@ -87,12 +87,12 @@ async function autoSaveTaskSession(
     const resultPreview = result.output.substring(0, 200);
     const summary = `Agent ${AGENT_ID} task: ${taskPreview}${task.prompt.length > 100 ? '...' : ''}\n\nResult: ${resultPreview}${result.output.length > 200 ? '...' : ''}`;
 
-    // Determine what worked based on status
-    const whatWorked = result.status === 'completed'
+    // Determine wins/issues based on status
+    const wins = result.status === 'completed'
       ? [`Task completed successfully in ${result.duration_ms}ms`]
       : [];
 
-    const whatDidntWork = result.status === 'error'
+    const issues = result.status === 'error'
       ? [`Task failed: ${result.output.substring(0, 100)}`]
       : [];
 
@@ -104,8 +104,8 @@ async function autoSaveTaskSession(
       id: sessionId,
       summary,
       full_context: {
-        what_worked: whatWorked,
-        what_didnt_work: whatDidntWork,
+        wins,
+        issues,
       },
       tags: [`agent-${AGENT_ID}`, 'auto-generated', task.priority || 'normal'],
       agent_id: AGENT_ID,

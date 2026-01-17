@@ -6,8 +6,14 @@
  * Usage:
  *   bun memory save                    # Interactive mode
  *   bun memory save "summary" --tags tag1,tag2
+ *
+ * Enhanced to auto-capture:
+ *   - Git commits made during session (last 10 by default)
+ *   - Files modified
+ *   - Key decisions and challenges
  */
 
+import { execSync } from 'child_process';
 import {
   createSession,
   createSessionLink,
@@ -28,6 +34,93 @@ import {
   findSimilarLearnings,
 } from '../../src/vector-db';
 import { createLearningLink } from '../../src/db';
+
+// ============ Git Context Auto-Capture ============
+
+interface GitContext {
+  branch: string;
+  recentCommits: string[];
+  filesChanged: string[];
+  diffSummary: string;
+}
+
+/**
+ * Build rich search content for ChromaDB indexing
+ * Includes summary, tags, and key context for better semantic search
+ */
+function buildSearchContent(summary: string, tags: string[], context: FullContext): string {
+  const parts: string[] = [summary];
+
+  if (tags.length > 0) {
+    parts.push(tags.join(' '));
+  }
+
+  // Add key decisions for searchability
+  if (context.key_decisions?.length) {
+    parts.push(`Decisions: ${context.key_decisions.join('. ')}`);
+  }
+
+  // Add wins and issues
+  if (context.wins?.length) {
+    parts.push(`Wins: ${context.wins.join('. ')}`);
+  }
+  if (context.issues?.length) {
+    parts.push(`Issues: ${context.issues.join('. ')}`);
+  }
+
+  // Add challenges
+  if (context.challenges?.length) {
+    parts.push(`Challenges: ${context.challenges.join('. ')}`);
+  }
+
+  // Add next steps
+  if (context.next_steps?.length) {
+    parts.push(`Next: ${context.next_steps.join('. ')}`);
+  }
+
+  // Add files changed for technical context
+  if (context.files_changed?.length) {
+    const keyFiles = context.files_changed.slice(0, 10).join(' ');
+    parts.push(`Files: ${keyFiles}`);
+  }
+
+  // Add git commits for context
+  if (context.git_commits?.length) {
+    const commits = context.git_commits.slice(0, 5).join(' ');
+    parts.push(`Commits: ${commits}`);
+  }
+
+  return parts.join(' ');
+}
+
+function captureGitContext(): GitContext | null {
+  try {
+    const branch = execSync('git branch --show-current', { encoding: 'utf-8' }).trim();
+
+    // Get recent commits (last 10)
+    const commitsRaw = execSync('git log --oneline -10 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
+    const recentCommits = commitsRaw ? commitsRaw.split('\n').filter(Boolean) : [];
+
+    // Get files changed in working tree + staged
+    const filesRaw = execSync('git diff --name-only HEAD~5 2>/dev/null || git diff --name-only --cached 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
+    const filesChanged = filesRaw ? [...new Set(filesRaw.split('\n').filter(Boolean))] : [];
+
+    // Get a summary of changes (insertions/deletions)
+    let diffSummary = '';
+    try {
+      const shortstat = execSync('git diff --shortstat HEAD~5 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
+      if (shortstat) {
+        diffSummary = shortstat;
+      }
+    } catch {
+      // Ignore if we can't get diff summary
+    }
+
+    return { branch, recentCommits, filesChanged, diffSummary };
+  } catch {
+    return null;
+  }
+}
 
 // Categories for learnings
 const TECHNICAL_CATEGORIES = ['performance', 'architecture', 'tooling', 'process', 'debugging', 'security', 'testing'] as const;
@@ -165,6 +258,24 @@ async function interactiveMode() {
   console.log('\n📝 Save Session - Interactive Mode\n');
   console.log('─'.repeat(50));
 
+  // Capture git context automatically
+  const gitContext = captureGitContext();
+  if (gitContext) {
+    console.log(`\n🔀 Git branch: ${gitContext.branch}`);
+    if (gitContext.recentCommits.length > 0) {
+      console.log(`   Recent commits: ${gitContext.recentCommits.length}`);
+      for (const commit of gitContext.recentCommits.slice(0, 3)) {
+        console.log(`     ${commit}`);
+      }
+      if (gitContext.recentCommits.length > 3) {
+        console.log(`     ... and ${gitContext.recentCommits.length - 3} more`);
+      }
+    }
+    if (gitContext.filesChanged.length > 0) {
+      console.log(`   Files changed: ${gitContext.filesChanged.length}`);
+    }
+  }
+
   // Show recent sessions for context
   const recent = listSessionsFromDb({ limit: 2 });
   if (recent.length > 0) {
@@ -186,7 +297,7 @@ async function interactiveMode() {
 
   // Get tags
   if (tags.length === 0) {
-    const tagsInput = await promptInput('Tags (comma-separated): ');
+    const tagsInput = await promptInput('Tags (comma-separated, optional): ');
     tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
   }
 
@@ -194,19 +305,34 @@ async function interactiveMode() {
   const durationInput = await promptInput('Duration in minutes (optional): ');
   const duration = durationInput ? parseInt(durationInput) : undefined;
 
-  // Get commits
-  const commitsInput = await promptInput('Commits count (optional): ');
-  const commits = commitsInput ? parseInt(commitsInput) : undefined;
+  // Get commits count (auto-suggest from git)
+  const suggestedCommits = gitContext?.recentCommits.length || 0;
+  const commitsPrompt = suggestedCommits > 0
+    ? `Commits count (detected ${suggestedCommits}, press enter to use): `
+    : 'Commits count (optional): ';
+  const commitsInput = await promptInput(commitsPrompt);
+  const commits = commitsInput ? parseInt(commitsInput) : (suggestedCommits || undefined);
 
-  // Get what worked
-  const whatWorkedInput = await promptInput('What worked? (comma-separated, optional): ');
-  const whatWorked = whatWorkedInput ? whatWorkedInput.split(',').map(t => t.trim()) : [];
+  // Get key decisions (important for context)
+  console.log('\n📌 Key decisions made this session:');
+  const keyDecisionsInput = await promptInput('   (comma-separated, e.g., "chose X over Y, implemented Z pattern"): ');
+  const keyDecisions = keyDecisionsInput ? keyDecisionsInput.split(',').map(t => t.trim()).filter(Boolean) : [];
 
-  // Get what didn't work
-  const whatDidntInput = await promptInput('What didn\'t work? (comma-separated, optional): ');
-  const whatDidnt = whatDidntInput ? whatDidntInput.split(',').map(t => t.trim()) : [];
+  // Get wins
+  const winsInput = await promptInput('Wins? (comma-separated): ');
+  const wins = winsInput ? winsInput.split(',').map(t => t.trim()).filter(Boolean) : [];
 
-  // Note: Learnings are now captured AFTER save with proper category selection
+  // Get issues
+  const issuesInput = await promptInput('Issues? (comma-separated): ');
+  const issues = issuesInput ? issuesInput.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+  // Get challenges
+  const challengesInput = await promptInput('Challenges? (comma-separated): ');
+  const challenges = challengesInput ? challengesInput.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+  // Get next steps
+  const nextStepsInput = await promptInput('Next steps? (comma-separated): ');
+  const nextSteps = nextStepsInput ? nextStepsInput.split(',').map(t => t.trim()).filter(Boolean) : [];
 
   // Collect tasks
   const tasks = await collectTasks();
@@ -218,21 +344,47 @@ async function interactiveMode() {
     commits,
     tasks,
     fullContext: {
-      what_worked: whatWorked.length > 0 ? whatWorked : undefined,
-      what_didnt_work: whatDidnt.length > 0 ? whatDidnt : undefined,
-      // learnings removed - now captured as proper learnings after save
+      wins: wins.length > 0 ? wins : undefined,
+      issues: issues.length > 0 ? issues : undefined,
+      key_decisions: keyDecisions.length > 0 ? keyDecisions : undefined,
+      challenges: challenges.length > 0 ? challenges : undefined,
+      next_steps: nextSteps.length > 0 ? nextSteps : undefined,
+      // Git context (auto-captured)
+      git_branch: gitContext?.branch,
+      git_commits: gitContext?.recentCommits.length ? gitContext.recentCommits : undefined,
+      files_changed: gitContext?.filesChanged.length ? gitContext.filesChanged : undefined,
+      diff_summary: gitContext?.diffSummary || undefined,
     } as FullContext,
   };
 }
 
 async function quickMode() {
+  // Auto-capture git context even in quick mode
+  const gitContext = captureGitContext();
+
+  console.log('\n📝 Quick Save Mode');
+  if (gitContext) {
+    console.log(`   🔀 Branch: ${gitContext.branch}`);
+    if (gitContext.recentCommits.length > 0) {
+      console.log(`   📦 Commits: ${gitContext.recentCommits.length}`);
+    }
+    if (gitContext.filesChanged.length > 0) {
+      console.log(`   📄 Files: ${gitContext.filesChanged.length}`);
+    }
+  }
+
   return {
     summary,
     tags,
     duration: undefined,
-    commits: undefined,
+    commits: gitContext?.recentCommits.length || undefined,
     tasks: [] as TaskInput[],
-    fullContext: {} as FullContext,
+    fullContext: {
+      git_branch: gitContext?.branch,
+      git_commits: gitContext?.recentCommits.length ? gitContext.recentCommits : undefined,
+      files_changed: gitContext?.filesChanged.length ? gitContext.filesChanged : undefined,
+      diff_summary: gitContext?.diffSummary || undefined,
+    } as FullContext,
   };
 }
 
@@ -261,12 +413,13 @@ async function saveCurrentSession() {
   console.log(`   ✓ Session ${sessionId} saved to SQLite`);
 
   console.log('\n2. Saving to ChromaDB...');
-  const searchContent = `${data.summary} ${data.tags.join(' ')}`;
+  const searchContent = buildSearchContent(data.summary, data.tags, data.fullContext);
   await saveSessionToChroma(sessionId, searchContent, {
     tags: data.tags,
     created_at: now,
   });
   console.log('   ✓ Session indexed in ChromaDB');
+  console.log(`   ℹ Search content: ${searchContent.substring(0, 100)}${searchContent.length > 100 ? '...' : ''}`);
 
   console.log('\n3. Finding similar sessions for auto-linking...');
   const { autoLinked, suggested } = await findSimilarSessions(searchContent, sessionId);

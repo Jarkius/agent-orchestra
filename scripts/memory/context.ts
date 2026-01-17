@@ -35,11 +35,11 @@ async function getContext() {
     console.log(`  ${s.id}`);
     console.log(`  ${s.summary?.substring(0, 70)}...`);
 
-    // Show what_worked and learnings from full_context if available
+    // Show wins and learnings from full_context if available
     if (s.full_context) {
       const ctx = s.full_context as any;
-      if (ctx.what_worked?.length) {
-        console.log(`  ✓ What worked: ${ctx.what_worked.slice(0, 2).join('; ')}`);
+      if (ctx.wins?.length) {
+        console.log(`  ✓ Wins: ${ctx.wins.slice(0, 2).join('; ')}`);
       }
       if (ctx.learnings?.length) {
         console.log(`  💡 Learnings: ${ctx.learnings.slice(0, 2).join('; ')}`);

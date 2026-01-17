@@ -12,15 +12,46 @@ export function formatFullContext(ctx: FullContext | null | undefined): string[]
   if (!ctx) return [];
 
   const lines: string[] = [];
+
+  // Git context (display at top for technical context)
+  if (ctx.git_branch || ctx.git_commits?.length || ctx.files_changed?.length) {
+    lines.push('Git:');
+    if (ctx.git_branch) {
+      lines.push(`  Branch: ${ctx.git_branch}`);
+    }
+    if (ctx.git_commits?.length) {
+      lines.push(`  Commits (${ctx.git_commits.length}):`);
+      for (const commit of ctx.git_commits.slice(0, 5)) {
+        lines.push(`    ${commit}`);
+      }
+      if (ctx.git_commits.length > 5) {
+        lines.push(`    ... and ${ctx.git_commits.length - 5} more`);
+      }
+    }
+    if (ctx.files_changed?.length) {
+      lines.push(`  Files (${ctx.files_changed.length}):`);
+      for (const file of ctx.files_changed.slice(0, 8)) {
+        lines.push(`    ${file}`);
+      }
+      if (ctx.files_changed.length > 8) {
+        lines.push(`    ... and ${ctx.files_changed.length - 8} more`);
+      }
+    }
+    if (ctx.diff_summary) {
+      lines.push(`  ${ctx.diff_summary}`);
+    }
+  }
+
+  // Array fields
   const fields: Array<{ key: keyof FullContext; label: string }> = [
-    { key: 'what_worked', label: 'What worked' },
-    { key: 'what_didnt_work', label: "What didn't work" },
-    { key: 'learnings', label: 'Learnings' },
-    { key: 'key_decisions', label: 'Key decisions' },
-    { key: 'blockers_resolved', label: 'Blockers resolved' },
-    { key: 'future_ideas', label: 'Future ideas' },
-    { key: 'next_steps', label: 'Next steps' },
+    { key: 'key_decisions', label: 'Decisions' },
+    { key: 'wins', label: 'Wins' },
+    { key: 'issues', label: 'Issues' },
     { key: 'challenges', label: 'Challenges' },
+    { key: 'next_steps', label: 'Next steps' },
+    { key: 'blockers_resolved', label: 'Resolved' },
+    { key: 'learnings', label: 'Learnings' },
+    { key: 'future_ideas', label: 'Ideas' },
   ];
 
   for (const { key, label } of fields) {

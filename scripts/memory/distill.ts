@@ -84,7 +84,7 @@ async function prompt(question: string): Promise<string> {
 interface ExtractedLearning {
   text: string;
   suggestedCategory: Category;
-  source: 'learnings' | 'what_worked' | 'challenges';
+  source: 'learnings' | 'wins' | 'challenges';
 }
 
 function extractFromSession(session: SessionRecord): ExtractedLearning[] {
@@ -107,14 +107,14 @@ function extractFromSession(session: SessionRecord): ExtractedLearning[] {
     }
   }
 
-  // Extract from what_worked array (often contains reusable insights)
-  if (Array.isArray(ctx.what_worked)) {
-    for (const item of ctx.what_worked) {
+  // Extract from wins array (often contains reusable insights)
+  if (Array.isArray(ctx.wins)) {
+    for (const item of ctx.wins) {
       if (typeof item === 'string' && item.trim()) {
         extracted.push({
           text: item.trim(),
           suggestedCategory: suggestCategory(item),
-          source: 'what_worked',
+          source: 'wins',
         });
       }
     }
@@ -208,7 +208,7 @@ async function distillSession(session: SessionRecord) {
   for (let i = 0; i < extracted.length; i++) {
     const item = extracted[i];
     const icon = CATEGORY_ICONS[item.suggestedCategory];
-    const sourceLabel = item.source === 'learnings' ? '💡' : item.source === 'what_worked' ? '✓' : '⚠️';
+    const sourceLabel = item.source === 'learnings' ? '💡' : item.source === 'wins' ? '✓' : '⚠️';
 
     console.log(`   ${i + 1}. ${sourceLabel} [${item.suggestedCategory}] ${item.text.substring(0, 70)}${item.text.length > 70 ? '...' : ''}`);
 
@@ -277,7 +277,7 @@ Usage:
 Options:
   --yes, -y    Auto-accept all suggestions (no prompts)
 
-This extracts learnings, what_worked, and challenges from session context
+This extracts learnings, wins, and challenges from session context
 and saves them as proper learnings with category and confidence.
 `);
     return;

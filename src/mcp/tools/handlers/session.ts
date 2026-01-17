@@ -30,19 +30,24 @@ import { z } from 'zod';
 const SaveSessionSchema = z.object({
   summary: z.string().min(1),
   full_context: z.object({
-    what_worked: z.array(z.string()).optional(),
-    what_didnt_work: z.array(z.string()).optional(),
+    wins: z.array(z.string()).optional(),
+    issues: z.array(z.string()).optional(),
+    key_decisions: z.array(z.string()).optional(),
+    challenges: z.array(z.string()).optional(),
+    next_steps: z.array(z.string()).optional(),
     learnings: z.array(z.string()).optional(),
     future_ideas: z.array(z.string()).optional(),
-    key_decisions: z.array(z.string()).optional(),
     blockers_resolved: z.array(z.string()).optional(),
+    // Git context (auto-captured)
+    git_branch: z.string().optional(),
+    git_commits: z.array(z.string()).optional(),
+    files_changed: z.array(z.string()).optional(),
+    diff_summary: z.string().optional(),
   }).optional(),
   duration_mins: z.number().optional(),
   commits_count: z.number().optional(),
   tags: z.array(z.string()).optional(),
   previous_session_id: z.string().optional(),
-  next_steps: z.array(z.string()).optional(),
-  challenges: z.array(z.string()).optional(),
   agent_id: z.number().int().nullable().optional(),
   visibility: z.enum(['private', 'shared', 'public']).optional(),
 });
@@ -95,20 +100,24 @@ export const sessionTools: ToolDefinition[] = [
           type: "object",
           description: "Detailed context object",
           properties: {
-            what_worked: { type: "array", items: { type: "string" } },
-            what_didnt_work: { type: "array", items: { type: "string" } },
+            wins: { type: "array", items: { type: "string" }, description: "What worked well" },
+            issues: { type: "array", items: { type: "string" }, description: "Problems encountered" },
+            key_decisions: { type: "array", items: { type: "string" }, description: "Key decisions made" },
+            challenges: { type: "array", items: { type: "string" }, description: "Challenges faced" },
+            next_steps: { type: "array", items: { type: "string" }, description: "Planned next steps" },
             learnings: { type: "array", items: { type: "string" } },
             future_ideas: { type: "array", items: { type: "string" } },
-            key_decisions: { type: "array", items: { type: "string" } },
             blockers_resolved: { type: "array", items: { type: "string" } },
+            git_branch: { type: "string", description: "Git branch name" },
+            git_commits: { type: "array", items: { type: "string" }, description: "Recent commits" },
+            files_changed: { type: "array", items: { type: "string" }, description: "Files modified" },
+            diff_summary: { type: "string", description: "Git diff summary" },
           },
         },
         duration_mins: { type: "number", description: "Session duration in minutes" },
         commits_count: { type: "number", description: "Number of commits" },
         tags: { type: "array", items: { type: "string" }, description: "Tags for categorization" },
         previous_session_id: { type: "string", description: "ID of previous session (for continuation)" },
-        next_steps: { type: "array", items: { type: "string" }, description: "Planned next steps" },
-        challenges: { type: "array", items: { type: "string" }, description: "Current challenges or blockers" },
         agent_id: { type: "number", description: "Agent ID (null = orchestrator)" },
         visibility: { type: "string", enum: ["private", "shared", "public"], description: "Session visibility (default: public for orchestrator, private for agents)" },
       },
@@ -182,26 +191,34 @@ async function handleSaveSession(args: unknown) {
   const visibility = input.visibility || (agentId === null ? 'public' : 'private') as Visibility;
 
   try {
+    const fullContext: FullContext | undefined = input.full_context;
+
     // 1. Save to SQLite (source of truth)
     const session: SessionRecord = {
       id: sessionId,
       previous_session_id: input.previous_session_id,
       summary: input.summary,
-      full_context: input.full_context as FullContext,
+      full_context: fullContext,
       duration_mins: input.duration_mins,
       commits_count: input.commits_count,
       tags: input.tags,
-      next_steps: input.next_steps,
-      challenges: input.challenges,
       agent_id: agentId,
       visibility,
     };
     createSession(session);
 
-    // 2. Save to ChromaDB (search index)
-    const nextStepsText = input.next_steps?.length ? ` Next steps: ${input.next_steps.join('. ')}` : '';
-    const challengesText = input.challenges?.length ? ` Challenges: ${input.challenges.join('. ')}` : '';
-    const searchContent = `${input.summary} ${input.tags?.join(' ') || ''}${nextStepsText}${challengesText}`;
+    // 2. Save to ChromaDB (search index) with rich content
+    const searchParts = [input.summary];
+    if (input.tags?.length) searchParts.push(input.tags.join(' '));
+    if (fullContext.key_decisions?.length) searchParts.push(`Decisions: ${fullContext.key_decisions.join('. ')}`);
+    if (fullContext.wins?.length) searchParts.push(`Wins: ${fullContext.wins.join('. ')}`);
+    if (fullContext.issues?.length) searchParts.push(`Issues: ${fullContext.issues.join('. ')}`);
+    if (fullContext.challenges?.length) searchParts.push(`Challenges: ${fullContext.challenges.join('. ')}`);
+    if (fullContext.next_steps?.length) searchParts.push(`Next: ${fullContext.next_steps.join('. ')}`);
+    if (fullContext.files_changed?.length) searchParts.push(`Files: ${fullContext.files_changed.slice(0, 10).join(' ')}`);
+    if (fullContext.git_commits?.length) searchParts.push(`Commits: ${fullContext.git_commits.slice(0, 5).join(' ')}`);
+
+    const searchContent = searchParts.join(' ');
     await saveSessionToChroma(sessionId, searchContent, {
       tags: input.tags || [],
       created_at: now,

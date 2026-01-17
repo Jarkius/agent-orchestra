@@ -501,14 +501,24 @@ export function getDashboardData() {
 // ============ Session Memory Functions ============
 
 export interface FullContext {
-  what_worked?: string[];
-  what_didnt_work?: string[];
+  // Session outcomes
+  wins?: string[];
+  issues?: string[];
+  key_decisions?: string[];
+  challenges?: string[];
+  next_steps?: string[];
+  // Ideas and learnings
   learnings?: string[];
   future_ideas?: string[];
-  key_decisions?: string[];
   blockers_resolved?: string[];
-  next_steps?: string[];
-  challenges?: string[];
+  // Git context (auto-captured)
+  git_branch?: string;
+  git_commits?: string[];
+  files_changed?: string[];
+  diff_summary?: string;
+  // Technical details
+  commands_run?: string[];
+  config_changes?: string[];
 }
 
 export type Visibility = 'private' | 'shared' | 'public';
@@ -521,8 +531,6 @@ export interface SessionRecord {
   duration_mins?: number;
   commits_count?: number;
   tags?: string[];
-  next_steps?: string[];
-  challenges?: string[];
   agent_id?: number | null;
   visibility?: Visibility;
   created_at?: string;
@@ -530,8 +538,8 @@ export interface SessionRecord {
 
 export function createSession(session: SessionRecord): void {
   db.run(
-    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, next_steps, challenges, agent_id, visibility)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, agent_id, visibility)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session.id,
       session.previous_session_id || null,
@@ -540,8 +548,6 @@ export function createSession(session: SessionRecord): void {
       session.duration_mins || null,
       session.commits_count || null,
       session.tags?.join(',') || null,
-      session.next_steps ? JSON.stringify(session.next_steps) : null,
-      session.challenges ? JSON.stringify(session.challenges) : null,
       session.agent_id ?? null,
       session.visibility || 'public',
     ]
@@ -551,12 +557,13 @@ export function createSession(session: SessionRecord): void {
 export function getSessionById(sessionId: string): SessionRecord | null {
   const row = db.query(`SELECT * FROM sessions WHERE id = ?`).get(sessionId) as any;
   if (!row) return null;
+
+  const fullContext: FullContext | null = row.full_context ? JSON.parse(row.full_context) : null;
+
   return {
     ...row,
-    full_context: row.full_context ? JSON.parse(row.full_context) : null,
+    full_context: fullContext,
     tags: row.tags ? row.tags.split(',') : [],
-    next_steps: row.next_steps ? JSON.parse(row.next_steps) : [],
-    challenges: row.challenges ? JSON.parse(row.challenges) : [],
     agent_id: row.agent_id ?? null,
     visibility: row.visibility || 'public',
   };
@@ -604,8 +611,6 @@ export function listSessionsFromDb(options?: ListSessionsOptions): SessionRecord
     ...row,
     full_context: row.full_context ? JSON.parse(row.full_context) : null,
     tags: row.tags ? row.tags.split(',') : [],
-    next_steps: row.next_steps ? JSON.parse(row.next_steps) : [],
-    challenges: row.challenges ? JSON.parse(row.challenges) : [],
     agent_id: row.agent_id ?? null,
     visibility: row.visibility || 'public',
   }));
@@ -1075,4 +1080,140 @@ export function getAllSessionTasks(limit = 100): SessionTask[] {
   return db.query(
     `SELECT * FROM session_tasks ORDER BY created_at DESC LIMIT ?`
   ).all(limit) as SessionTask[];
+}
+
+// ============ Purge/Reset Functions ============
+
+export interface PurgeResult {
+  sessions: number;
+  learnings: number;
+  sessionLinks: number;
+  learningLinks: number;
+  tasks: number;
+}
+
+/**
+ * Purge all sessions (and related data)
+ */
+export function purgeSessions(options?: { before?: string; keep?: number }): PurgeResult {
+  const { before, keep } = options || {};
+
+  let sessionIds: string[] = [];
+
+  if (keep !== undefined) {
+    // Get IDs of sessions to keep (most recent N)
+    const keepIds = db.query(
+      `SELECT id FROM sessions ORDER BY created_at DESC LIMIT ?`
+    ).all(keep) as { id: string }[];
+    const keepIdSet = new Set(keepIds.map(r => r.id));
+
+    // Get all sessions except those we're keeping
+    const allIds = db.query(`SELECT id FROM sessions`).all() as { id: string }[];
+    sessionIds = allIds.filter(r => !keepIdSet.has(r.id)).map(r => r.id);
+  } else if (before) {
+    const rows = db.query(
+      `SELECT id FROM sessions WHERE created_at < ?`
+    ).all(before) as { id: string }[];
+    sessionIds = rows.map(r => r.id);
+  } else {
+    const rows = db.query(`SELECT id FROM sessions`).all() as { id: string }[];
+    sessionIds = rows.map(r => r.id);
+  }
+
+  if (sessionIds.length === 0) {
+    return { sessions: 0, learnings: 0, sessionLinks: 0, learningLinks: 0, tasks: 0 };
+  }
+
+  const placeholders = sessionIds.map(() => '?').join(',');
+
+  // Delete related data
+  const tasksDeleted = db.run(
+    `DELETE FROM session_tasks WHERE session_id IN (${placeholders})`,
+    sessionIds
+  ).changes;
+
+  const linksDeleted = db.run(
+    `DELETE FROM session_links WHERE from_session_id IN (${placeholders}) OR to_session_id IN (${placeholders})`,
+    [...sessionIds, ...sessionIds]
+  ).changes;
+
+  // Delete sessions
+  const sessionsDeleted = db.run(
+    `DELETE FROM sessions WHERE id IN (${placeholders})`,
+    sessionIds
+  ).changes;
+
+  return {
+    sessions: sessionsDeleted,
+    learnings: 0,
+    sessionLinks: linksDeleted,
+    learningLinks: 0,
+    tasks: tasksDeleted,
+  };
+}
+
+/**
+ * Purge all learnings (and related links)
+ */
+export function purgeLearnings(options?: { before?: string; keep?: number }): PurgeResult {
+  const { before, keep } = options || {};
+
+  let learningIds: number[] = [];
+
+  if (keep !== undefined) {
+    const keepIds = db.query(
+      `SELECT id FROM learnings ORDER BY created_at DESC LIMIT ?`
+    ).all(keep) as { id: number }[];
+    const keepIdSet = new Set(keepIds.map(r => r.id));
+
+    const allIds = db.query(`SELECT id FROM learnings`).all() as { id: number }[];
+    learningIds = allIds.filter(r => !keepIdSet.has(r.id)).map(r => r.id);
+  } else if (before) {
+    const rows = db.query(
+      `SELECT id FROM learnings WHERE created_at < ?`
+    ).all(before) as { id: number }[];
+    learningIds = rows.map(r => r.id);
+  } else {
+    const rows = db.query(`SELECT id FROM learnings`).all() as { id: number }[];
+    learningIds = rows.map(r => r.id);
+  }
+
+  if (learningIds.length === 0) {
+    return { sessions: 0, learnings: 0, sessionLinks: 0, learningLinks: 0, tasks: 0 };
+  }
+
+  const placeholders = learningIds.map(() => '?').join(',');
+
+  // Delete related links
+  const linksDeleted = db.run(
+    `DELETE FROM learning_links WHERE from_learning_id IN (${placeholders}) OR to_learning_id IN (${placeholders})`,
+    [...learningIds, ...learningIds]
+  ).changes;
+
+  // Delete learnings
+  const learningsDeleted = db.run(
+    `DELETE FROM learnings WHERE id IN (${placeholders})`,
+    learningIds
+  ).changes;
+
+  return {
+    sessions: 0,
+    learnings: learningsDeleted,
+    sessionLinks: 0,
+    learningLinks: linksDeleted,
+    tasks: 0,
+  };
+}
+
+/**
+ * Reset all memory data (nuclear option)
+ */
+export function resetAllMemory(): PurgeResult {
+  const sessions = db.run(`DELETE FROM sessions`).changes;
+  const learnings = db.run(`DELETE FROM learnings`).changes;
+  const sessionLinks = db.run(`DELETE FROM session_links`).changes;
+  const learningLinks = db.run(`DELETE FROM learning_links`).changes;
+  const tasks = db.run(`DELETE FROM session_tasks`).changes;
+
+  return { sessions, learnings, sessionLinks, learningLinks, tasks };
 }
