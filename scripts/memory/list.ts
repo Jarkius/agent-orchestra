@@ -8,13 +8,24 @@ import { listSessionsFromDb, listLearningsFromDb, getSessionTaskStats } from '..
 
 const type = process.argv[2] || 'sessions';
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// ANSI color codes
+const CYAN = '\u001b[36m';
+const RESET = '\u001b[0m';
+
 /**
- * Convert UTC timestamp to local time display
+ * Convert UTC timestamp to local time display (dd Mon yyyy HH:mm)
  */
 function toLocalTime(utcString?: string): string {
   if (!utcString) return 'unknown';
   const date = new Date(utcString + (utcString.endsWith('Z') ? '' : 'Z'));
-  return date.toLocaleString();
+  const day = date.getDate().toString().padStart(2, '0');
+  const month = MONTHS[date.getMonth()];
+  const year = date.getFullYear();
+  const hours = date.getHours().toString().padStart(2, '0');
+  const mins = date.getMinutes().toString().padStart(2, '0');
+  return `${day} ${month} ${year} ${hours}:${mins}`;
 }
 
 async function list() {
@@ -30,9 +41,17 @@ async function list() {
     }
 
     for (const s of sessions) {
-      console.log(`\n${s.id}`);
+      const duration = s.duration_mins ? `${s.duration_mins} mins` : '-';
+      const commits = s.commits_count || 0;
+      const created = toLocalTime(s.created_at);
+
+      console.log(`\n${created} │ Duration: ${duration} │ Commits: ${commits}`);
+      console.log(`  ${CYAN}${s.id}${RESET}`);
       console.log(`  ${s.summary?.substring(0, 80)}${s.summary && s.summary.length > 80 ? '...' : ''}`);
-      console.log(`  Tags: ${s.tags?.join(', ') || 'none'}`);
+
+      if (s.tags && s.tags.length > 0) {
+        console.log(`  Tags: ${s.tags.join(', ')}`);
+      }
 
       // Show task stats
       const taskStats = getSessionTaskStats(s.id);
@@ -45,11 +64,6 @@ async function list() {
         if (taskStats.in_progress > 0) parts.push(`${taskStats.in_progress} in progress`);
         console.log(`  Tasks: ${parts.join(', ')}`);
       }
-
-      if (s.duration_mins) {
-        console.log(`  Duration: ${s.duration_mins} mins | Commits: ${s.commits_count || 0}`);
-      }
-      console.log(`  Created: ${toLocalTime(s.created_at)}`);
     }
 
     console.log('\n' + '─'.repeat(60));
@@ -80,7 +94,9 @@ async function list() {
       for (const l of items) {
         const badge = l.confidence === 'proven' ? '⭐' : l.confidence === 'high' ? '✓' : '○';
         const validated = l.times_validated && l.times_validated > 1 ? ` (${l.times_validated}x)` : '';
+        const timestamp = toLocalTime(l.created_at);
         console.log(`  ${badge} #${l.id} ${l.title}${validated}`);
+        console.log(`    Created: ${timestamp}`);
       }
     }
 
