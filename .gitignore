@@ -1,40 +1,76 @@
-# dependencies (bun install)
-node_modules
+# Dependencies
+node_modules/
 
-# output
-out
-dist
+# Build output
+out/
+dist/
 *.tgz
 
-# code coverage
-coverage
+# Code coverage
+coverage/
 *.lcov
 
-# logs
-logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+# Logs
+logs/
+*.log
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
-# dotenv environment variable files
+# Environment variables
 .env
-.env.development.local
-.env.test.local
-.env.production.local
 .env.local
+.env.*.local
 
-# caches
+# Caches
 .eslintcache
-.cache
+.cache/
 *.tsbuildinfo
 
-# IntelliJ based IDEs
-.idea
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
 
-# Finder (MacOS) folder config
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # Runtime data
 agents.db
+agents.db-wal
+agents.db-shm
+
+# ChromaDB / Vector storage
 chroma_data/
 local_cache/
+
+# Embedding models
+models/
+*.onnx
+
+# Agent worktrees (created at runtime)
+.worktrees/
+
+# Temporary files
 /tmp/
+*.tmp
+*.temp
+
+# Agent inbox/outbox (runtime)
+/tmp/agent_inbox/
+/tmp/agent_outbox/
+/tmp/agent_shared/
+
+# Archive (old/deprecated code)
+archive/
+
+# Test artifacts
+test-results/
+playwright-report/
+
+# Secrets (never commit)
+*.pem
+*.key
+credentials.json
+secrets.json
