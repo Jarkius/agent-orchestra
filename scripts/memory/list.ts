@@ -24,6 +24,31 @@ const YELLOW = '\u001b[33m';
 const GREEN = '\u001b[32m';
 const WHITE = '\u001b[37m';
 
+import { spawnSync } from 'child_process';
+
+/**
+ * Copy text to clipboard (cross-platform)
+ */
+function copyToClipboard(text: string): boolean {
+  try {
+    const platform = process.platform;
+    if (platform === 'darwin') {
+      spawnSync('pbcopy', { input: text });
+    } else if (platform === 'linux') {
+      // Try xclip first, then xsel
+      const xclip = spawnSync('xclip', ['-selection', 'clipboard'], { input: text });
+      if (xclip.error) {
+        spawnSync('xsel', ['--clipboard', '--input'], { input: text });
+      }
+    } else if (platform === 'win32') {
+      spawnSync('clip', { input: text, shell: true });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Box drawing characters
 const BOX = {
   topLeft: '┌',
@@ -125,10 +150,15 @@ async function interactiveSessionList(): Promise<void> {
     return;
   }
 
+  // Calculate available width for summary in interactive mode
+  const termWidth = process.stdout.columns || 120;
+  const prefixWidth = 20 + 3 + 13 + 3; // date + separator + id + separator
+  const interactiveSummaryWidth = Math.max(50, termWidth - prefixWidth - 5);
+
   while (true) {
     const choices = sessions.map(s => ({
       name: s.id,
-      message: `${toLocalTime(s.created_at)} │ ${CYAN}${s.id.replace('session_', '').substring(0, 13)}${RESET} │ ${(s.summary || 'No summary').substring(0, 50)}`,
+      message: `${toLocalTime(s.created_at)} │ ${CYAN}${s.id.replace('session_', '').substring(0, 13)}${RESET} │ ${(s.summary || 'No summary').substring(0, interactiveSummaryWidth)}`,
       value: s.id,
     }));
 
@@ -156,12 +186,22 @@ async function interactiveSessionList(): Promise<void> {
         name: 'action',
         message: 'What next?',
         choices: [
+          { name: 'copy', message: `📋 Copy ID (${selected})` },
           { name: 'back', message: 'Back to list' },
           { name: 'quit', message: 'Quit' },
         ],
       });
 
       const action = await actionPrompt.run();
+      if (action === 'copy') {
+        if (copyToClipboard(selected)) {
+          console.log(`${GREEN}✓ Copied to clipboard: ${selected}${RESET}`);
+        } else {
+          console.log(`${YELLOW}Could not copy to clipboard. ID: ${selected}${RESET}`);
+        }
+        // Stay in the loop to allow further actions
+        continue;
+      }
       if (action === 'quit') {
         console.log(`${DIM}Goodbye!${RESET}`);
         break;
@@ -191,12 +231,16 @@ async function list() {
       return;
     }
 
-    // Column widths
-    const COL = { created: 18, duration: 8, commits: 7, sessionId: 15 };
+    // Column widths - summary expands to fill terminal
+    const fixedCols = { created: 18, duration: 8, commits: 7, sessionId: 15 };
+    const fixedWidth = fixedCols.created + fixedCols.duration + fixedCols.commits + fixedCols.sessionId + 14; // +14 for borders/padding
+    const termWidth = process.stdout.columns || 120;
+    const summaryWidth = Math.max(50, termWidth - fixedWidth - 4); // -4 for final border padding
+    const COL = { ...fixedCols, summary: summaryWidth };
 
     // Build table
     const hLine = (left: string, mid: string, right: string) =>
-      `${left}${BOX.horizontal.repeat(COL.created + 2)}${mid}${BOX.horizontal.repeat(COL.duration + 2)}${mid}${BOX.horizontal.repeat(COL.commits + 2)}${mid}${BOX.horizontal.repeat(COL.sessionId + 2)}${mid}${BOX.horizontal.repeat(50)}${right}`;
+      `${left}${BOX.horizontal.repeat(COL.created + 2)}${mid}${BOX.horizontal.repeat(COL.duration + 2)}${mid}${BOX.horizontal.repeat(COL.commits + 2)}${mid}${BOX.horizontal.repeat(COL.sessionId + 2)}${mid}${BOX.horizontal.repeat(COL.summary + 2)}${right}`;
 
     // Header
     console.log(hLine(BOX.topLeft, BOX.topT, BOX.topRight));
@@ -205,7 +249,7 @@ async function list() {
       `${BOX.vertical} ${BOLD}${WHITE}${'Duration'.padEnd(COL.duration)}${RESET} ` +
       `${BOX.vertical} ${BOLD}${WHITE}${'Commits'.padEnd(COL.commits)}${RESET} ` +
       `${BOX.vertical} ${BOLD}${WHITE}${'Session ID'.padEnd(COL.sessionId)}${RESET} ` +
-      `${BOX.vertical} ${BOLD}${WHITE}${'Summary'.padEnd(48)}${RESET} ${BOX.vertical}`
+      `${BOX.vertical} ${BOLD}${WHITE}${'Summary'.padEnd(COL.summary)}${RESET} ${BOX.vertical}`
     );
     console.log(hLine(BOX.leftT, BOX.cross, BOX.rightT));
 
@@ -223,7 +267,7 @@ async function list() {
         `${BOX.vertical} ${durationColor}${duration.padEnd(COL.duration)}${durationColor ? RESET : ''} ` +
         `${BOX.vertical} ${commits.padEnd(COL.commits)} ` +
         `${BOX.vertical} ${CYAN}${sessionId.padEnd(COL.sessionId)}${RESET} ` +
-        `${BOX.vertical} ${summary.substring(0, 48).padEnd(48)} ${BOX.vertical}`
+        `${BOX.vertical} ${summary.substring(0, COL.summary).padEnd(COL.summary)} ${BOX.vertical}`
       );
 
       // Show tags and tasks on separate lines if present
@@ -243,7 +287,8 @@ async function list() {
       }
       if (extras.length > 0) {
         const extraPad = COL.created + COL.duration + COL.commits + COL.sessionId + 12;
-        console.log(`${BOX.vertical} ${DIM}${''.padEnd(extraPad)}${extras.join(' │ ')}${RESET}`.padEnd(100) + ` ${BOX.vertical}`);
+        const totalWidth = fixedWidth + COL.summary + 2;
+        console.log(`${BOX.vertical} ${DIM}${''.padEnd(extraPad)}${extras.join(' │ ')}${RESET}`.padEnd(totalWidth) + ` ${BOX.vertical}`);
       }
     }
 
