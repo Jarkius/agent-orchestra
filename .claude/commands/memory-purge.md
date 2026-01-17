@@ -1,3 +1,7 @@
+---
+description: "Selectively delete sessions or learnings. Supports --keep N, --before DATE for controlled cleanup."
+---
+
 # Memory Purge
 
 Selectively purge sessions or learnings from memory.

@@ -519,6 +519,12 @@ export interface FullContext {
   // Technical details
   commands_run?: string[];
   config_changes?: string[];
+  // Claude Code context (auto-captured with --auto)
+  user_messages?: string[];
+  plan_file?: string;
+  plan_title?: string;
+  claude_session_id?: string;
+  message_count?: number;
 }
 
 export type Visibility = 'private' | 'shared' | 'public';

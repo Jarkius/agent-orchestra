@@ -1,3 +1,7 @@
+---
+description: "Save session context, git state, tasks, and learnings for later recall. Use before /clear or ending work."
+---
+
 # Memory Save
 
 Save the current session to SQLite and ChromaDB for later recall.
@@ -8,47 +12,60 @@ Save the current session to SQLite and ChromaDB for later recall.
 /memory-save [summary]
 ```
 
-## Examples
+## What Gets Auto-Captured
 
-```bash
-# Interactive mode - prompts for summary, tags, tasks, learnings
-/memory-save
+With `--auto` mode (default when Claude runs this):
+- **User messages**: From Claude Code's history.jsonl
+- **Tasks**: From your todo list (done/pending/in_progress)
+- **Plan file**: Recent plan if exists
+- **Git context**: Branch, commits, files changed
+- **Duration**: Calculated from session timestamps
 
-# Quick save with summary
-/memory-save "Implemented user authentication with JWT"
+## What YOU (Claude) Provide
 
-# Quick save (still prompts for learnings)
-/memory-save "Fixed memory leak in worker threads"
-```
-
-## What Gets Captured
-
-- **Summary**: Brief description of the session
-- **Git context**: Branch, recent commits, files changed (auto-captured)
-- **Tags**: Categories for filtering
-- **Tasks**: Work items with status (done/pending/blocked)
-- **Learnings**: Insights to remember (12 categories)
-
-## Workflow
-
-1. Auto-captures git context (branch, commits, files)
-2. Prompts for summary (if not provided)
-3. Prompts for tags, duration, key decisions
-4. Collects tasks with status
-5. Prompts for learnings (always)
-6. Saves to SQLite + ChromaDB
-7. Auto-links to similar past sessions
+- **Summary**: 1-2 sentence description of what was accomplished
+- **Learnings**: Any insights worth remembering (via `bun memory learn`)
 
 ## Instructions
 
-If arguments provided, run quick save:
+**IMPORTANT**: Always use `--auto` mode with a summary you generate.
+
+1. Review what was accomplished in this session
+2. Write a concise summary (1-2 sentences)
+3. Run the save command:
+
 ```bash
-bun memory save "$ARGUMENTS"
+bun memory save --auto "Your summary of what was accomplished in this session"
 ```
 
-If no arguments, run interactive mode:
+The script will auto-capture from Claude Code files:
+- User messages from `~/.claude/history.jsonl`
+- Tasks from `~/.claude/todos/`
+- Recent plan files from `~/.claude/plans/`
+- Git context (branch, commits, files)
+
+4. After saving, optionally add learnings:
+
 ```bash
-bun memory save
+bun memory learn insight "What you learned" "When to apply it"
 ```
 
-After saving, confirm the session ID and any auto-links created.
+## Examples
+
+```bash
+# Good: Specific summary
+bun memory save --auto "Implemented auto-capture from Claude Code files for memory save"
+
+# Good: Bug fix summary
+bun memory save --auto "Fixed timezone display in recall output - was showing UTC instead of local"
+
+# Good: Feature work
+bun memory save --auto "Added YAML frontmatter to slash commands for better descriptions"
+```
+
+## After Saving
+
+Confirm to the user:
+- Session ID created
+- Number of tasks captured
+- Any auto-linked sessions

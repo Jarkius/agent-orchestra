@@ -1,3 +1,7 @@
+---
+description: "Browse recent sessions or learnings. Shows summaries, tags, task counts, and confidence levels."
+---
+
 # Memory List
 
 List recent sessions or learnings with details.

@@ -5,12 +5,14 @@
  *
  * Usage:
  *   bun memory save                    # Interactive mode
- *   bun memory save "summary" --tags tag1,tag2
+ *   bun memory save "summary"          # Quick mode
+ *   bun memory save --auto "summary"   # Auto-capture from Claude Code files
  *
- * Enhanced to auto-capture:
- *   - Git commits made during session (last 10 by default)
- *   - Files modified
- *   - Key decisions and challenges
+ * Auto-capture reads from ~/.claude/:
+ *   - history.jsonl - User messages from current session
+ *   - todos/{sessionId}-*.json - Task lists
+ *   - plans/*.md - Recent plan files
+ *   - Git context (branch, commits, files)
  */
 
 import { execSync } from 'child_process';
@@ -34,6 +36,7 @@ import {
   findSimilarLearnings,
 } from '../../src/vector-db';
 import { createLearningLink } from '../../src/db';
+import { captureFromClaudeCode, formatCapturedContext, type CapturedContext } from './capture-context';
 
 // ============ Git Context Auto-Capture ============
 
@@ -150,9 +153,12 @@ interface LearningInput {
 const args = process.argv.slice(2);
 let summary = '';
 let tags: string[] = [];
+let autoMode = false;
 
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--tags' && args[i + 1]) {
+  if (args[i] === '--auto') {
+    autoMode = true;
+  } else if (args[i] === '--tags' && args[i + 1]) {
     tags = args[i + 1].split(',').map(t => t.trim());
     i++;
   } else if (!args[i].startsWith('--')) {
@@ -388,13 +394,75 @@ async function quickMode() {
   };
 }
 
+async function autoCaptureMode() {
+  // Capture context from Claude Code files
+  console.log('\n🔄 Auto-Capture Mode');
+
+  let captured: CapturedContext;
+  try {
+    captured = captureFromClaudeCode(process.cwd());
+    console.log(formatCapturedContext(captured));
+  } catch (error) {
+    console.log('   ⚠ Could not capture from Claude Code files');
+    console.log(`   Error: ${error instanceof Error ? error.message : error}`);
+    console.log('   Falling back to quick mode...\n');
+    return quickMode();
+  }
+
+  // Also get git context for additional info
+  const gitContext = captureGitContext();
+
+  // Build user messages summary for search content
+  const messagesSummary = captured.userMessages.length > 0
+    ? `User topics: ${captured.userMessages.slice(-5).join('. ')}`
+    : undefined;
+
+  // Extract plan title if available
+  const planTitle = captured.planContent
+    ? captured.planContent.split('\n').find(l => l.startsWith('# '))?.replace('# ', '')
+    : undefined;
+
+  return {
+    summary,
+    tags,
+    duration: captured.duration.minutes,
+    commits: gitContext?.recentCommits.length || undefined,
+    tasks: captured.tasks,
+    fullContext: {
+      // From Claude Code capture
+      user_messages: captured.userMessages.slice(-10), // Last 10 messages
+      plan_file: captured.planFile,
+      plan_title: planTitle,
+      claude_session_id: captured.sessionId,
+      message_count: captured.messageCount,
+      // From git
+      git_branch: gitContext?.branch,
+      git_commits: gitContext?.recentCommits.length ? gitContext.recentCommits : undefined,
+      files_changed: gitContext?.filesChanged.length ? gitContext.filesChanged : undefined,
+      diff_summary: gitContext?.diffSummary || undefined,
+    } as FullContext,
+  };
+}
+
 async function saveCurrentSession() {
   // Initialize
   console.log('Initializing vector DB...');
   await initVectorDB();
 
-  // Get session data
-  const data = summary ? await quickMode() : await interactiveMode();
+  // Get session data based on mode
+  let data;
+  if (autoMode) {
+    if (!summary) {
+      console.error('Error: --auto mode requires a summary argument');
+      console.error('Usage: bun memory save --auto "Your summary here"');
+      process.exit(1);
+    }
+    data = await autoCaptureMode();
+  } else if (summary) {
+    data = await quickMode();
+  } else {
+    data = await interactiveMode();
+  }
 
   const sessionId = `session_${Date.now()}`;
   const now = new Date().toISOString();

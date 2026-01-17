@@ -1,3 +1,7 @@
+---
+description: "Export learnings to LEARNINGS.md for documentation. Organizes by category with confidence badges."
+---
+
 # Memory Export
 
 Export learnings to a markdown file for documentation or sharing.

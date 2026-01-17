@@ -1,3 +1,7 @@
+---
+description: "Resume work or search past sessions. No args = resume context. Query = semantic search across sessions/learnings."
+---
+
 # Memory Recall
 
 Search and resume past sessions using semantic search or exact ID lookup.

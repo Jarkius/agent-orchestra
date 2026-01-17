@@ -1,3 +1,7 @@
+---
+description: "Get relevant background for a new session. Includes recent work, related sessions, and key learnings."
+---
+
 # Memory Context
 
 Get a context bundle for starting a new session with relevant background.

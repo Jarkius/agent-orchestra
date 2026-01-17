@@ -1,3 +1,7 @@
+---
+description: "View memory statistics: session counts, tag distribution, learning categories, and confidence breakdown."
+---
+
 # Memory Stats
 
 Show memory system statistics and usage overview.

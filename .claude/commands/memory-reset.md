@@ -1,3 +1,7 @@
+---
+description: "Nuclear option: permanently delete ALL sessions, learnings, and search indexes. Requires confirmation."
+---
+
 # Memory Reset
 
 Nuclear option to completely wipe all memory data.
