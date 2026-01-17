@@ -390,6 +390,17 @@ function displayLearningDetails(ctx: LearningWithContext) {
     console.log(`Source session: ${learning.source_session_id}`);
   }
 
+  // Show structured learning fields
+  if (learning.what_happened) {
+    console.log(`\nWhat happened: ${learning.what_happened}`);
+  }
+  if (learning.lesson) {
+    console.log(`Lesson: ${learning.lesson}`);
+  }
+  if (learning.prevention) {
+    console.log(`How to prevent/apply: ${learning.prevention}`);
+  }
+
   // Show agent ownership
   const ownerLabel = learning.agent_id === null ? 'orchestrator' : `Agent ${learning.agent_id}`;
   console.log(`Owner: ${ownerLabel} | Visibility: ${learning.visibility || 'public'}`);

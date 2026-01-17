@@ -249,21 +249,26 @@ async function distillSession(session: SessionRecord) {
     }
 
     if (shouldSave) {
-      // Collect structured learning details
+      // Auto-populate structured fields from source
+      const sourceLabel = item.source === 'wins' ? 'Win' :
+                          item.source === 'challenges' ? 'Challenge' : 'Learning';
+
       const structuredLearning: StructuredLearning = {
         title: item.text,
+        what_happened: `${sourceLabel} from session: ${item.text}`,
       };
 
+      // In interactive mode, allow refinement of structured fields
       if (!autoAccept) {
-        console.log('\n      📝 Structured Learning Details:');
+        console.log('\n      📝 Refine structured details (or Enter to keep defaults):');
 
-        const whatHappened = await prompt('      What happened? (situation/context, or Enter to skip) > ');
+        const whatHappened = await prompt('      What happened? > ');
         if (whatHappened) structuredLearning.what_happened = whatHappened;
 
-        const lesson = await prompt('      What did you learn? (or Enter to use title) > ');
+        const lesson = await prompt('      Key lesson? > ');
         if (lesson) structuredLearning.lesson = lesson;
 
-        const prevention = await prompt('      How to prevent/apply? (or Enter to skip) > ');
+        const prevention = await prompt('      How to apply? > ');
         if (prevention) structuredLearning.prevention = prevention;
       }
 
