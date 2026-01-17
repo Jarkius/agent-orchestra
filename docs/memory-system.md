@@ -61,11 +61,38 @@ bun memory distill session_123     # From specific session
 bun memory distill --last 5 --yes  # Batch with auto-accept
 
 # Utilities
-bun memory list sessions           # List recent sessions
-bun memory list learnings          # List learnings
+bun memory list sessions           # List recent sessions (table view)
+bun memory list learnings          # List learnings by category
+bun memory list -i                 # Interactive browser (arrow keys, Enter to view)
 bun memory stats                   # Statistics
 bun memory export [path]           # Export to markdown
 bun memory context [query]         # Context bundle for new session
+```
+
+### List Command Details
+
+The `list` command supports multiple display modes:
+
+**Table View** (default):
+- Dynamic column widths that adapt to terminal size
+- Summary column expands to fill available width
+- Shows: Created date, Duration, Commits, Session ID, Summary
+
+**Interactive Mode** (`-i` flag):
+- Arrow keys to navigate sessions
+- Enter to view full session details (summary, tasks, git context)
+- **Copy ID** option to copy session ID to clipboard
+- Back to return to list, Quit to exit
+
+```bash
+# Table view
+bun memory list sessions
+
+# Interactive browser with clipboard copy
+bun memory list -i
+
+# Learnings grouped by category with confidence badges
+bun memory list learnings
 ```
 
 ---

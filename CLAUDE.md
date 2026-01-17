@@ -53,8 +53,9 @@ bun memory recall "session_123"    # Specific session by ID
 # Other utilities
 bun memory export [path]           # Export learnings to markdown
 bun memory stats                   # View statistics
-bun memory list sessions           # List recent sessions
-bun memory list learnings          # List learnings
+bun memory list sessions           # List recent sessions (table view)
+bun memory list learnings          # List learnings by category
+bun memory list -i                 # Interactive browser with clipboard copy
 bun memory context ["query"]       # Context bundle for new session
 
 # Cleanup

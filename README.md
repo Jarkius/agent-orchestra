@@ -67,7 +67,9 @@ bun memory recall                  # Resume last session
 
 # Utilities
 bun memory stats                   # Statistics
-bun memory list learnings          # List learnings
+bun memory list sessions           # List sessions (table view)
+bun memory list learnings          # List learnings by category
+bun memory list -i                 # Interactive browser with clipboard copy
 bun memory export                  # Export to markdown
 ```
 
