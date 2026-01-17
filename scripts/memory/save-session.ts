@@ -147,6 +147,9 @@ interface LearningInput {
   title: string;
   category: Category;
   context?: string;
+  what_happened?: string;
+  lesson?: string;
+  prevention?: string;
 }
 
 // Parse arguments
@@ -243,12 +246,18 @@ async function collectLearnings(sessionId: string): Promise<LearningInput[]> {
       console.log(`      ⚠ Invalid category, using 'insight'`);
     }
 
-    const context = await promptInput('      Context (optional): ');
+    // Prompt for structured learning details
+    console.log('      📝 Structured details (all optional):');
+    const what_happened = await promptInput('      What happened? > ');
+    const lesson = await promptInput('      What did you learn? > ');
+    const prevention = await promptInput('      How to prevent/apply? > ');
 
     learnings.push({
       title,
       category: ALL_CATEGORIES.includes(category) ? category : 'insight',
-      context: context || undefined,
+      what_happened: what_happened || undefined,
+      lesson: lesson || undefined,
+      prevention: prevention || undefined,
     });
 
     const icon = CATEGORY_ICONS[ALL_CATEGORIES.includes(category) ? category : 'insight'];
@@ -521,10 +530,14 @@ async function saveCurrentSession() {
         context: learning.context,
         source_session_id: sessionId,
         confidence: 'medium', // User-confirmed during save = medium
+        what_happened: learning.what_happened,
+        lesson: learning.lesson,
+        prevention: learning.prevention,
       });
 
       // Save to ChromaDB
-      await saveLearningToChroma(learningId, learning.title, learning.context || '', {
+      const searchContent = `${learning.title} ${learning.lesson || ''} ${learning.what_happened || learning.context || ''}`;
+      await saveLearningToChroma(learningId, learning.title, learning.lesson || learning.context || '', {
         category: learning.category,
         confidence: 'medium',
         source_session_id: sessionId,

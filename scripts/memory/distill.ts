@@ -136,9 +136,16 @@ function extractFromSession(session: SessionRecord): ExtractedLearning[] {
   return extracted;
 }
 
+interface StructuredLearning {
+  title: string;
+  what_happened?: string;
+  lesson?: string;
+  prevention?: string;
+}
+
 async function saveLearningFromDistill(
   category: Category,
-  title: string,
+  learning: StructuredLearning,
   sourceSessionId: string,
   context?: string
 ): Promise<number> {
@@ -150,20 +157,23 @@ async function saveLearningFromDistill(
   // Distilled learnings start at 'low' - validate to increase confidence
   const defaultConfidence = 'low';
 
-  // 1. Save to SQLite
+  // 1. Save to SQLite with structured fields
   const learningId = createLearning({
     category,
-    title,
+    title: learning.title,
     context,
     source_session_id: sourceSessionId,
     confidence: defaultConfidence,
     agent_id: agentId,
     visibility: agentId === null ? 'public' : 'private',
+    what_happened: learning.what_happened,
+    lesson: learning.lesson,
+    prevention: learning.prevention,
   });
 
   // 2. Save to ChromaDB
-  const searchContent = `${title} ${context || ''}`;
-  await saveLearningToChroma(learningId, title, context || '', {
+  const searchContent = `${learning.title} ${learning.lesson || ''} ${learning.what_happened || ''} ${context || ''}`;
+  await saveLearningToChroma(learningId, learning.title, learning.lesson || context || '', {
     category,
     confidence: defaultConfidence,
     source_session_id: sourceSessionId,
@@ -239,10 +249,28 @@ async function distillSession(session: SessionRecord) {
     }
 
     if (shouldSave) {
+      // Collect structured learning details
+      const structuredLearning: StructuredLearning = {
+        title: item.text,
+      };
+
+      if (!autoAccept) {
+        console.log('\n      📝 Structured Learning Details:');
+
+        const whatHappened = await prompt('      What happened? (situation/context, or Enter to skip) > ');
+        if (whatHappened) structuredLearning.what_happened = whatHappened;
+
+        const lesson = await prompt('      What did you learn? (or Enter to use title) > ');
+        if (lesson) structuredLearning.lesson = lesson;
+
+        const prevention = await prompt('      How to prevent/apply? (or Enter to skip) > ');
+        if (prevention) structuredLearning.prevention = prevention;
+      }
+
       // Save the learning
       const learningId = await saveLearningFromDistill(
         category,
-        item.text,
+        structuredLearning,
         session.id,
         `Distilled from session ${session.id} (${item.source})`
       );

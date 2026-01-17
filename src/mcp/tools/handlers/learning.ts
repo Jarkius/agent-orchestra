@@ -45,6 +45,10 @@ const AddLearningSchema = z.object({
   confidence: z.enum(['low', 'medium', 'high', 'proven']).optional(),
   agent_id: z.number().int().nullable().optional(),
   visibility: z.enum(['private', 'shared', 'public']).optional(),
+  // Structured learning fields
+  what_happened: z.string().optional(),
+  lesson: z.string().optional(),
+  prevention: z.string().optional(),
 });
 
 const RecallLearningsSchema = z.object({
@@ -111,6 +115,9 @@ export const learningTools: ToolDefinition[] = [
         },
         agent_id: { type: "number", description: "Agent ID (null = orchestrator)" },
         visibility: { type: "string", enum: ["private", "shared", "public"], description: "Learning visibility (default: public for orchestrator, private for agents)" },
+        what_happened: { type: "string", description: "What happened (situation/context)" },
+        lesson: { type: "string", description: "What you learned (key insight)" },
+        prevention: { type: "string", description: "How to prevent/apply in future" },
       },
       required: ["category", "title"],
     },
@@ -204,7 +211,7 @@ async function handleAddLearning(args: unknown) {
   const confidence = input.confidence || 'low';
 
   try {
-    // 1. Save to SQLite (source of truth)
+    // 1. Save to SQLite (source of truth) with structured fields
     const learningId = createLearning({
       category: input.category,
       title: input.title,
@@ -214,10 +221,13 @@ async function handleAddLearning(args: unknown) {
       confidence,
       agent_id: agentId,
       visibility,
+      what_happened: input.what_happened,
+      lesson: input.lesson,
+      prevention: input.prevention,
     });
 
     // 2. Save to ChromaDB (search index)
-    const searchContent = `${input.title} ${input.description || ''} ${input.context || ''}`;
+    const searchContent = `${input.title} ${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
     await saveLearningToChroma(learningId, searchContent, {
       category: input.category,
       confidence,
@@ -330,6 +340,10 @@ async function handleGetLearning(args: unknown) {
         agent_id: learning.agent_id,
         visibility: learning.visibility,
         created_at: learning.created_at,
+        // Structured learning fields
+        what_happened: (learning as any).what_happened,
+        lesson: (learning as any).lesson,
+        prevention: (learning as any).prevention,
       },
       linked_learnings: linkedLearnings.map(l => ({
         learning_id: l.learning.id,

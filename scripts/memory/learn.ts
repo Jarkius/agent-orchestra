@@ -82,7 +82,16 @@ function printCategories() {
   console.log('');
 }
 
-async function saveLearning(category: Category, title: string, context?: string, description?: string) {
+interface StructuredLearningInput {
+  title: string;
+  context?: string;
+  description?: string;
+  what_happened?: string;
+  lesson?: string;
+  prevention?: string;
+}
+
+async function saveLearning(category: Category, input: StructuredLearningInput) {
   console.log('\n💾 Saving learning...\n');
 
   await initVectorDB();
@@ -93,20 +102,23 @@ async function saveLearning(category: Category, title: string, context?: string,
   // All quick learnings start at 'low' - use 'bun memory save' for medium confidence
   const defaultConfidence = 'low';
 
-  // 1. Save to SQLite
+  // 1. Save to SQLite with structured fields
   const learningId = createLearning({
     category,
-    title,
-    description,
-    context,
+    title: input.title,
+    description: input.description,
+    context: input.context,
     confidence: defaultConfidence,
     agent_id: agentId,
     visibility: agentId === null ? 'public' : 'private',
+    what_happened: input.what_happened,
+    lesson: input.lesson,
+    prevention: input.prevention,
   });
 
   // 2. Save to ChromaDB
-  const searchText = `${title} ${description || ''} ${context || ''}`;
-  await saveLearningToChroma(learningId, title, description || context || '', {
+  const searchText = `${input.title} ${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
+  await saveLearningToChroma(learningId, input.title, input.lesson || input.description || input.context || '', {
     category,
     confidence: defaultConfidence,
     created_at: new Date().toISOString(),
@@ -131,8 +143,11 @@ async function saveLearning(category: Category, title: string, context?: string,
   // Output
   console.log(`  ${CATEGORY_ICONS[category]} Learning #${learningId} saved\n`);
   console.log(`  Category:   ${category}`);
-  console.log(`  Title:      ${title}`);
-  if (context) console.log(`  Context:    ${context}`);
+  console.log(`  Title:      ${input.title}`);
+  if (input.what_happened) console.log(`  What happened: ${input.what_happened}`);
+  if (input.lesson) console.log(`  Lesson:     ${input.lesson}`);
+  if (input.prevention) console.log(`  Prevention: ${input.prevention}`);
+  if (input.context) console.log(`  Context:    ${input.context}`);
   console.log(`  Confidence: ${defaultConfidence}`);
 
   if (autoLinked.length > 0) {
@@ -167,16 +182,23 @@ async function interactiveMode() {
     process.exit(1);
   }
 
-  const title = await prompt('Title (what you learned): ');
+  const title = await prompt('Title (short description): ');
   if (!title) {
     console.error('\n❌ Title is required\n');
     process.exit(1);
   }
 
-  const context = await prompt('Context (when/why this applies, optional): ');
-  const description = await prompt('Details (optional, for deeper explanation): ');
+  console.log('\n  📝 Structured Learning Details (all optional):');
+  const what_happened = await prompt('  What happened? (situation/context) > ');
+  const lesson = await prompt('  What did you learn? (key insight) > ');
+  const prevention = await prompt('  How to prevent/apply? (future action) > ');
 
-  await saveLearning(category, title, context || undefined, description || undefined);
+  await saveLearning(category, {
+    title,
+    what_happened: what_happened || undefined,
+    lesson: lesson || undefined,
+    prevention: prevention || undefined,
+  });
 }
 
 async function main() {
@@ -193,25 +215,44 @@ async function main() {
 
 Usage:
   bun memory learn <category> "title" ["context"]
+  bun memory learn <category> "title" --lesson "..." --prevention "..."
   bun memory learn --interactive
 
 Options:
-  --interactive, -i   Interactive mode with prompts
+  --interactive, -i   Interactive mode with structured prompts
+  --lesson "..."      What you learned (key insight)
+  --prevention "..."  How to prevent/apply in future
   --help, -h          Show this help
 
 Quick Examples:
-  bun memory learn tooling "jq parses JSON in shell" "Use with Claude statusline"
-  bun memory learn philosophy "Simplicity over cleverness" "Code should be readable first"
-  bun memory learn insight "Tests document behavior" "Not just for catching bugs"
-  bun memory learn pattern "Feature creep from trying to help" "Stay focused on the ask"
+  bun memory learn tooling "jq parses JSON in shell"
+  bun memory learn philosophy "Simplicity over cleverness" --lesson "Readable code beats clever code"
+  bun memory learn insight "Tests document behavior" --lesson "Tests are documentation" --prevention "Write tests before code"
 `);
     printCategories();
     return;
   }
 
+  // Parse args: category, title, and optional flags
   const category = args[0]?.toLowerCase() as Category;
-  const title = args[1];
-  const context = args[2];
+  let title = '';
+  let context: string | undefined;
+  let lesson: string | undefined;
+  let prevention: string | undefined;
+
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--lesson' && args[i + 1]) {
+      lesson = args[i + 1];
+      i++;
+    } else if (args[i] === '--prevention' && args[i + 1]) {
+      prevention = args[i + 1];
+      i++;
+    } else if (!title) {
+      title = args[i];
+    } else if (!context) {
+      context = args[i];
+    }
+  }
 
   if (!ALL_CATEGORIES.includes(category)) {
     console.error(`\n❌ Invalid category: ${args[0]}`);
@@ -225,7 +266,13 @@ Quick Examples:
     process.exit(1);
   }
 
-  await saveLearning(category, title, context);
+  await saveLearning(category, {
+    title,
+    context,
+    lesson,
+    prevention,
+    what_happened: context, // Use context as what_happened for backward compatibility
+  });
 }
 
 main().catch(console.error);

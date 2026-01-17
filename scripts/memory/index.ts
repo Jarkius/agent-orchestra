@@ -93,6 +93,11 @@ async function main() {
       await import('./reset');
       break;
 
+    case 'task':
+      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      await import('./task-update');
+      break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -119,6 +124,8 @@ Commands:
   stats             Show session and learning statistics
   list [type]       List recent sessions or learnings
   context [query]   Get context bundle for new session
+  task list         List pending tasks across sessions
+  task <id> <status> Update task status (done/pending/blocked/in_progress)
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
 

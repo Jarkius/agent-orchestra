@@ -212,6 +212,23 @@ try {
   db.run(`ALTER TABLE learnings ADD COLUMN visibility TEXT DEFAULT 'public'`);
 } catch { /* Column already exists */ }
 
+// ============ Structured Learnings Schema ============
+
+// Add what_happened column for "What happened" section
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN what_happened TEXT`);
+} catch { /* Column already exists */ }
+
+// Add lesson column for "What I learned" section
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN lesson TEXT`);
+} catch { /* Column already exists */ }
+
+// Add prevention column for "How to prevent" section
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN prevention TEXT`);
+} catch { /* Column already exists */ }
+
 // Create indexes for agent-scoped queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_agent ON learnings(agent_id)`);
@@ -637,12 +654,16 @@ export interface LearningRecord {
   agent_id?: number | null;
   visibility?: Visibility;
   created_at?: string;
+  // Structured learning fields
+  what_happened?: string;
+  lesson?: string;
+  prevention?: string;
 }
 
 export function createLearning(learning: LearningRecord): number {
   const result = db.run(
-    `INSERT INTO learnings (category, title, description, context, source_session_id, confidence, agent_id, visibility)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO learnings (category, title, description, context, source_session_id, confidence, agent_id, visibility, what_happened, lesson, prevention)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.category,
       learning.title,
@@ -652,6 +673,9 @@ export function createLearning(learning: LearningRecord): number {
       learning.confidence || 'medium',
       learning.agent_id ?? null,
       learning.visibility || 'public',
+      learning.what_happened || null,
+      learning.lesson || null,
+      learning.prevention || null,
     ]
   );
   return Number(result.lastInsertRowid);
@@ -1086,6 +1110,50 @@ export function getAllSessionTasks(limit = 100): SessionTask[] {
   return db.query(
     `SELECT * FROM session_tasks ORDER BY created_at DESC LIMIT ?`
   ).all(limit) as SessionTask[];
+}
+
+/**
+ * Get all pending/blocked/in_progress tasks across all sessions
+ */
+export function getAllPendingTasks(limit = 100): SessionTask[] {
+  return db.query(
+    `SELECT * FROM session_tasks
+     WHERE status IN ('pending', 'blocked', 'in_progress')
+     ORDER BY created_at DESC LIMIT ?`
+  ).all(limit) as SessionTask[];
+}
+
+/**
+ * Update session task with auto-tracking of started_at
+ */
+export function updateSessionTask(taskId: number, updates: { status?: string; notes?: string }): boolean {
+  const task = getSessionTaskById(taskId);
+  if (!task) return false;
+
+  const now = new Date().toISOString();
+  let startedAt = task.started_at;
+  let completedAt = task.completed_at;
+
+  // Auto-set started_at when transitioning to in_progress
+  if (updates.status === 'in_progress' && !task.started_at) {
+    startedAt = now;
+  }
+
+  // Auto-set completed_at when transitioning to done
+  if (updates.status === 'done' && !task.completed_at) {
+    completedAt = now;
+  }
+
+  db.run(
+    `UPDATE session_tasks
+     SET status = COALESCE(?, status),
+         notes = COALESCE(?, notes),
+         started_at = ?,
+         completed_at = ?
+     WHERE id = ?`,
+    [updates.status || null, updates.notes || null, startedAt || null, completedAt || null, taskId]
+  );
+  return true;
 }
 
 // ============ Purge/Reset Functions ============

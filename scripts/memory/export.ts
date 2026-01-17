@@ -61,7 +61,7 @@ async function exportLearnings() {
 
   for (const category of sortedCategories) {
     const items = byCategory[category];
-    md += `## ${capitalize(category)}\n\n`;
+    md += `# ${capitalize(category)}\n\n`;
 
     // Sort by confidence (proven first) then by times_validated
     items.sort((a, b) => {
@@ -75,18 +75,34 @@ async function exportLearnings() {
     for (const item of items) {
       const badge = confidenceBadge(item.confidence || 'medium');
       const validated = item.times_validated && item.times_validated > 1
-        ? ` _(validated ${item.times_validated}x)_`
+        ? ` (${item.times_validated}x)`
         : '';
+      const date = item.created_at
+        ? new Date(item.created_at).toISOString().split('T')[0]
+        : 'N/A';
 
-      md += `### ${badge} ${item.title}${validated}\n\n`;
+      // Structured Lesson format
+      md += `## Lesson: ${item.title}\n`;
+      md += `**Date**: ${date}\n`;
+      md += `**Category**: ${capitalize(item.category)}\n`;
+      md += `**Confidence**: ${badge}${validated}\n\n`;
 
-      if (item.description) {
-        md += `${item.description}\n\n`;
-      }
+      // What happened section (use what_happened or context as fallback)
+      const whatHappened = (item as any).what_happened || item.context || 'N/A';
+      md += `### What happened\n`;
+      md += `${whatHappened}\n\n`;
 
-      if (item.context) {
-        md += `> **When to apply:** ${item.context}\n\n`;
-      }
+      // What I learned section (use lesson or description or title as fallback)
+      const lesson = (item as any).lesson || item.description || item.title;
+      md += `### What I learned\n`;
+      md += `${lesson}\n\n`;
+
+      // How to prevent section (use prevention field or generate from context)
+      const prevention = (item as any).prevention || 'N/A';
+      md += `### How to prevent\n`;
+      md += `${prevention}\n\n`;
+
+      md += '---\n\n';
     }
   }
 
