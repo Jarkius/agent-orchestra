@@ -84,6 +84,15 @@ async function main() {
       await import('./context');
       break;
 
+    case 'purge':
+      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      await import('./purge');
+      break;
+
+    case 'reset':
+      await import('./reset');
+      break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -110,6 +119,8 @@ Commands:
   stats             Show session and learning statistics
   list [type]       List recent sessions or learnings
   context [query]   Get context bundle for new session
+  purge <target>    Purge sessions or learnings (with filters)
+  reset             Nuclear option - wipe ALL memory data
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing

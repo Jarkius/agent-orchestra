@@ -56,6 +56,13 @@ bun memory stats                   # View statistics
 bun memory list sessions           # List recent sessions
 bun memory list learnings          # List learnings
 bun memory context ["query"]       # Context bundle for new session
+
+# Cleanup
+bun memory purge sessions           # Purge all sessions
+bun memory purge learnings          # Purge all learnings
+bun memory purge sessions --keep 10 # Keep last 10, purge rest
+bun memory purge --before "2025-01-01"  # Purge old data
+bun memory reset                    # Nuclear option - wipe ALL memory
 ```
 
 ### Learning Categories
@@ -71,11 +78,13 @@ bun memory context ["query"]       # Context bundle for new session
 ## Memory Recall Features
 
 ### Resume Mode (No Args)
-When running `bun memory recall` without arguments, it shows the last session with actionable context:
+When running `bun memory recall` without arguments, it shows:
+- **Recent plan files** from `.claude/plans/` (modified in last 24h)
+- **Current git status** (uncommitted files, branch)
+- **Changes since last session** (new commits, files changed)
 - Pending/blocked tasks to continue working on
 - Next steps defined in the session
-- Challenges encountered
-- Full session context (what worked, learnings, etc.)
+- Full session context (wins, challenges, etc.)
 - Related sessions and key learnings
 
 ### Exact ID Lookup
@@ -218,7 +227,7 @@ The enhanced session memory system captures context across sessions:
 ```
 
 **SQLite Tables:**
-- `sessions` - Full session context with what_worked, learnings, etc.
+- `sessions` - Full session context (wins, issues, git context, etc.)
 - `learnings` - Accumulated knowledge with confidence levels
 - `session_links` - Relationships between sessions
 - `learning_links` - Relationships between learnings

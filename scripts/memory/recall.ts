@@ -12,8 +12,81 @@
  *   MEMORY_AGENT_ID                      # Filter by agent ID (set by --agent flag)
  */
 
+import { readdirSync, statSync, readFileSync } from 'fs';
+import { join, basename } from 'path';
+import { homedir } from 'os';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
 import { formatFullContext, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
+import { getGitStatus, getChangesSinceCommit, getLastCommitHash } from '../../src/utils/git-context';
+
+// ============ Enhanced Resume Context ============
+
+interface PlanFile {
+  name: string;
+  path: string;
+  title: string;
+  modifiedAgo: string;
+}
+
+/**
+ * Get recent plan files from ~/.claude/plans/ (modified in last 24 hours)
+ */
+function getRecentPlanFiles(): PlanFile[] {
+  const planDirs = [
+    join(homedir(), '.claude', 'plans'),
+    join(process.cwd(), '.claude', 'plans'),
+  ];
+
+  const now = Date.now();
+  const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+  const plans: PlanFile[] = [];
+
+  for (const dir of planDirs) {
+    try {
+      const files = readdirSync(dir).filter(f => f.endsWith('.md'));
+      for (const file of files) {
+        const filePath = join(dir, file);
+        const stat = statSync(filePath);
+        const age = now - stat.mtimeMs;
+
+        if (age < maxAge) {
+          // Extract title from first heading
+          let title = '';
+          try {
+            const content = readFileSync(filePath, 'utf-8');
+            const match = content.match(/^#\s+(.+)$/m);
+            title = match ? match[1] : '';
+          } catch {
+            // Ignore read errors
+          }
+
+          plans.push({
+            name: file,
+            path: filePath,
+            title,
+            modifiedAgo: formatTimeAgo(age),
+          });
+        }
+      }
+    } catch {
+      // Directory doesn't exist, skip
+    }
+  }
+
+  // Sort by most recent first
+  return plans.sort((a, b) => a.modifiedAgo.localeCompare(b.modifiedAgo));
+}
+
+/**
+ * Format milliseconds as human-readable time ago
+ */
+function formatTimeAgo(ms: number): string {
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
 
 const query = process.argv[2];
 const agentId = process.env.MEMORY_AGENT_ID ? parseInt(process.env.MEMORY_AGENT_ID) : undefined;
@@ -60,6 +133,71 @@ function displayResumeContext(result: RecallResult) {
   console.log('  RESUME SESSION');
   console.log('═'.repeat(60));
 
+  // Show recent plan files first (actionable)
+  const recentPlans = getRecentPlanFiles();
+  if (recentPlans.length > 0) {
+    console.log('\n' + '─'.repeat(40));
+    console.log('  RECENT PLAN FILES');
+    console.log('─'.repeat(40));
+    for (const plan of recentPlans.slice(0, 5)) {
+      console.log(`  ${plan.name} (${plan.modifiedAgo})`);
+      if (plan.title) {
+        console.log(`    "${truncate(plan.title, 50)}"`);
+      }
+    }
+  }
+
+  // Show current git status
+  const gitStatus = getGitStatus();
+  if (gitStatus) {
+    const totalChanges = gitStatus.uncommitted.length + gitStatus.staged.length + gitStatus.untracked.length;
+    if (totalChanges > 0) {
+      console.log('\n' + '─'.repeat(40));
+      console.log('  CURRENT GIT STATUS');
+      console.log('─'.repeat(40));
+      console.log(`  Branch: ${gitStatus.branch}`);
+      if (gitStatus.uncommitted.length > 0) {
+        console.log(`  Uncommitted: ${gitStatus.uncommitted.length} files`);
+        for (const f of gitStatus.uncommitted.slice(0, 3)) {
+          console.log(`    ${f.status} ${f.path}`);
+        }
+        if (gitStatus.uncommitted.length > 3) {
+          console.log(`    ... and ${gitStatus.uncommitted.length - 3} more`);
+        }
+      }
+      if (gitStatus.staged.length > 0) {
+        console.log(`  Staged: ${gitStatus.staged.length} files`);
+      }
+      if (gitStatus.untracked.length > 0) {
+        console.log(`  Untracked: ${gitStatus.untracked.length} files`);
+      }
+    }
+  }
+
+  // Show changes since last session
+  if (session.full_context?.git_commits) {
+    const lastCommit = getLastCommitHash(session.full_context.git_commits);
+    if (lastCommit) {
+      const changes = getChangesSinceCommit(lastCommit);
+      if (changes && changes.newCommits.length > 0) {
+        console.log('\n' + '─'.repeat(40));
+        console.log('  CHANGES SINCE LAST SESSION');
+        console.log('─'.repeat(40));
+        console.log(`  New commits: ${changes.newCommits.length}`);
+        for (const commit of changes.newCommits.slice(0, 3)) {
+          console.log(`    ${commit}`);
+        }
+        if (changes.newCommits.length > 3) {
+          console.log(`    ... and ${changes.newCommits.length - 3} more`);
+        }
+        console.log(`  Files changed: ${changes.filesChanged} (+${changes.insertions}, -${changes.deletions})`);
+      }
+    }
+  }
+
+  console.log('\n' + '─'.repeat(40));
+  console.log('  LAST SESSION');
+  console.log('─'.repeat(40));
   console.log(`\n${session.id}`);
   console.log(`${session.summary}`);
   if (session.tags?.length) {
@@ -83,27 +221,7 @@ function displayResumeContext(result: RecallResult) {
     }
   }
 
-  // Show next_steps from session
-  if (session.next_steps?.length) {
-    console.log('\n' + '─'.repeat(40));
-    console.log('  NEXT STEPS');
-    console.log('─'.repeat(40));
-    for (const step of session.next_steps) {
-      console.log(`  → ${step}`);
-    }
-  }
-
-  // Show challenges
-  if (session.challenges?.length) {
-    console.log('\n' + '─'.repeat(40));
-    console.log('  CHALLENGES');
-    console.log('─'.repeat(40));
-    for (const challenge of session.challenges) {
-      console.log(`  ! ${challenge}`);
-    }
-  }
-
-  // Show full context if available
+  // Show full context (includes next_steps, challenges, git info)
   if (session.full_context) {
     const contextLines = formatFullContext(session.full_context);
     if (contextLines.length > 0) {
@@ -203,7 +321,7 @@ function displaySessionDetails(ctx: SessionWithContext) {
   console.log(`Owner: ${ownerLabel} | Visibility: ${session.visibility || 'public'}`);
   console.log(`Created: ${session.created_at}`);
 
-  // Full context
+  // Full context (includes next_steps, challenges, git info)
   if (session.full_context) {
     const contextLines = formatFullContext(session.full_context);
     if (contextLines.length > 0) {
@@ -213,26 +331,6 @@ function displaySessionDetails(ctx: SessionWithContext) {
       for (const line of contextLines) {
         console.log(`  ${line}`);
       }
-    }
-  }
-
-  // Next steps
-  if (session.next_steps?.length) {
-    console.log('\n' + '─'.repeat(40));
-    console.log('  NEXT STEPS');
-    console.log('─'.repeat(40));
-    for (const step of session.next_steps) {
-      console.log(`  → ${step}`);
-    }
-  }
-
-  // Challenges
-  if (session.challenges?.length) {
-    console.log('\n' + '─'.repeat(40));
-    console.log('  CHALLENGES');
-    console.log('─'.repeat(40));
-    for (const challenge of session.challenges) {
-      console.log(`  ! ${challenge}`);
     }
   }
 
