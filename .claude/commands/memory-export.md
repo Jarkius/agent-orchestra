@@ -39,31 +39,48 @@ Organized by category with badges:
 - `[MEDIUM]` - User confirmed
 - `[LOW]` - Quick capture or distilled
 
-### Each Learning
-- Title
-- Description (if provided)
-- Context/when to apply
-- Source session reference
-- Validation count
+### Structured Lesson Format
+Each learning is exported with:
+- Title and date
+- Category and confidence badge
+- **What happened**: Situation/context
+- **What I learned**: Key insight
+- **How to prevent**: Future application
 
 ## Example Output
 
 ```markdown
-# Learnings
+# Architecture
 
-> 24 learnings exported on 2026-01-17
+## Lesson: Dual-storage pattern
+**Date**: 2026-01-17
+**Category**: Architecture
+**Confidence**: [high] (2x)
 
-## Philosophy
+### What happened
+Building memory systems needing both structured queries and semantic search
 
-### [PROVEN] Simplicity over cleverness
-Code should be readable first, optimized second.
-*Validated 5 times*
+### What I learned
+SQLite as source of truth, ChromaDB as search index. Sync on write.
 
-## Architecture
+### How to prevent
+Design dual-storage from the start; avoid migrating later
 
-### [HIGH] Dual-storage pattern
-SQLite for truth, ChromaDB for search.
-*Source: session_1768629209122*
+---
+
+## Lesson: Simplicity over cleverness
+**Date**: 2026-01-16
+**Category**: Philosophy
+**Confidence**: [PROVEN] (5x)
+
+### What happened
+Code review revealed over-engineered solution
+
+### What I learned
+Readable code beats clever code
+
+### How to prevent
+Ask: Would a junior dev understand this in 6 months?
 ```
 
 ## Instructions

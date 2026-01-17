@@ -44,10 +44,15 @@ The script will auto-capture from Claude Code files:
 - Recent plan files from `~/.claude/plans/`
 - Git context (branch, commits, files)
 
-4. After saving, optionally add learnings:
+4. After saving, optionally add learnings with structured fields:
 
 ```bash
-bun memory learn insight "What you learned" "When to apply it"
+bun memory learn insight "What you learned" --lesson "Key insight" --prevention "How to apply"
+```
+
+Or use interactive mode for detailed context:
+```bash
+bun memory learn -i
 ```
 
 ## Examples
