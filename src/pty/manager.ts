@@ -5,8 +5,9 @@
 
 import { $ } from 'bun';
 import type { IPTYManager, PTYHandle, PTYConfig, HealthStatus, AgentEvent, AgentStatus } from '../interfaces/pty';
+import { getWorktreeManager } from './worktree-manager';
 
-const DEFAULT_CONFIG: Required<PTYConfig> = {
+const DEFAULT_CONFIG: Required<Omit<PTYConfig, 'worktree'>> & { worktree: undefined } = {
   cwd: process.cwd(),
   env: {},
   shell: '/bin/zsh',
@@ -14,6 +15,7 @@ const DEFAULT_CONFIG: Required<PTYConfig> = {
   rows: 30,
   healthCheckIntervalMs: 5000,
   autoRestart: true,
+  worktree: undefined,
 };
 
 export class PTYManager implements IPTYManager {
@@ -39,14 +41,29 @@ export class PTYManager implements IPTYManager {
   async spawn(agentId: number, config?: PTYConfig): Promise<PTYHandle> {
     const cfg = { ...this.config, ...config };
 
+    // Provision worktree if enabled
+    let worktreePath: string | undefined;
+    let worktreeBranch: string | undefined;
+
+    if (cfg.worktree?.enabled) {
+      const worktreeManager = getWorktreeManager(cfg.cwd || process.cwd(), cfg.worktree);
+      const info = await worktreeManager.provision(agentId);
+      worktreePath = info.path;
+      worktreeBranch = info.branch;
+      // Override cwd to use worktree
+      cfg.cwd = worktreePath;
+    }
+
     // Ensure tmux session exists
     await this.ensureSession();
 
     // Create new pane for agent
     const paneId = await this.createPane(agentId);
 
-    // Start agent watcher in the pane
-    const cmd = `bun run src/agent-watcher.ts ${agentId}`;
+    // Start agent watcher in the pane with worktree cwd
+    const cmd = cfg.cwd && cfg.cwd !== process.cwd()
+      ? `cd ${cfg.cwd} && bun run src/agent-watcher.ts ${agentId}`
+      : `bun run src/agent-watcher.ts ${agentId}`;
     await $`tmux send-keys -t ${this.sessionName}:${paneId} ${cmd} Enter`.quiet();
 
     // Get PID of the process
@@ -59,10 +76,12 @@ export class PTYManager implements IPTYManager {
       status: 'starting',
       startedAt: new Date(),
       lastHeartbeat: new Date(),
+      worktreePath,
+      worktreeBranch,
     };
 
     this.handles.set(agentId, handle);
-    this.emitEvent({ type: 'spawn', agentId, timestamp: new Date(), data: { paneId, pid } });
+    this.emitEvent({ type: 'spawn', agentId, timestamp: new Date(), data: { paneId, pid, worktreePath, worktreeBranch } });
 
     // Start health check
     if (cfg.healthCheckIntervalMs > 0) {
@@ -92,6 +111,16 @@ export class PTYManager implements IPTYManager {
       await $`tmux kill-pane -t ${this.sessionName}:${handle.paneId}`.quiet().nothrow();
     } catch {
       // Ignore errors
+    }
+
+    // Cleanup worktree if it was provisioned
+    if (handle.worktreePath) {
+      try {
+        const worktreeManager = getWorktreeManager();
+        await worktreeManager.cleanup(agentId);
+      } catch {
+        // Ignore worktree cleanup errors
+      }
     }
 
     this.updateStatus(agentId, 'stopped');

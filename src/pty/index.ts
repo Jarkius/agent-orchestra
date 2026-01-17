@@ -11,6 +11,8 @@
 export { PTYManager, getPTYManager } from './manager';
 export { AgentSpawner, getAgentSpawner } from './spawner';
 export { MissionQueue, getMissionQueue } from './mission-queue';
+export { WorktreeManager, getWorktreeManager, resetWorktreeManager } from './worktree-manager';
+export type { WorktreeInfo, MergeResult } from './worktree-manager';
 
 // Re-export interfaces for convenience
 export type {

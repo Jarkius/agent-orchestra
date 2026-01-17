@@ -13,6 +13,7 @@ import { sessionTools, sessionHandlers } from './handlers/session';
 import { learningTools, learningHandlers } from './handlers/learning';
 import { analyticsTools, analyticsHandlers } from './handlers/analytics';
 import { ptyTools, ptyHandlers } from './handlers/pty';
+import { worktreeTools, worktreeHandlers } from './handlers/worktree';
 import type { ToolDefinition, ToolHandler } from '../types';
 
 // Aggregate all tools
@@ -27,6 +28,7 @@ export const allTools: ToolDefinition[] = [
   ...learningTools, // Learning management tools
   ...analyticsTools, // Analytics and export tools
   ...ptyTools,      // PTY orchestration tools
+  ...worktreeTools, // Git worktree management tools
 ];
 
 // Aggregate all handlers
@@ -41,6 +43,7 @@ export const allHandlers: Record<string, ToolHandler> = {
   ...learningHandlers, // Learning management handlers
   ...analyticsHandlers, // Analytics and export handlers
   ...ptyHandlers,    // PTY orchestration handlers
+  ...worktreeHandlers, // Git worktree management handlers
 };
 
 // Dynamic registration for Phase 1/2 tools

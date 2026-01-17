@@ -5,6 +5,22 @@
 
 export type AgentStatus = 'starting' | 'running' | 'stopping' | 'stopped' | 'crashed' | 'idle' | 'busy' | 'working' | 'error';
 
+export type BranchStrategy = 'per-agent' | 'per-task';
+export type ConflictStrategy = 'abort' | 'stash' | 'theirs' | 'ours';
+
+/**
+ * Git worktree configuration for agent isolation
+ */
+export interface WorktreeConfig {
+  enabled: boolean;
+  basePath?: string;              // Default: .worktrees/
+  branchStrategy?: BranchStrategy; // Default: per-agent
+  baseBranch?: string;            // Default: auto-detect main/master
+  autoMerge?: boolean;            // Auto-merge on task completion
+  cleanupOnShutdown?: boolean;    // Remove worktree when agent stops
+  conflictStrategy?: ConflictStrategy; // Default: abort
+}
+
 export interface PTYHandle {
   agentId: number;
   pid: number;
@@ -12,6 +28,8 @@ export interface PTYHandle {
   status: AgentStatus;
   startedAt: Date;
   lastHeartbeat?: Date;
+  worktreePath?: string;
+  worktreeBranch?: string;
 }
 
 export interface HealthStatus {
@@ -57,4 +75,5 @@ export interface PTYConfig {
   rows?: number;
   healthCheckIntervalMs?: number;
   autoRestart?: boolean;
+  worktree?: WorktreeConfig;
 }

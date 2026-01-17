@@ -16,7 +16,7 @@ import type { PTYHandle } from '../interfaces/pty';
 import { selectModel, ROLE_PROMPTS } from '../interfaces/spawner';
 import { createAgentSession, searchAgentLearnings } from '../services/agent-memory-service';
 
-const DEFAULT_AGENT_CONFIG: Required<AgentConfig> = {
+const DEFAULT_AGENT_CONFIG: Required<Omit<AgentConfig, 'worktree'>> & { worktree: undefined } = {
   cwd: process.cwd(),
   env: {},
   shell: '/bin/zsh',
@@ -24,12 +24,14 @@ const DEFAULT_AGENT_CONFIG: Required<AgentConfig> = {
   rows: 30,
   healthCheckIntervalMs: 5000,
   autoRestart: true,
+  worktree: undefined,
   role: 'generalist',
   model: 'sonnet',
   systemPrompt: '',
   maxConcurrentTasks: 1,
   timeoutMs: 120000,
   retryBudget: 3,
+  isolationMode: 'shared',
 };
 
 export class AgentSpawner implements IAgentSpawner {
@@ -45,6 +47,16 @@ export class AgentSpawner implements IAgentSpawner {
   async spawnAgent(config?: AgentConfig): Promise<Agent> {
     const cfg = { ...DEFAULT_AGENT_CONFIG, ...config };
     const agentId = this.nextAgentId++;
+
+    // Configure worktree based on isolation mode
+    const worktreeConfig = cfg.isolationMode === 'worktree'
+      ? {
+          enabled: true,
+          branchStrategy: 'per-agent' as const,
+          cleanupOnShutdown: true,
+          ...(cfg.worktree || {}),
+        }
+      : undefined;
 
     // Create agent record
     const agent: Agent = {
@@ -72,9 +84,12 @@ export class AgentSpawner implements IAgentSpawner {
       rows: cfg.rows,
       healthCheckIntervalMs: cfg.healthCheckIntervalMs,
       autoRestart: cfg.autoRestart,
+      worktree: worktreeConfig,
     });
 
     agent.ptyHandle = ptyHandle;
+    agent.worktreePath = ptyHandle.worktreePath;
+    agent.worktreeBranch = ptyHandle.worktreeBranch;
     this.agents.set(agentId, agent);
 
     return agent;
@@ -134,7 +149,7 @@ export class AgentSpawner implements IAgentSpawner {
     }
 
     // Return first available
-    return available[0];
+    return available[0] || null;
   }
 
   getLeastBusyAgent(): Agent | null {
@@ -146,7 +161,7 @@ export class AgentSpawner implements IAgentSpawner {
       if (a.status === 'idle' && b.status !== 'idle') return -1;
       if (b.status === 'idle' && a.status !== 'idle') return 1;
       return (a.tasksCompleted + a.tasksFailed) - (b.tasksCompleted + b.tasksFailed);
-    })[0];
+    })[0] || null;
   }
 
   async distributeTask(task: Task): Promise<Agent> {

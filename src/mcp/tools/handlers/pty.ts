@@ -13,7 +13,7 @@
  */
 
 import { z } from 'zod';
-import type { ToolDefinition, ToolHandler, ToolResponse } from '../../types';
+import type { ToolDefinition, ToolHandler, MCPResponse } from '../../types';
 import { jsonResponse, errorResponse } from '../../utils/response';
 import { AgentSpawner, getAgentSpawner } from '../../../pty/spawner';
 import { MissionQueue, getMissionQueue } from '../../../pty/mission-queue';
@@ -290,7 +290,7 @@ export const ptyTools: ToolDefinition[] = [
 
 // ============ Handlers ============
 
-async function handleSpawnAgent(args: unknown): Promise<ToolResponse> {
+async function handleSpawnAgent(args: unknown): Promise<MCPResponse> {
   const parsed = SpawnAgentSchema.parse(args);
   const spawner = getAgentSpawner();
 
@@ -316,7 +316,7 @@ async function handleSpawnAgent(args: unknown): Promise<ToolResponse> {
   }
 }
 
-async function handleSpawnPool(args: unknown): Promise<ToolResponse> {
+async function handleSpawnPool(args: unknown): Promise<MCPResponse> {
   const parsed = SpawnPoolSchema.parse(args);
   const spawner = getAgentSpawner();
 
@@ -341,7 +341,7 @@ async function handleSpawnPool(args: unknown): Promise<ToolResponse> {
   }
 }
 
-async function handleKillAgent(args: unknown): Promise<ToolResponse> {
+async function handleKillAgent(args: unknown): Promise<MCPResponse> {
   const parsed = AgentIdSchema.parse(args);
   const ptyManager = getPTYManager();
 
@@ -353,7 +353,7 @@ async function handleKillAgent(args: unknown): Promise<ToolResponse> {
   }
 }
 
-async function handleRestartAgent(args: unknown): Promise<ToolResponse> {
+async function handleRestartAgent(args: unknown): Promise<MCPResponse> {
   const parsed = AgentIdSchema.parse(args);
   const ptyManager = getPTYManager();
 
@@ -370,7 +370,7 @@ async function handleRestartAgent(args: unknown): Promise<ToolResponse> {
   }
 }
 
-async function handleGetAgentHealth(args: unknown): Promise<ToolResponse> {
+async function handleGetAgentHealth(args: unknown): Promise<MCPResponse> {
   const parsed = AgentIdSchema.parse(args);
   const ptyManager = getPTYManager();
 
@@ -386,7 +386,7 @@ async function handleGetAgentHealth(args: unknown): Promise<ToolResponse> {
   }
 }
 
-async function handleGetAllAgentHealth(): Promise<ToolResponse> {
+async function handleGetAllAgentHealth(): Promise<MCPResponse> {
   const ptyManager = getPTYManager();
   const handles = ptyManager.getAllHandles();
 
@@ -414,7 +414,7 @@ async function handleGetAllAgentHealth(): Promise<ToolResponse> {
   });
 }
 
-async function handleDistributeMission(args: unknown): Promise<ToolResponse> {
+async function handleDistributeMission(args: unknown): Promise<MCPResponse> {
   const parsed = DistributeMissionSchema.parse(args);
   const queue = getMissionQueue();
   const spawner = getAgentSpawner();
@@ -470,7 +470,7 @@ async function handleDistributeMission(args: unknown): Promise<ToolResponse> {
   });
 }
 
-async function handleCompleteMission(args: unknown): Promise<ToolResponse> {
+async function handleCompleteMission(args: unknown): Promise<MCPResponse> {
   const parsed = CompleteMissionSchema.parse(args);
   const queue = getMissionQueue();
   const spawner = getAgentSpawner();
@@ -498,7 +498,7 @@ async function handleCompleteMission(args: unknown): Promise<ToolResponse> {
   });
 }
 
-async function handleFailMission(args: unknown): Promise<ToolResponse> {
+async function handleFailMission(args: unknown): Promise<MCPResponse> {
   const parsed = FailMissionSchema.parse(args);
   const queue = getMissionQueue();
   const spawner = getAgentSpawner();
@@ -534,7 +534,7 @@ async function handleFailMission(args: unknown): Promise<ToolResponse> {
   });
 }
 
-async function handleGetMissionQueueStatus(): Promise<ToolResponse> {
+async function handleGetMissionQueueStatus(): Promise<MCPResponse> {
   const queue = getMissionQueue();
   const missions = queue.getAllMissions();
 
@@ -560,7 +560,7 @@ async function handleGetMissionQueueStatus(): Promise<ToolResponse> {
   });
 }
 
-async function handleGetAgentStatus(): Promise<ToolResponse> {
+async function handleGetAgentStatus(): Promise<MCPResponse> {
   const spawner = getAgentSpawner();
   const agents = spawner.getAllAgents();
 

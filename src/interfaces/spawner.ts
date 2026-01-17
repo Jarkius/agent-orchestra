@@ -8,6 +8,8 @@ import type { PTYHandle, PTYConfig } from './pty';
 export type AgentRole = 'coder' | 'tester' | 'analyst' | 'reviewer' | 'generalist' | 'oracle' | 'architect' | 'debugger' | 'researcher' | 'scribe';
 export type ModelTier = 'haiku' | 'sonnet' | 'opus';
 
+export type IsolationMode = 'worktree' | 'shared';
+
 export interface Agent {
   id: number;
   name: string;
@@ -19,6 +21,8 @@ export interface Agent {
   tasksCompleted: number;
   tasksFailed: number;
   createdAt: Date;
+  worktreePath?: string;
+  worktreeBranch?: string;
 }
 
 export interface AgentConfig extends PTYConfig {
@@ -28,6 +32,7 @@ export interface AgentConfig extends PTYConfig {
   maxConcurrentTasks?: number;
   timeoutMs?: number;
   retryBudget?: number;
+  isolationMode?: IsolationMode;
 }
 
 export interface IAgentSpawner {
