@@ -13,6 +13,7 @@ import {
   getLinkedLearnings,
   getLearningsBySession,
   type LearningRecord,
+  type Visibility,
 } from '../../../db';
 import {
   saveLearning as saveLearningToChroma,
@@ -33,22 +34,29 @@ const AddLearningSchema = z.object({
   context: z.string().optional(),
   source_session_id: z.string().optional(),
   confidence: z.enum(['low', 'medium', 'high', 'proven']).default('medium'),
+  agent_id: z.number().int().nullable().optional(),
+  visibility: z.enum(['private', 'shared', 'public']).optional(),
 });
 
 const RecallLearningsSchema = z.object({
   query: z.string().min(1),
   category: z.string().optional(),
   limit: z.number().min(1).max(20).default(5),
+  agent_id: z.number().int().nullable().optional(),
+  include_shared: z.boolean().default(true),
 });
 
 const GetLearningSchema = z.object({
   learning_id: z.number().int().positive(),
+  agent_id: z.number().int().nullable().optional(),
 });
 
 const ListLearningsSchema = z.object({
   category: z.string().optional(),
   confidence: z.enum(['low', 'medium', 'high', 'proven']).optional(),
   limit: z.number().min(1).max(50).default(10),
+  agent_id: z.number().int().nullable().optional(),
+  include_shared: z.boolean().default(true),
 });
 
 const ValidateLearningSchema = z.object({
@@ -92,6 +100,8 @@ export const learningTools: ToolDefinition[] = [
           enum: ["low", "medium", "high", "proven"],
           description: "Confidence level (default: medium)",
         },
+        agent_id: { type: "number", description: "Agent ID (null = orchestrator)" },
+        visibility: { type: "string", enum: ["private", "shared", "public"], description: "Learning visibility (default: public for orchestrator, private for agents)" },
       },
       required: ["category", "title"],
     },
@@ -105,6 +115,8 @@ export const learningTools: ToolDefinition[] = [
         query: { type: "string", description: "Search query" },
         category: { type: "string", description: "Filter by category" },
         limit: { type: "number", description: "Max results (default: 5)" },
+        agent_id: { type: "number", description: "Filter by agent ID (null = orchestrator)" },
+        include_shared: { type: "boolean", description: "Include shared/public learnings from other agents (default: true)" },
       },
       required: ["query"],
     },
@@ -116,6 +128,7 @@ export const learningTools: ToolDefinition[] = [
       type: "object",
       properties: {
         learning_id: { type: "number", description: "Learning ID" },
+        agent_id: { type: "number", description: "Requesting agent ID for access control (null = orchestrator)" },
       },
       required: ["learning_id"],
     },
@@ -133,6 +146,8 @@ export const learningTools: ToolDefinition[] = [
           description: "Filter by confidence level",
         },
         limit: { type: "number", description: "Max results (default: 10)" },
+        agent_id: { type: "number", description: "Filter by agent ID (null = orchestrator)" },
+        include_shared: { type: "boolean", description: "Include shared/public learnings from other agents (default: true)" },
       },
     },
   },
@@ -172,6 +187,9 @@ async function handleAddLearning(args: unknown) {
   await ensureVectorDB();
   const input = AddLearningSchema.parse(args);
 
+  const agentId = input.agent_id ?? null;
+  const visibility = input.visibility || (agentId === null ? 'public' : 'private') as Visibility;
+
   try {
     // 1. Save to SQLite (source of truth)
     const learningId = createLearning({
@@ -181,6 +199,8 @@ async function handleAddLearning(args: unknown) {
       context: input.context,
       source_session_id: input.source_session_id,
       confidence: input.confidence,
+      agent_id: agentId,
+      visibility,
     });
 
     // 2. Save to ChromaDB (search index)
@@ -189,14 +209,20 @@ async function handleAddLearning(args: unknown) {
       category: input.category,
       confidence: input.confidence,
       created_at: new Date().toISOString(),
+      agent_id: agentId,
+      visibility,
     });
 
-    // 3. Auto-link to similar learnings
-    const { autoLinked, suggested } = await findSimilarLearnings(searchContent, learningId);
+    // 3. Auto-link to similar learnings (with agent scoping)
+    const { autoLinked, suggested } = await findSimilarLearnings(searchContent, {
+      excludeId: learningId,
+      agentId,
+      crossAgentLinking: false,
+    });
 
     // Create auto-links in SQLite
     for (const link of autoLinked) {
-      createLearningLink(learningId, link.id, 'auto_strong', link.similarity);
+      createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
     }
 
     return jsonResponse({
@@ -205,11 +231,13 @@ async function handleAddLearning(args: unknown) {
       category: input.category,
       title: input.title,
       confidence: input.confidence,
+      agent_id: agentId,
+      visibility,
       auto_linked: autoLinked,
       suggested_links: suggested.map(s => ({
         id: s.id,
         similarity: Number(s.similarity.toFixed(3)),
-        title: s.title,
+        title: s.summary,
       })),
     });
   } catch (error) {
@@ -222,27 +250,31 @@ async function handleRecallLearnings(args: unknown) {
   const input = RecallLearningsSchema.parse(args);
 
   try {
-    const results = await searchLearnings(input.query, input.limit);
+    const results = await searchLearnings(input.query, {
+      limit: input.limit,
+      category: input.category,
+      agentId: input.agent_id ?? undefined,
+      includeShared: input.include_shared,
+    });
 
-    let learnings = results.ids[0]?.map((id, i) => {
+    const learnings = results.ids[0]?.map((id, i) => {
       const meta = results.metadatas[0]?.[i] as any;
       return {
         learning_id: parseInt(id.replace('learning_', '')),
         title: results.documents[0]?.[i]?.substring(0, 100) + '...',
         category: meta?.category,
         confidence: meta?.confidence,
+        agent_id: meta?.agent_id === -1 ? null : meta?.agent_id,
+        visibility: meta?.visibility || 'public',
         relevance: results.distances?.[0]?.[i] ? Number((1 - results.distances[0][i]).toFixed(3)) : null,
       };
     }) || [];
 
-    // Filter by category if specified
-    if (input.category) {
-      learnings = learnings.filter(l => l.category === input.category);
-    }
-
     return jsonResponse({
       query: input.query,
       category_filter: input.category || null,
+      agent_filter: input.agent_id ?? null,
+      include_shared: input.include_shared,
       count: learnings.length,
       learnings,
       hint: "Use get_learning(learning_id) for full details",
@@ -261,6 +293,12 @@ async function handleGetLearning(args: unknown) {
       return errorResponse(`Learning not found: ${input.learning_id}`);
     }
 
+    // Check access control if agent_id is specified
+    const requestingAgentId = input.agent_id ?? null;
+    if (!canAccessLearning(requestingAgentId, learning)) {
+      return errorResponse(`Access denied: Learning ${input.learning_id} is not accessible to agent ${requestingAgentId}`);
+    }
+
     // Get linked learnings
     const linkedLearnings = getLinkedLearnings(input.learning_id);
 
@@ -275,6 +313,8 @@ async function handleGetLearning(args: unknown) {
         confidence: learning.confidence,
         times_validated: learning.times_validated,
         last_validated_at: learning.last_validated_at,
+        agent_id: learning.agent_id,
+        visibility: learning.visibility,
         created_at: learning.created_at,
       },
       linked_learnings: linkedLearnings.map(l => ({
@@ -290,6 +330,18 @@ async function handleGetLearning(args: unknown) {
   }
 }
 
+// Access control helper
+function canAccessLearning(agentId: number | null, learning: LearningRecord): boolean {
+  // Orchestrator (null) can access everything
+  if (agentId === null) return true;
+  // Owner can always access
+  if (learning.agent_id === agentId) return true;
+  // Orchestrator learnings are public by default
+  if (learning.agent_id === null) return true;
+  // Check visibility
+  return learning.visibility === 'shared' || learning.visibility === 'public';
+}
+
 async function handleListLearnings(args: unknown) {
   const input = ListLearningsSchema.parse(args);
 
@@ -298,17 +350,22 @@ async function handleListLearnings(args: unknown) {
       category: input.category,
       confidence: input.confidence,
       limit: input.limit,
+      agentId: input.agent_id ?? undefined,
+      includeShared: input.include_shared,
     });
 
     return jsonResponse({
       count: learnings.length,
-      filters: { category: input.category, confidence: input.confidence },
+      filters: { category: input.category, confidence: input.confidence, agent_id: input.agent_id ?? null },
+      include_shared: input.include_shared,
       learnings: learnings.map(l => ({
         id: l.id,
         category: l.category,
         title: l.title,
         confidence: l.confidence,
         times_validated: l.times_validated,
+        agent_id: l.agent_id,
+        visibility: l.visibility,
         created_at: l.created_at,
       })),
     });

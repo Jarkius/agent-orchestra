@@ -394,6 +394,8 @@ export async function getCollectionStats(): Promise<Record<string, number>> {
 export interface SessionMetadata {
   tags?: string[];
   created_at: string;
+  agent_id?: number | null;
+  visibility?: string;
   [key: string]: unknown;
 }
 
@@ -408,6 +410,8 @@ export async function saveSession(
     const chromaMetadata: Record<string, string | number | boolean> = {
       created_at: metadata.created_at,
       tags: metadata.tags?.join(',') || '',
+      agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
+      visibility: metadata.visibility || 'public',
     };
 
     await cols.sessions.add({
@@ -421,14 +425,46 @@ export async function saveSession(
   }
 }
 
+export interface SessionSearchOptions {
+  limit?: number;
+  agentId?: number | null;
+  includeShared?: boolean;
+}
+
 export async function searchSessions(
   query: string,
-  limit = 3
+  limitOrOptions: number | SessionSearchOptions = 3
 ): Promise<SearchResult> {
   const cols = ensureInitialized();
+
+  // Support both old (limit number) and new (options object) signatures
+  const options = typeof limitOrOptions === 'number'
+    ? { limit: limitOrOptions }
+    : limitOrOptions;
+  const { limit = 3, agentId, includeShared = true } = options;
+
+  // Build where clause for agent filtering
+  let where: Record<string, unknown> | undefined;
+  if (agentId !== undefined) {
+    if (includeShared) {
+      // ChromaDB doesn't have OR conditions, so we use $or operator
+      where = {
+        $or: [
+          { agent_id: agentId },
+          { agent_id: -1 }, // orchestrator
+          { visibility: 'shared' },
+          { visibility: 'public' },
+        ],
+      };
+    } else {
+      where = { agent_id: agentId };
+    }
+  }
+
   return await cols.sessions.query({
     queryTexts: [query],
     nResults: limit,
+    where,
   }) as SearchResult;
 }
 
@@ -450,11 +486,20 @@ export async function listSessions(limit = 10): Promise<{
 
 // ============ LEARNING PERSISTENCE ============
 
+export interface LearningMetadata {
+  category: string;
+  confidence: string;
+  source_session_id?: string;
+  created_at: string;
+  agent_id?: number | null;
+  visibility?: string;
+}
+
 export async function saveLearning(
   learningId: number,
   title: string,
   description: string,
-  metadata: { category: string; confidence: string; source_session_id?: string; created_at: string }
+  metadata: LearningMetadata
 ): Promise<void> {
   const cols = ensureInitialized();
   try {
@@ -464,6 +509,8 @@ export async function saveLearning(
       confidence: metadata.confidence,
       source_session_id: metadata.source_session_id || '',
       created_at: metadata.created_at,
+      agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
+      visibility: metadata.visibility || 'public',
     };
 
     await cols.learnings.add({
@@ -477,13 +524,55 @@ export async function saveLearning(
   }
 }
 
+export interface LearningSearchOptions {
+  limit?: number;
+  category?: string;
+  agentId?: number | null;
+  includeShared?: boolean;
+}
+
 export async function searchLearnings(
   query: string,
-  limit = 5,
+  limitOrOptions: number | LearningSearchOptions = 5,
   category?: string
 ): Promise<SearchResult> {
   const cols = ensureInitialized();
-  const where = category ? { category } : undefined;
+
+  // Support both old (limit, category) and new (options object) signatures
+  const options = typeof limitOrOptions === 'number'
+    ? { limit: limitOrOptions, category }
+    : limitOrOptions;
+  const { limit = 5, agentId, includeShared = true, category: cat } = options;
+
+  // Build where clause
+  let where: Record<string, unknown> | undefined;
+  const conditions: Record<string, unknown>[] = [];
+
+  if (cat) {
+    conditions.push({ category: cat });
+  }
+
+  if (agentId !== undefined) {
+    if (includeShared) {
+      conditions.push({
+        $or: [
+          { agent_id: agentId },
+          { agent_id: -1 }, // orchestrator
+          { visibility: 'shared' },
+          { visibility: 'public' },
+        ],
+      });
+    } else {
+      conditions.push({ agent_id: agentId });
+    }
+  }
+
+  if (conditions.length === 1) {
+    where = conditions[0];
+  } else if (conditions.length > 1) {
+    where = { $and: conditions };
+  }
+
   return await cols.learnings.query({
     queryTexts: [query],
     nResults: limit,
@@ -608,15 +697,49 @@ export interface AutoLinkResult {
   suggested: Array<{ id: string; similarity: number; summary?: string }>;
 }
 
+export interface AutoLinkOptions {
+  excludeId?: string;
+  limit?: number;
+  agentId?: number | null;
+  crossAgentLinking?: boolean;
+}
+
 export async function findSimilarSessions(
   content: string,
-  excludeId?: string,
+  excludeIdOrOptions?: string | AutoLinkOptions,
   limit = 5
 ): Promise<AutoLinkResult> {
   const cols = ensureInitialized();
+
+  // Support both old (excludeId, limit) and new (options object) signatures
+  const options: AutoLinkOptions = typeof excludeIdOrOptions === 'string'
+    ? { excludeId: excludeIdOrOptions, limit }
+    : excludeIdOrOptions || {};
+  const {
+    excludeId,
+    limit: resultLimit = 5,
+    agentId,
+    crossAgentLinking = false,
+  } = options;
+
+  // Build where clause for agent filtering
+  let where: Record<string, unknown> | undefined;
+  if (agentId !== undefined && !crossAgentLinking) {
+    // Only search within same agent's sessions (or orchestrator + public/shared)
+    where = {
+      $or: [
+        { agent_id: agentId },
+        { agent_id: -1 }, // orchestrator
+        { visibility: 'shared' },
+        { visibility: 'public' },
+      ],
+    };
+  }
+
   const results = await cols.sessions.query({
     queryTexts: [content],
-    nResults: limit + 1, // +1 to account for self if present
+    nResults: resultLimit + 1, // +1 to account for self if present
+    where,
   });
 
   const autoLinked: AutoLinkResult['autoLinked'] = [];
@@ -643,15 +766,49 @@ export async function findSimilarSessions(
   return { autoLinked, suggested };
 }
 
+export interface LearningAutoLinkOptions {
+  excludeId?: number;
+  limit?: number;
+  agentId?: number | null;
+  crossAgentLinking?: boolean;
+}
+
 export async function findSimilarLearnings(
   content: string,
-  excludeId?: number,
+  excludeIdOrOptions?: number | LearningAutoLinkOptions,
   limit = 5
 ): Promise<AutoLinkResult> {
   const cols = ensureInitialized();
+
+  // Support both old (excludeId, limit) and new (options object) signatures
+  const options: LearningAutoLinkOptions = typeof excludeIdOrOptions === 'number'
+    ? { excludeId: excludeIdOrOptions, limit }
+    : excludeIdOrOptions || {};
+  const {
+    excludeId,
+    limit: resultLimit = 5,
+    agentId,
+    crossAgentLinking = false,
+  } = options;
+
+  // Build where clause for agent filtering
+  let where: Record<string, unknown> | undefined;
+  if (agentId !== undefined && !crossAgentLinking) {
+    // Only search within same agent's learnings (or orchestrator + public/shared)
+    where = {
+      $or: [
+        { agent_id: agentId },
+        { agent_id: -1 }, // orchestrator
+        { visibility: 'shared' },
+        { visibility: 'public' },
+      ],
+    };
+  }
+
   const results = await cols.learnings.query({
     queryTexts: [content],
-    nResults: limit + 1,
+    nResults: resultLimit + 1,
+    where,
   });
 
   const autoLinked: AutoLinkResult['autoLinked'] = [];

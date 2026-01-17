@@ -20,6 +20,7 @@ import {
   getLearningsBySession,
   type SessionRecord,
   type FullContext,
+  type Visibility,
 } from '../../../db';
 import type { ToolDefinition, ToolHandler } from '../../types';
 import { z } from 'zod';
@@ -42,21 +43,28 @@ const SaveSessionSchema = z.object({
   previous_session_id: z.string().optional(),
   next_steps: z.array(z.string()).optional(),
   challenges: z.array(z.string()).optional(),
+  agent_id: z.number().int().nullable().optional(),
+  visibility: z.enum(['private', 'shared', 'public']).optional(),
 });
 
 const RecallSessionSchema = z.object({
   query: z.string().min(1),
   limit: z.number().min(1).max(10).default(3),
+  agent_id: z.number().int().nullable().optional(),
+  include_shared: z.boolean().default(true),
 });
 
 const GetSessionSchema = z.object({
   session_id: z.string().min(1),
+  agent_id: z.number().int().nullable().optional(),
 });
 
 const ListSessionsSchema = z.object({
   tag: z.string().optional(),
   since: z.string().optional(),
   limit: z.number().min(1).max(50).default(10),
+  agent_id: z.number().int().nullable().optional(),
+  include_shared: z.boolean().default(true),
 });
 
 const LinkSessionsSchema = z.object({
@@ -101,6 +109,8 @@ export const sessionTools: ToolDefinition[] = [
         previous_session_id: { type: "string", description: "ID of previous session (for continuation)" },
         next_steps: { type: "array", items: { type: "string" }, description: "Planned next steps" },
         challenges: { type: "array", items: { type: "string" }, description: "Current challenges or blockers" },
+        agent_id: { type: "number", description: "Agent ID (null = orchestrator)" },
+        visibility: { type: "string", enum: ["private", "shared", "public"], description: "Session visibility (default: public for orchestrator, private for agents)" },
       },
       required: ["summary"],
     },
@@ -113,6 +123,8 @@ export const sessionTools: ToolDefinition[] = [
       properties: {
         query: { type: "string", description: "Search query" },
         limit: { type: "number", description: "Max results (default: 3)" },
+        agent_id: { type: "number", description: "Filter by agent ID (null = orchestrator)" },
+        include_shared: { type: "boolean", description: "Include shared/public sessions from other agents (default: true)" },
       },
       required: ["query"],
     },
@@ -124,6 +136,7 @@ export const sessionTools: ToolDefinition[] = [
       type: "object",
       properties: {
         session_id: { type: "string", description: "Session ID" },
+        agent_id: { type: "number", description: "Requesting agent ID for access control (null = orchestrator)" },
       },
       required: ["session_id"],
     },
@@ -137,6 +150,8 @@ export const sessionTools: ToolDefinition[] = [
         tag: { type: "string", description: "Filter by tag" },
         since: { type: "string", description: "Filter by date (ISO format)" },
         limit: { type: "number", description: "Max results (default: 10)" },
+        agent_id: { type: "number", description: "Filter by agent ID (null = orchestrator)" },
+        include_shared: { type: "boolean", description: "Include shared/public sessions from other agents (default: true)" },
       },
     },
   },
@@ -163,6 +178,8 @@ async function handleSaveSession(args: unknown) {
 
   const sessionId = `session_${Date.now()}`;
   const now = new Date().toISOString();
+  const agentId = input.agent_id ?? null;
+  const visibility = input.visibility || (agentId === null ? 'public' : 'private') as Visibility;
 
   try {
     // 1. Save to SQLite (source of truth)
@@ -176,6 +193,8 @@ async function handleSaveSession(args: unknown) {
       tags: input.tags,
       next_steps: input.next_steps,
       challenges: input.challenges,
+      agent_id: agentId,
+      visibility,
     };
     createSession(session);
 
@@ -186,10 +205,16 @@ async function handleSaveSession(args: unknown) {
     await saveSessionToChroma(sessionId, searchContent, {
       tags: input.tags || [],
       created_at: now,
+      agent_id: agentId,
+      visibility,
     });
 
-    // 3. Auto-link to similar sessions
-    const { autoLinked, suggested } = await findSimilarSessions(searchContent, sessionId);
+    // 3. Auto-link to similar sessions (with agent scoping)
+    const { autoLinked, suggested } = await findSimilarSessions(searchContent, {
+      excludeId: sessionId,
+      agentId,
+      crossAgentLinking: false,
+    });
 
     // Create auto-links in SQLite
     for (const link of autoLinked) {
@@ -205,6 +230,8 @@ async function handleSaveSession(args: unknown) {
       success: true,
       session_id: sessionId,
       created_at: now,
+      agent_id: agentId,
+      visibility,
       summary_length: input.summary.length,
       tags: input.tags || [],
       auto_linked: autoLinked,
@@ -224,7 +251,11 @@ async function handleRecallSession(args: unknown) {
   const input = RecallSessionSchema.parse(args);
 
   try {
-    const results = await searchSessions(input.query, input.limit);
+    const results = await searchSessions(input.query, {
+      limit: input.limit,
+      agentId: input.agent_id ?? undefined,
+      includeShared: input.include_shared,
+    });
 
     const sessions = results.ids[0]?.map((id, i) => {
       const meta = results.metadatas[0]?.[i] as any;
@@ -232,12 +263,16 @@ async function handleRecallSession(args: unknown) {
         session_id: id,
         summary: results.documents[0]?.[i]?.substring(0, 150) + '...',
         tags: meta?.tags ? String(meta.tags).split(',').filter(Boolean) : [],
+        agent_id: meta?.agent_id === -1 ? null : meta?.agent_id,
+        visibility: meta?.visibility || 'public',
         relevance: results.distances?.[0]?.[i] ? Number((1 - results.distances[0][i]).toFixed(3)) : null,
       };
     }) || [];
 
     return jsonResponse({
       query: input.query,
+      agent_filter: input.agent_id ?? null,
+      include_shared: input.include_shared,
       count: sessions.length,
       sessions,
       hint: "Use get_session(session_id) for full details",
@@ -254,6 +289,12 @@ async function handleGetSession(args: unknown) {
     const session = getSessionById(input.session_id);
     if (!session) {
       return errorResponse(`Session not found: ${input.session_id}`);
+    }
+
+    // Check access control if agent_id is specified
+    const requestingAgentId = input.agent_id ?? null;
+    if (!canAccessSession(requestingAgentId, session)) {
+      return errorResponse(`Access denied: Session ${input.session_id} is not accessible to agent ${requestingAgentId}`);
     }
 
     // Get linked sessions
@@ -273,6 +314,8 @@ async function handleGetSession(args: unknown) {
         previous_session_id: session.previous_session_id,
         next_steps: session.next_steps,
         challenges: session.challenges,
+        agent_id: session.agent_id,
+        visibility: session.visibility,
         created_at: session.created_at,
       },
       linked_sessions: linkedSessions.map(l => ({
@@ -293,6 +336,18 @@ async function handleGetSession(args: unknown) {
   }
 }
 
+// Access control helper
+function canAccessSession(agentId: number | null, session: SessionRecord): boolean {
+  // Orchestrator (null) can access everything
+  if (agentId === null) return true;
+  // Owner can always access
+  if (session.agent_id === agentId) return true;
+  // Orchestrator sessions are public by default
+  if (session.agent_id === null) return true;
+  // Check visibility
+  return session.visibility === 'shared' || session.visibility === 'public';
+}
+
 async function handleListSessions(args: unknown) {
   const input = ListSessionsSchema.parse(args);
 
@@ -301,17 +356,22 @@ async function handleListSessions(args: unknown) {
       tag: input.tag,
       since: input.since,
       limit: input.limit,
+      agentId: input.agent_id ?? undefined,
+      includeShared: input.include_shared,
     });
 
     return jsonResponse({
       count: sessions.length,
-      filters: { tag: input.tag, since: input.since },
+      filters: { tag: input.tag, since: input.since, agent_id: input.agent_id ?? null },
+      include_shared: input.include_shared,
       sessions: sessions.map(s => ({
         session_id: s.id,
         summary: s.summary?.substring(0, 150) + (s.summary && s.summary.length > 150 ? '...' : ''),
         tags: s.tags,
         duration_mins: s.duration_mins,
         commits_count: s.commits_count,
+        agent_id: s.agent_id,
+        visibility: s.visibility,
         created_at: s.created_at,
       })),
     });

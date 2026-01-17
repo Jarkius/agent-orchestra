@@ -15,6 +15,7 @@ import {
   createSessionLink,
   linkTaskToSession,
   type SessionRecord,
+  type Visibility,
 } from "./db";
 import {
   initVectorDB,
@@ -71,6 +72,7 @@ function logError(message: string) {
 /**
  * Auto-save a mini-session after task completion
  * Captures task context, result summary, and auto-links to similar sessions
+ * Sessions are created with agent_id for per-agent memory isolation
  */
 async function autoSaveTaskSession(
   task: Task,
@@ -94,7 +96,10 @@ async function autoSaveTaskSession(
       ? [`Task failed: ${result.output.substring(0, 100)}`]
       : [];
 
-    // 1. Save to SQLite
+    // Agent sessions default to 'private' visibility - can be shared later
+    const visibility: Visibility = 'private';
+
+    // 1. Save to SQLite with agent_id for isolation
     const session: SessionRecord = {
       id: sessionId,
       summary,
@@ -103,22 +108,30 @@ async function autoSaveTaskSession(
         what_didnt_work: whatDidntWork,
       },
       tags: [`agent-${AGENT_ID}`, 'auto-generated', task.priority || 'normal'],
+      agent_id: AGENT_ID,
+      visibility,
     };
     createSession(session);
 
     // 2. Link task to this session
     linkTaskToSession(task.id, sessionId);
 
-    // 3. Save to ChromaDB for semantic search
+    // 3. Save to ChromaDB for semantic search with agent_id
     if (isInitialized()) {
       const searchContent = `${summary} Agent task ${task.priority || 'normal'} priority`;
       await saveSessionToChroma(sessionId, searchContent, {
         tags: session.tags || [],
         created_at: now,
+        agent_id: AGENT_ID,
+        visibility,
       });
 
-      // 4. Auto-link to similar sessions
-      const { autoLinked, suggested } = await findSimilarSessions(searchContent, sessionId);
+      // 4. Auto-link to similar sessions (within agent scope)
+      const { autoLinked, suggested } = await findSimilarSessions(searchContent, {
+        excludeId: sessionId,
+        agentId: AGENT_ID,
+        crossAgentLinking: false,
+      });
       for (const link of autoLinked) {
         createSessionLink(sessionId, link.id, 'auto_strong', link.similarity);
       }
@@ -128,7 +141,7 @@ async function autoSaveTaskSession(
       }
     }
 
-    log(`Created mini-session: ${sessionId}`);
+    log(`Created mini-session: ${sessionId} (agent_id: ${AGENT_ID}, visibility: ${visibility})`);
     return sessionId;
   } catch (error) {
     logError(`Failed to auto-save session: ${error}`);

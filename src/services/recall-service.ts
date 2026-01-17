@@ -96,6 +96,8 @@ export interface RecallOptions {
   limit?: number;
   includeLinks?: boolean;
   includeTasks?: boolean;
+  agentId?: number | null;
+  includeShared?: boolean;
 }
 
 // ============ Main Recall Function ============
@@ -104,22 +106,22 @@ export interface RecallOptions {
  * Smart recall - detects query type and handles appropriately
  */
 export async function recall(query: string | undefined, options: RecallOptions = {}): Promise<RecallResult> {
-  const { limit = 5, includeLinks = true, includeTasks = true } = options;
+  const { limit = 5, includeLinks = true, includeTasks = true, agentId, includeShared = true } = options;
   const queryType = detectQueryType(query);
   const normalizedQuery = query?.trim() || '';
 
   switch (queryType) {
     case 'recent':
-      return recallRecent(limit, includeLinks, includeTasks);
+      return recallRecent(limit, includeLinks, includeTasks, agentId, includeShared);
 
     case 'session_id':
-      return recallSessionById(normalizedQuery, includeLinks, includeTasks);
+      return recallSessionById(normalizedQuery, includeLinks, includeTasks, agentId);
 
     case 'learning_id':
-      return recallLearningById(normalizedQuery, includeLinks);
+      return recallLearningById(normalizedQuery, includeLinks, agentId);
 
     case 'search':
-      return recallBySearch(normalizedQuery, limit, includeLinks, includeTasks);
+      return recallBySearch(normalizedQuery, limit, includeLinks, includeTasks, agentId, includeShared);
   }
 }
 
@@ -132,10 +134,16 @@ export async function recall(query: string | undefined, options: RecallOptions =
 async function recallRecent(
   limit: number,
   includeLinks: boolean,
-  includeTasks: boolean
+  includeTasks: boolean,
+  agentId?: number | null,
+  includeShared: boolean = true
 ): Promise<RecallResult> {
-  // Get the most recent session for resuming
-  const sessions = listSessionsFromDb({ limit: 1 });
+  // Get the most recent session for resuming (with agent scoping)
+  const sessions = listSessionsFromDb({
+    limit: 1,
+    agentId,
+    includeShared,
+  });
 
   if (sessions.length === 0) {
     return {
@@ -156,8 +164,13 @@ async function recallRecent(
     linkedSessions: includeLinks ? getLinkedSessions(latestSession.id) : [],
   }];
 
-  // Also get high-confidence learnings that might be relevant
-  const relevantLearnings = listLearningsFromDb({ confidence: 'high', limit: 5 });
+  // Also get high-confidence learnings that might be relevant (with agent scoping)
+  const relevantLearnings = listLearningsFromDb({
+    confidence: 'high',
+    limit: 5,
+    agentId,
+    includeShared,
+  });
   const learningsWithContext: LearningWithContext[] = relevantLearnings.map(learning => ({
     learning,
     linkedLearnings: includeLinks && learning.id ? getLinkedLearnings(learning.id) : [],
@@ -178,11 +191,23 @@ async function recallRecent(
 async function recallSessionById(
   sessionId: string,
   includeLinks: boolean,
-  includeTasks: boolean
+  includeTasks: boolean,
+  agentId?: number | null
 ): Promise<RecallResult> {
   const session = getSessionById(sessionId);
 
   if (!session) {
+    return {
+      type: 'exact_match',
+      query: sessionId,
+      sessions: [],
+      learnings: [],
+      tasks: [],
+    };
+  }
+
+  // Check access if agentId is specified
+  if (agentId !== undefined && !canAccessSession(agentId, session)) {
     return {
       type: 'exact_match',
       query: sessionId,
@@ -206,11 +231,40 @@ async function recallSessionById(
 }
 
 /**
+ * Check if agent can access a session
+ */
+function canAccessSession(agentId: number | null, session: SessionRecord): boolean {
+  // Orchestrator (null) can access everything
+  if (agentId === null) return true;
+  // Owner can always access
+  if (session.agent_id === agentId) return true;
+  // Orchestrator sessions are public by default
+  if (session.agent_id === null) return true;
+  // Check visibility
+  return session.visibility === 'shared' || session.visibility === 'public';
+}
+
+/**
+ * Check if agent can access a learning
+ */
+function canAccessLearning(agentId: number | null, learning: LearningRecord): boolean {
+  // Orchestrator (null) can access everything
+  if (agentId === null) return true;
+  // Owner can always access
+  if (learning.agent_id === agentId) return true;
+  // Orchestrator learnings are public by default
+  if (learning.agent_id === null) return true;
+  // Check visibility
+  return learning.visibility === 'shared' || learning.visibility === 'public';
+}
+
+/**
  * Recall by exact learning ID
  */
 async function recallLearningById(
   query: string,
-  includeLinks: boolean
+  includeLinks: boolean,
+  agentId?: number | null
 ): Promise<RecallResult> {
   const learningId = extractLearningId(query);
 
@@ -227,6 +281,17 @@ async function recallLearningById(
   const learning = getLearningById(learningId);
 
   if (!learning) {
+    return {
+      type: 'exact_match',
+      query,
+      sessions: [],
+      learnings: [],
+      tasks: [],
+    };
+  }
+
+  // Check access if agentId is specified
+  if (agentId !== undefined && !canAccessLearning(agentId, learning)) {
     return {
       type: 'exact_match',
       query,
@@ -255,17 +320,22 @@ async function recallBySearch(
   query: string,
   limit: number,
   includeLinks: boolean,
-  includeTasks: boolean
+  includeTasks: boolean,
+  agentId?: number | null,
+  includeShared: boolean = true
 ): Promise<RecallResult> {
   // Initialize vector DB if needed
   if (!isInitialized()) {
     await initVectorDB();
   }
 
+  // Build search options with agent scoping
+  const searchOptions = { limit, agentId, includeShared };
+
   // Run parallel searches
   const [sessionResults, learningResults, taskResults] = await Promise.all([
-    searchSessions(query, limit),
-    searchLearnings(query, limit + 2),
+    searchSessions(query, searchOptions),
+    searchLearnings(query, { ...searchOptions, limit: limit + 2 }),
     searchSessionTasks(query, limit),
   ]);
 
@@ -277,7 +347,8 @@ async function recallBySearch(
       const distance = sessionResults.distances?.[0]?.[i] || 0;
       const session = getSessionById(id);
 
-      if (session) {
+      // Double-check access (belt and suspenders with ChromaDB filtering)
+      if (session && (agentId === undefined || canAccessSession(agentId, session))) {
         sessionsWithContext.push({
           session,
           tasks: includeTasks ? getSessionTasks(id) : [],
@@ -297,7 +368,8 @@ async function recallBySearch(
       const distance = learningResults.distances?.[0]?.[i] || 0;
       const learning = getLearningById(numId);
 
-      if (learning) {
+      // Double-check access
+      if (learning && (agentId === undefined || canAccessLearning(agentId, learning))) {
         learningsWithContext.push({
           learning,
           linkedLearnings: includeLinks && learning.id ? getLinkedLearnings(learning.id) : [],

@@ -7,15 +7,30 @@
  *   bun memory recall "session_123..."   # Recall specific session by ID
  *   bun memory recall "#5"               # Recall specific learning by ID
  *   bun memory recall "search query"     # Semantic search
+ *
+ * Environment:
+ *   MEMORY_AGENT_ID                      # Filter by agent ID (set by --agent flag)
  */
 
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
 import { formatFullContext, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
 
 const query = process.argv[2];
+const agentId = process.env.MEMORY_AGENT_ID ? parseInt(process.env.MEMORY_AGENT_ID) : undefined;
 
 async function main() {
-  const result = await recall(query, { limit: 5, includeLinks: true, includeTasks: true });
+  const result = await recall(query, {
+    limit: 5,
+    includeLinks: true,
+    includeTasks: true,
+    agentId,
+    includeShared: true,
+  });
+
+  // Show agent filter if active
+  if (agentId !== undefined) {
+    console.log(`\n🔒 Filtering by Agent ID: ${agentId}`);
+  }
 
   switch (result.type) {
     case 'recent':
@@ -182,6 +197,10 @@ function displaySessionDetails(ctx: SessionWithContext) {
   if (session.commits_count) {
     console.log(`Commits: ${session.commits_count}`);
   }
+
+  // Show agent ownership
+  const ownerLabel = session.agent_id === null ? 'orchestrator' : `Agent ${session.agent_id}`;
+  console.log(`Owner: ${ownerLabel} | Visibility: ${session.visibility || 'public'}`);
   console.log(`Created: ${session.created_at}`);
 
   // Full context
@@ -263,6 +282,10 @@ function displayLearningDetails(ctx: LearningWithContext) {
   if (learning.source_session_id) {
     console.log(`Source session: ${learning.source_session_id}`);
   }
+
+  // Show agent ownership
+  const ownerLabel = learning.agent_id === null ? 'orchestrator' : `Agent ${learning.agent_id}`;
+  console.log(`Owner: ${ownerLabel} | Visibility: ${learning.visibility || 'public'}`);
   console.log(`Created: ${learning.created_at}`);
 
   if (linkedLearnings.length > 0) {

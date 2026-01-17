@@ -190,6 +190,34 @@ try {
 // Create index for task-session queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id)`);
 
+// ============ Phase 1: Per-Agent Memory Schema ============
+
+// Add agent_id column to sessions table (nullable, NULL = orchestrator)
+try {
+  db.run(`ALTER TABLE sessions ADD COLUMN agent_id INTEGER DEFAULT NULL`);
+} catch { /* Column already exists */ }
+
+// Add visibility column to sessions table
+try {
+  db.run(`ALTER TABLE sessions ADD COLUMN visibility TEXT DEFAULT 'public'`);
+} catch { /* Column already exists */ }
+
+// Add agent_id column to learnings table (nullable, NULL = orchestrator)
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN agent_id INTEGER DEFAULT NULL`);
+} catch { /* Column already exists */ }
+
+// Add visibility column to learnings table
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN visibility TEXT DEFAULT 'public'`);
+} catch { /* Column already exists */ }
+
+// Create indexes for agent-scoped queries
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_agent ON learnings(agent_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_visibility ON sessions(visibility)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_visibility ON learnings(visibility)`);
+
 // ============ Agent Functions ============
 
 export function registerAgent(id: number, paneId: string, pid: number, name?: string) {
@@ -483,6 +511,8 @@ export interface FullContext {
   challenges?: string[];
 }
 
+export type Visibility = 'private' | 'shared' | 'public';
+
 export interface SessionRecord {
   id: string;
   previous_session_id?: string;
@@ -493,13 +523,15 @@ export interface SessionRecord {
   tags?: string[];
   next_steps?: string[];
   challenges?: string[];
+  agent_id?: number | null;
+  visibility?: Visibility;
   created_at?: string;
 }
 
 export function createSession(session: SessionRecord): void {
   db.run(
-    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, next_steps, challenges)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, next_steps, challenges, agent_id, visibility)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session.id,
       session.previous_session_id || null,
@@ -510,6 +542,8 @@ export function createSession(session: SessionRecord): void {
       session.tags?.join(',') || null,
       session.next_steps ? JSON.stringify(session.next_steps) : null,
       session.challenges ? JSON.stringify(session.challenges) : null,
+      session.agent_id ?? null,
+      session.visibility || 'public',
     ]
   );
 }
@@ -523,13 +557,36 @@ export function getSessionById(sessionId: string): SessionRecord | null {
     tags: row.tags ? row.tags.split(',') : [],
     next_steps: row.next_steps ? JSON.parse(row.next_steps) : [],
     challenges: row.challenges ? JSON.parse(row.challenges) : [],
+    agent_id: row.agent_id ?? null,
+    visibility: row.visibility || 'public',
   };
 }
 
-export function listSessionsFromDb(options?: { tag?: string; since?: string; limit?: number }): SessionRecord[] {
-  const { tag, since, limit = 20 } = options || {};
+export interface ListSessionsOptions {
+  tag?: string;
+  since?: string;
+  limit?: number;
+  agentId?: number | null;
+  includeShared?: boolean;
+}
+
+export function listSessionsFromDb(options?: ListSessionsOptions): SessionRecord[] {
+  const { tag, since, limit = 20, agentId, includeShared = true } = options || {};
   let query = `SELECT * FROM sessions WHERE 1=1`;
   const params: any[] = [];
+
+  // Agent scoping
+  if (agentId !== undefined) {
+    if (includeShared) {
+      // Include agent's own sessions plus shared/public from other agents
+      query += ` AND (agent_id = ? OR agent_id IS NULL OR visibility IN ('shared', 'public'))`;
+      params.push(agentId);
+    } else {
+      // Only agent's own sessions
+      query += ` AND agent_id = ?`;
+      params.push(agentId);
+    }
+  }
 
   if (tag) {
     query += ` AND tags LIKE ?`;
@@ -549,6 +606,8 @@ export function listSessionsFromDb(options?: { tag?: string; since?: string; lim
     tags: row.tags ? row.tags.split(',') : [],
     next_steps: row.next_steps ? JSON.parse(row.next_steps) : [],
     challenges: row.challenges ? JSON.parse(row.challenges) : [],
+    agent_id: row.agent_id ?? null,
+    visibility: row.visibility || 'public',
   }));
 }
 
@@ -564,13 +623,15 @@ export interface LearningRecord {
   confidence?: 'low' | 'medium' | 'high' | 'proven';
   times_validated?: number;
   last_validated_at?: string;
+  agent_id?: number | null;
+  visibility?: Visibility;
   created_at?: string;
 }
 
 export function createLearning(learning: LearningRecord): number {
   const result = db.run(
-    `INSERT INTO learnings (category, title, description, context, source_session_id, confidence)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO learnings (category, title, description, context, source_session_id, confidence, agent_id, visibility)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.category,
       learning.title,
@@ -578,19 +639,48 @@ export function createLearning(learning: LearningRecord): number {
       learning.context || null,
       learning.source_session_id || null,
       learning.confidence || 'medium',
+      learning.agent_id ?? null,
+      learning.visibility || 'public',
     ]
   );
   return Number(result.lastInsertRowid);
 }
 
 export function getLearningById(learningId: number): LearningRecord | null {
-  return db.query(`SELECT * FROM learnings WHERE id = ?`).get(learningId) as LearningRecord | null;
+  const row = db.query(`SELECT * FROM learnings WHERE id = ?`).get(learningId) as any;
+  if (!row) return null;
+  return {
+    ...row,
+    agent_id: row.agent_id ?? null,
+    visibility: row.visibility || 'public',
+  };
 }
 
-export function listLearningsFromDb(options?: { category?: string; confidence?: string; limit?: number }): LearningRecord[] {
-  const { category, confidence, limit = 50 } = options || {};
+export interface ListLearningsOptions {
+  category?: string;
+  confidence?: string;
+  limit?: number;
+  agentId?: number | null;
+  includeShared?: boolean;
+}
+
+export function listLearningsFromDb(options?: ListLearningsOptions): LearningRecord[] {
+  const { category, confidence, limit = 50, agentId, includeShared = true } = options || {};
   let query = `SELECT * FROM learnings WHERE 1=1`;
   const params: any[] = [];
+
+  // Agent scoping
+  if (agentId !== undefined) {
+    if (includeShared) {
+      // Include agent's own learnings plus shared/public from other agents
+      query += ` AND (agent_id = ? OR agent_id IS NULL OR visibility IN ('shared', 'public'))`;
+      params.push(agentId);
+    } else {
+      // Only agent's own learnings
+      query += ` AND agent_id = ?`;
+      params.push(agentId);
+    }
+  }
 
   if (category) {
     query += ` AND category = ?`;
@@ -603,7 +693,12 @@ export function listLearningsFromDb(options?: { category?: string; confidence?: 
   query += ` ORDER BY times_validated DESC, created_at DESC LIMIT ?`;
   params.push(limit);
 
-  return db.query(query).all(...params) as LearningRecord[];
+  const rows = db.query(query).all(...params) as any[];
+  return rows.map(row => ({
+    ...row,
+    agent_id: row.agent_id ?? null,
+    visibility: row.visibility || 'public',
+  }));
 }
 
 export function validateLearning(learningId: number): LearningRecord | null {

@@ -14,14 +14,21 @@ const SHARED_DIR = "/tmp/agent_shared";
 
 /**
  * Query ChromaDB for learnings relevant to the task prompt
+ * Uses agent-scoped filtering to prioritize agent's own learnings
+ * while also including shared/public learnings from other agents
  */
-async function getRelevantLearnings(taskPrompt: string, limit = 5): Promise<string> {
+async function getRelevantLearnings(taskPrompt: string, agentId: number, limit = 5): Promise<string> {
   if (!isVectorDBInitialized()) {
     return '';
   }
 
   try {
-    const results = await searchLearnings(taskPrompt, limit);
+    // Search with agent scoping - agent's own learnings + shared/public from others
+    const results = await searchLearnings(taskPrompt, {
+      limit,
+      agentId,
+      includeShared: true,
+    });
 
     if (!results.ids[0]?.length) {
       return '';
@@ -42,8 +49,19 @@ async function getRelevantLearnings(taskPrompt: string, limit = 5): Promise<stri
       if (content) {
         const confidence = metadata?.confidence || 'medium';
         const category = metadata?.category || 'general';
+        const learningAgentId = metadata?.agent_id === -1 ? null : metadata?.agent_id;
+
+        // Marker based on confidence
         const marker = confidence === 'proven' ? '✓' : confidence === 'high' ? '•' : '○';
-        parts.push(`${marker} [${category}] ${content}`);
+
+        // Indicate source: own learnings vs shared
+        const sourceIndicator = learningAgentId === agentId
+          ? '(yours)'
+          : learningAgentId === null
+            ? '(orchestrator)'
+            : '(shared)';
+
+        parts.push(`${marker} [${category}] ${content} ${sourceIndicator}`);
       }
     }
 
@@ -124,8 +142,8 @@ export async function runClaudeTask(
 
   agentContext += `\n\nComplete the task and provide a clear response.`;
 
-  // Inject relevant learnings from ChromaDB
-  const relevantLearnings = await getRelevantLearnings(prompt);
+  // Inject relevant learnings from ChromaDB (agent-scoped)
+  const relevantLearnings = await getRelevantLearnings(prompt, agentId);
 
   // Build full prompt: Shared Context → Relevant Learnings → Agent Identity → Task Context → Task
   fullPrompt = `${agentContext}\n\n${relevantLearnings}${fullPrompt}`;
