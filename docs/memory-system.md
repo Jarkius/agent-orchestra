@@ -150,6 +150,90 @@ Use `validate_learning` MCP tool to increase confidence based on real-world vali
 
 ---
 
+## Knowledge Lifecycle
+
+The full lifecycle from session to proven knowledge:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    WORKING SESSION                           │
+│              (conversation, code, decisions)                 │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    bun memory save                           │
+│   Captures: wins, challenges, learnings, git context         │
+│   Creates: Session record + prompted Learnings (medium)      │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   bun memory distill                         │
+│   Extracts: wins, challenges, learnings from session         │
+│   Interactive: review, categorize, add structure             │
+│   Creates: Learnings (low confidence)                        │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    LEARNINGS TABLE                           │
+│   Confidence: low → medium → high → proven                   │
+│   Validation: When learning proves useful, validate it       │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   bun memory export                          │
+│   Creates: LEARNINGS.md with structured Lesson format        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### How Distill Works
+
+1. **Session Contains Raw Context**
+   ```json
+   {
+     "wins": ["JWT refresh tokens work well"],
+     "challenges": ["Cookie SameSite issues on Safari"],
+     "learnings": ["Always test on Safari early"]
+   }
+   ```
+
+2. **Distill Extracts Candidates**
+   ```
+   Found 3 potential learning(s):
+   1. ✓ [architecture] JWT refresh tokens work well
+   2. ⚠️ [debugging] Cookie SameSite issues on Safari
+   3. 💡 [insight] Always test on Safari early
+   ```
+
+3. **Interactive Review** (for each candidate)
+   - `Y` - Save with suggested category
+   - `n` - Skip this one
+   - `c` - Change category
+   - `s` - Skip all remaining
+
+4. **Add Structure** (optional prompts)
+   ```
+   What happened? > Safari blocked cookies in iframe
+   What did you learn? > SameSite=None requires Secure flag
+   How to prevent? > Test cross-origin flows on Safari first
+   ```
+
+5. **Saved as Learning**
+   ```
+   ✅ Saved as learning #135 (confidence: low)
+   ```
+
+6. **Validate When Useful**
+   ```bash
+   bun memory validate_learning 135
+   # confidence: low → medium → high → proven
+   ```
+
+---
+
 ## Architecture
 
 ### Data Flow

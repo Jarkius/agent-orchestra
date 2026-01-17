@@ -89,6 +89,27 @@ Every save automatically captures:
 | performance, architecture, tooling | philosophy, principle, insight |
 | process, debugging, security, testing | pattern, retrospective |
 
+### Knowledge Lifecycle
+
+```
+Sessions (ephemeral)
+    ↓ distill
+Learnings (persistent knowledge)
+    ↓ validate over time
+Confidence: low → medium → high → proven
+    ↓ export
+LEARNINGS.md (documentation)
+```
+
+**How distill works:**
+
+1. **Session contains raw context** - When you `save`, it captures wins, challenges, learnings
+2. **Distill extracts candidates** - Scans arrays and identifies potential learnings
+3. **Interactive review** - For each candidate: save, skip, or change category
+4. **Add structure** - Optionally add what_happened, lesson, prevention
+5. **Saved as learning** - Starts at `low` confidence
+6. **Validate when useful** - Run `validate_learning` to increase confidence
+
 ### Confidence Model
 
 | Source | Confidence |
