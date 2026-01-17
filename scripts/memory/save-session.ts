@@ -157,12 +157,28 @@ const args = process.argv.slice(2);
 let summary = '';
 let tags: string[] = [];
 let autoMode = false;
+let cliWins: string[] = [];
+let cliChallenges: string[] = [];
+let cliLearnings: string[] = [];
+let cliNextSteps: string[] = [];
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--auto') {
     autoMode = true;
   } else if (args[i] === '--tags' && args[i + 1]) {
     tags = args[i + 1].split(',').map(t => t.trim());
+    i++;
+  } else if (args[i] === '--wins' && args[i + 1]) {
+    cliWins = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
+    i++;
+  } else if (args[i] === '--challenges' && args[i + 1]) {
+    cliChallenges = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
+    i++;
+  } else if (args[i] === '--learnings' && args[i + 1]) {
+    cliLearnings = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
+    i++;
+  } else if (args[i] === '--next-steps' && args[i + 1]) {
+    cliNextSteps = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
     i++;
   } else if (!args[i].startsWith('--')) {
     summary = args[i];
@@ -444,6 +460,11 @@ async function autoCaptureMode() {
       plan_title: planTitle,
       claude_session_id: captured.sessionId,
       message_count: captured.messageCount,
+      // From CLI flags (for distill to extract)
+      wins: cliWins.length > 0 ? cliWins : undefined,
+      challenges: cliChallenges.length > 0 ? cliChallenges : undefined,
+      learnings: cliLearnings.length > 0 ? cliLearnings : undefined,
+      next_steps: cliNextSteps.length > 0 ? cliNextSteps : undefined,
       // From git
       git_branch: gitContext?.branch,
       git_commits: gitContext?.recentCommits.length ? gitContext.recentCommits : undefined,
