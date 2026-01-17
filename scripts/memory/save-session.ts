@@ -24,12 +24,33 @@ import {
   saveSession as saveSessionToChroma,
   findSimilarSessions,
   embedSessionTask,
+  saveLearning as saveLearningToChroma,
+  findSimilarLearnings,
 } from '../../src/vector-db';
+import { createLearningLink } from '../../src/db';
+
+// Categories for learnings
+const TECHNICAL_CATEGORIES = ['performance', 'architecture', 'tooling', 'process', 'debugging', 'security', 'testing'] as const;
+const WISDOM_CATEGORIES = ['philosophy', 'principle', 'insight', 'pattern', 'retrospective'] as const;
+const ALL_CATEGORIES = [...TECHNICAL_CATEGORIES, ...WISDOM_CATEGORIES] as const;
+type Category = typeof ALL_CATEGORIES[number];
+
+const CATEGORY_ICONS: Record<Category, string> = {
+  performance: '⚡', architecture: '🏛️', tooling: '🔧', debugging: '🔍',
+  security: '🔒', testing: '🧪', process: '📋', philosophy: '🌟',
+  principle: '⚖️', insight: '💡', pattern: '🔄', retrospective: '📖',
+};
 
 interface TaskInput {
   description: string;
   status: 'done' | 'pending' | 'blocked' | 'in_progress';
   notes?: string;
+}
+
+interface LearningInput {
+  title: string;
+  category: Category;
+  context?: string;
 }
 
 // Parse arguments
@@ -47,10 +68,18 @@ for (let i = 0; i < args.length; i++) {
 }
 
 async function promptInput(question: string): Promise<string> {
-  process.stdout.write(question);
-  const buf = Buffer.alloc(1024);
-  const n = await Bun.stdin.read(buf);
-  return buf.toString('utf-8', 0, n || 0).trim();
+  const readline = await import('readline');
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
 }
 
 function parseStatus(input: string): 'done' | 'pending' | 'blocked' | 'in_progress' {
@@ -89,6 +118,47 @@ async function collectTasks(): Promise<TaskInput[]> {
   }
 
   return tasks;
+}
+
+async function collectLearnings(sessionId: string): Promise<LearningInput[]> {
+  const learnings: LearningInput[] = [];
+
+  console.log('\n🧠 Learnings from this session:');
+  console.log('   Categories: insight, philosophy, principle, pattern, retrospective');
+  console.log('   Technical:  performance, architecture, tooling, debugging, security, testing, process\n');
+
+  const addLearnings = await promptInput('Add learnings? [y/N]: ');
+  if (addLearnings.toLowerCase() !== 'y') {
+    return learnings;
+  }
+
+  let learningNum = 1;
+  while (true) {
+    const title = await promptInput(`\n   ${learningNum}. Title (empty to finish): `);
+    if (!title) break;
+
+    const categoryInput = await promptInput('      Category [insight]: ');
+    const category = (categoryInput.toLowerCase() || 'insight') as Category;
+
+    if (!ALL_CATEGORIES.includes(category)) {
+      console.log(`      ⚠ Invalid category, using 'insight'`);
+    }
+
+    const context = await promptInput('      Context (optional): ');
+
+    learnings.push({
+      title,
+      category: ALL_CATEGORIES.includes(category) ? category : 'insight',
+      context: context || undefined,
+    });
+
+    const icon = CATEGORY_ICONS[ALL_CATEGORIES.includes(category) ? category : 'insight'];
+    console.log(`      ${icon} Added!`);
+
+    learningNum++;
+  }
+
+  return learnings;
 }
 
 async function interactiveMode() {
@@ -136,9 +206,7 @@ async function interactiveMode() {
   const whatDidntInput = await promptInput('What didn\'t work? (comma-separated, optional): ');
   const whatDidnt = whatDidntInput ? whatDidntInput.split(',').map(t => t.trim()) : [];
 
-  // Get learnings
-  const learningsInput = await promptInput('Key learnings? (comma-separated, optional): ');
-  const learnings = learningsInput ? learningsInput.split(',').map(t => t.trim()) : [];
+  // Note: Learnings are now captured AFTER save with proper category selection
 
   // Collect tasks
   const tasks = await collectTasks();
@@ -152,7 +220,7 @@ async function interactiveMode() {
     fullContext: {
       what_worked: whatWorked.length > 0 ? whatWorked : undefined,
       what_didnt_work: whatDidnt.length > 0 ? whatDidnt : undefined,
-      learnings: learnings.length > 0 ? learnings : undefined,
+      // learnings removed - now captured as proper learnings after save
     } as FullContext,
   };
 }
@@ -220,18 +288,40 @@ async function saveCurrentSession() {
     }
   }
 
-  // Save learnings if provided
-  const learnings = data.fullContext?.learnings || [];
+  // Prompt for learnings (always, even in quick mode)
+  const learnings = await collectLearnings(sessionId);
   if (learnings.length > 0) {
-    console.log('\n4. Adding learnings from this session...');
+    console.log('\n4. Saving learnings...');
     for (const learning of learnings) {
+      // Save to SQLite
       const learningId = createLearning({
-        category: 'process',
-        title: learning,
+        category: learning.category,
+        title: learning.title,
+        context: learning.context,
         source_session_id: sessionId,
-        confidence: 'low',
+        confidence: 'medium', // User-confirmed during save = medium
       });
-      console.log(`   ✓ Learning #${learningId}: ${learning.substring(0, 50)}...`);
+
+      // Save to ChromaDB
+      await saveLearningToChroma(learningId, learning.title, learning.context || '', {
+        category: learning.category,
+        confidence: 'medium',
+        source_session_id: sessionId,
+        created_at: now,
+      });
+
+      // Auto-link to similar learnings
+      const searchText = `${learning.title} ${learning.context || ''}`;
+      const { autoLinked } = await findSimilarLearnings(searchText, { excludeId: learningId });
+      for (const link of autoLinked) {
+        createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
+      }
+
+      const icon = CATEGORY_ICONS[learning.category];
+      console.log(`   ${icon} Learning #${learningId}: ${learning.title.substring(0, 50)}${learning.title.length > 50 ? '...' : ''}`);
+      if (autoLinked.length > 0) {
+        console.log(`      🔗 Auto-linked to ${autoLinked.length} similar learning(s)`);
+      }
     }
   }
 

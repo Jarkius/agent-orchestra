@@ -4,6 +4,7 @@
  *
  * Usage:
  *   bun memory save              - Save current session interactively
+ *   bun memory learn <cat> "title" - Capture a learning or insight
  *   bun memory recall "query"    - Search past sessions and learnings
  *   bun memory export            - Export learnings to LEARNINGS.md
  *   bun memory stats             - Show statistics
@@ -47,6 +48,18 @@ async function main() {
       await import('./save-session');
       break;
 
+    case 'learn':
+      // Pass remaining args to learn script
+      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      await import('./learn');
+      break;
+
+    case 'distill':
+      // Pass remaining args to distill script
+      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      await import('./distill');
+      break;
+
     case 'recall':
     case 'search':
       // No arg = resume last session, with arg = search/lookup
@@ -88,30 +101,32 @@ Usage: bun memory [--agent <id>] <command> [args]
 
 Commands:
   save              Save current session with full context
+  learn <cat> "t"   Capture a learning (12 categories: technical + wisdom)
+  distill           Extract learnings from recent sessions
   recall            Resume last session (show context to continue)
   recall "query"    Semantic search for sessions and learnings
-  recall "session_123"  Recall specific session by ID
   recall "#5"       Recall specific learning by ID
   export [path]     Export learnings to LEARNINGS.md
   stats             Show session and learning statistics
   list [type]       List recent sessions or learnings
   context [query]   Get context bundle for new session
 
+Categories:
+  Technical: performance, architecture, tooling, process, debugging, security, testing
+  Wisdom:    philosophy, principle, insight, pattern, retrospective
+
 Flags:
   --agent <id>      Filter by agent ID (null = orchestrator only)
-                    Without this flag, shows all accessible content
 
 Examples:
   bun memory save
+  bun memory learn philosophy "Simplicity over cleverness"
+  bun memory learn insight "Tests document behavior" "Not just for catching bugs"
+  bun memory distill                          # Extract from last session
   bun memory recall                           # Resume last session
-  bun memory recall "session_1768563283471"   # Specific session
   bun memory recall "embedding performance"   # Semantic search
-  bun memory --agent 1 recall                 # Agent 1's last session
-  bun memory --agent 1 list sessions          # Agent 1's sessions
   bun memory export ./docs/LEARNINGS.md
   bun memory stats
-  bun memory list sessions
-  bun memory context "working on embeddings"
 
 Aliases:
   search = recall

@@ -27,13 +27,22 @@ import { z } from 'zod';
 
 // ============ Schemas ============
 
+// Categories: 7 technical + 5 wisdom
+const TECHNICAL_CATEGORIES = ['performance', 'architecture', 'tooling', 'process', 'debugging', 'security', 'testing'] as const;
+const WISDOM_CATEGORIES = ['philosophy', 'principle', 'insight', 'pattern', 'retrospective'] as const;
+const ALL_CATEGORIES = [...TECHNICAL_CATEGORIES, ...WISDOM_CATEGORIES] as const;
+
+export function isWisdomCategory(category: string): boolean {
+  return (WISDOM_CATEGORIES as readonly string[]).includes(category);
+}
+
 const AddLearningSchema = z.object({
-  category: z.enum(['performance', 'architecture', 'tooling', 'process', 'debugging', 'security', 'testing']),
+  category: z.enum(ALL_CATEGORIES),
   title: z.string().min(1),
   description: z.string().optional(),
   context: z.string().optional(),
   source_session_id: z.string().optional(),
-  confidence: z.enum(['low', 'medium', 'high', 'proven']).default('medium'),
+  confidence: z.enum(['low', 'medium', 'high', 'proven']).optional(),
   agent_id: z.number().int().nullable().optional(),
   visibility: z.enum(['private', 'shared', 'public']).optional(),
 });
@@ -88,8 +97,8 @@ export const learningTools: ToolDefinition[] = [
       properties: {
         category: {
           type: "string",
-          enum: ["performance", "architecture", "tooling", "process", "debugging", "security", "testing"],
-          description: "Category of the learning",
+          enum: [...TECHNICAL_CATEGORIES, ...WISDOM_CATEGORIES],
+          description: "Category: technical (performance, architecture, tooling, process, debugging, security, testing) or wisdom (philosophy, principle, insight, pattern, retrospective)",
         },
         title: { type: "string", description: "Short title for the learning" },
         description: { type: "string", description: "Detailed description" },
@@ -190,6 +199,10 @@ async function handleAddLearning(args: unknown) {
   const agentId = input.agent_id ?? null;
   const visibility = input.visibility || (agentId === null ? 'public' : 'private') as Visibility;
 
+  // All learnings start at 'low' by default
+  // Use 'medium' only when explicitly confirmed during session save
+  const confidence = input.confidence || 'low';
+
   try {
     // 1. Save to SQLite (source of truth)
     const learningId = createLearning({
@@ -198,7 +211,7 @@ async function handleAddLearning(args: unknown) {
       description: input.description,
       context: input.context,
       source_session_id: input.source_session_id,
-      confidence: input.confidence,
+      confidence,
       agent_id: agentId,
       visibility,
     });
@@ -207,7 +220,7 @@ async function handleAddLearning(args: unknown) {
     const searchContent = `${input.title} ${input.description || ''} ${input.context || ''}`;
     await saveLearningToChroma(learningId, searchContent, {
       category: input.category,
-      confidence: input.confidence,
+      confidence,
       created_at: new Date().toISOString(),
       agent_id: agentId,
       visibility,
@@ -230,7 +243,8 @@ async function handleAddLearning(args: unknown) {
       learning_id: learningId,
       category: input.category,
       title: input.title,
-      confidence: input.confidence,
+      confidence,
+      is_wisdom: isWisdomCategory(input.category),
       agent_id: agentId,
       visibility,
       auto_linked: autoLinked,

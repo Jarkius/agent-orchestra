@@ -30,45 +30,43 @@ cat /tmp/agent_outbox/1/*.json
 Use these to manage session context and learnings:
 
 ```bash
-# Save session context before /clear
-bun memory save
+# PRIMARY: End session, save context + learnings (prompts for learnings with categories)
+bun memory save                    # Interactive mode
+bun memory save "quick summary"    # Quick mode (still prompts for learnings)
 
-# Resume last session (show pending tasks, next steps, context)
-bun memory recall
+# SECONDARY: Quick learning capture (no session context)
+bun memory learn <category> "title" ["context"]
+bun memory learn insight "Tests document behavior" "Not just for catching bugs"
+bun memory learn philosophy "Simplicity over cleverness"
 
-# Recall specific session by ID
-bun memory recall "session_1768563283471"
+# TERTIARY: Extract learnings from past sessions
+bun memory distill                 # From last session
+bun memory distill session_123     # From specific session
+bun memory distill --last 5 --yes  # From last 5, auto-accept
 
-# Recall specific learning by ID
-bun memory recall "#5"
+# Recall and search
+bun memory recall                  # Resume last session
+bun memory recall "query"          # Semantic search
+bun memory recall "#5"             # Specific learning by ID
+bun memory recall "session_123"    # Specific session by ID
 
-# Semantic search for sessions and learnings
-bun memory recall "embedding performance"
-
-# Export learnings to markdown
-bun memory export [path]
-
-# View statistics
-bun memory stats
-
-# List recent sessions or learnings
-bun memory list sessions
-bun memory list learnings
-
-# Get context bundle for new session
-bun memory context ["query"]
+# Other utilities
+bun memory export [path]           # Export learnings to markdown
+bun memory stats                   # View statistics
+bun memory list sessions           # List recent sessions
+bun memory list learnings          # List learnings
+bun memory context ["query"]       # Context bundle for new session
 ```
 
-Or use the direct scripts:
-```bash
-bun run memory:save
-bun run memory:recall              # Resume last session
-bun run memory:recall "query"      # Search or ID lookup
-bun run memory:export
-bun run memory:stats
-bun run memory:list sessions
-bun run memory:context
-```
+### Learning Categories
+- **Technical**: performance, architecture, tooling, process, debugging, security, testing
+- **Wisdom**: philosophy, principle, insight, pattern, retrospective
+
+### Confidence Model
+- `save` (user confirmed): starts at `medium`
+- `learn` (quick capture): starts at `low`
+- `distill` (extracted): starts at `low`
+- Use `validate_learning` MCP tool to increase: low → medium → high → proven
 
 ## Memory Recall Features
 
