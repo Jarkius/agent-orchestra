@@ -1,6 +1,46 @@
 # Memory List
 
-List recent sessions or learnings.
+List recent sessions or learnings with details.
+
+## Usage
+
+```
+/memory-list [sessions|learnings]
+```
+
+## Examples
+
+```bash
+# List recent sessions (default)
+/memory-list
+/memory-list sessions
+/memory-list s
+
+# List recent learnings grouped by category
+/memory-list learnings
+/memory-list l
+```
+
+## Session List Shows
+
+- Session ID
+- Summary (truncated)
+- Tags
+- Task counts (done/pending/blocked)
+- Duration and commit count
+- Created timestamp (local time)
+
+## Learning List Shows
+
+Grouped by category:
+- Learning ID with confidence badge
+- Title
+- Validation count
+
+Confidence badges:
+- `○` low
+- `✓` high
+- `⭐` proven
 
 ## Instructions
 
@@ -14,5 +54,3 @@ Arguments:
 - `learnings` or `l` - List recent learnings
 
 If no argument, default to sessions.
-
-Present the list in a readable format.
