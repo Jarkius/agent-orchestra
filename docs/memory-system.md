@@ -50,10 +50,10 @@ bun memory recall "query"          # Semantic search
 bun memory recall "#5"             # Specific learning by ID
 bun memory recall "session_123"    # Specific session by ID
 
-# Learning Capture
+# Learning Capture (with structured fields)
 bun memory learn <category> "title" ["context"]
-bun memory learn insight "Tests document behavior" "Not just for catching bugs"
-bun memory learn philosophy "Simplicity over cleverness"
+bun memory learn <category> "title" --lesson "..." --prevention "..."
+bun memory learn insight "Tests document behavior" --lesson "Tests are docs" --prevention "Write tests first"
 
 # Extraction
 bun memory distill                 # From last session
@@ -65,9 +65,20 @@ bun memory list sessions           # List recent sessions (table view)
 bun memory list learnings          # List learnings by category
 bun memory list -i                 # Interactive browser (arrow keys, Enter to view)
 bun memory stats                   # Statistics
-bun memory export [path]           # Export to markdown
+bun memory export [path]           # Export to markdown (structured Lesson format)
 bun memory context [query]         # Context bundle for new session
+bun memory task list               # List pending tasks across sessions
+bun memory task <id> <status>      # Update task (done/pending/blocked/in_progress)
 ```
+
+### Structured Learnings
+
+Each learning can have three structured fields:
+- **what_happened**: The situation/context that led to this learning
+- **lesson**: What you learned (key insight)
+- **prevention**: How to prevent/apply in future
+
+Use `--lesson` and `--prevention` args, or interactive prompts in `distill`/`save`.
 
 ### List Command Details
 

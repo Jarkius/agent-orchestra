@@ -34,9 +34,10 @@ Use these to manage session context and learnings:
 bun memory save                    # Interactive mode
 bun memory save "quick summary"    # Quick mode (still prompts for learnings)
 
-# SECONDARY: Quick learning capture (no session context)
+# SECONDARY: Quick learning capture with structured fields
 bun memory learn <category> "title" ["context"]
-bun memory learn insight "Tests document behavior" "Not just for catching bugs"
+bun memory learn <category> "title" --lesson "..." --prevention "..."
+bun memory learn insight "Tests document behavior" --lesson "Tests are documentation" --prevention "Write tests before code"
 bun memory learn philosophy "Simplicity over cleverness"
 
 # TERTIARY: Extract learnings from past sessions
@@ -57,6 +58,8 @@ bun memory list sessions           # List recent sessions (table view)
 bun memory list learnings          # List learnings by category
 bun memory list -i                 # Interactive browser with clipboard copy
 bun memory context ["query"]       # Context bundle for new session
+bun memory task list               # List pending tasks across sessions
+bun memory task <id> <status>      # Update task (done/pending/blocked/in_progress)
 
 # Cleanup
 bun memory purge sessions           # Purge all sessions
@@ -75,6 +78,31 @@ bun memory reset                    # Nuclear option - wipe ALL memory
 - `learn` (quick capture): starts at `low`
 - `distill` (extracted): starts at `low`
 - Use `validate_learning` MCP tool to increase: low → medium → high → proven
+
+### Structured Learnings
+Each learning can have three structured fields:
+- **what_happened**: The situation/context that led to this learning
+- **lesson**: What you learned (key insight)
+- **prevention**: How to prevent/apply in future
+
+Use `--lesson` and `--prevention` args or interactive prompts in `distill`/`save`.
+
+Export format (LEARNINGS.md):
+```markdown
+## Lesson: {title}
+**Date**: YYYY-MM-DD
+**Category**: {category}
+**Confidence**: [{level}]
+
+### What happened
+{what_happened}
+
+### What I learned
+{lesson}
+
+### How to prevent
+{prevention}
+```
 
 ## Memory Recall Features
 

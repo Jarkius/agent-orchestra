@@ -54,8 +54,8 @@ Persistent knowledge capture across Claude Code sessions. See [docs/memory-syste
 bun memory save
 bun memory save "quick summary"    # Quick save with git context
 
-# Quick learning capture (12 categories)
-bun memory learn insight "Tests document behavior"
+# Quick learning capture with structured fields
+bun memory learn insight "Tests document behavior" --lesson "Tests are docs" --prevention "Write tests first"
 bun memory learn philosophy "Simplicity over cleverness"
 
 # Extract learnings from past sessions
@@ -70,7 +70,9 @@ bun memory stats                   # Statistics
 bun memory list sessions           # List sessions (table view)
 bun memory list learnings          # List learnings by category
 bun memory list -i                 # Interactive browser with clipboard copy
-bun memory export                  # Export to markdown
+bun memory task list               # List pending tasks
+bun memory task <id> done          # Update task status
+bun memory export                  # Export to markdown (structured Lesson format)
 ```
 
 ### Auto-Captured Context
