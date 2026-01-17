@@ -50,8 +50,12 @@ Persistent knowledge capture across Claude Code sessions. See [docs/memory-syste
 ### Quick Reference
 
 ```bash
-# Save session (auto-captures git context, prompts for learnings)
-bun memory save
+# Save session - two modes
+/memory-save-full                  # Full context (Claude asks: wins, challenges, learnings)
+/memory-save                       # Quick save (git + auto-capture only)
+
+# Or via CLI
+bun memory save                    # Interactive mode (prompts for everything)
 bun memory save "quick summary"    # Quick save with git context
 
 # Quick learning capture with structured fields
@@ -59,7 +63,8 @@ bun memory learn insight "Tests document behavior" --lesson "Tests are docs" --p
 bun memory learn philosophy "Simplicity over cleverness"
 
 # Extract learnings from past sessions
-bun memory distill --last 5 --yes
+/memory-distill                    # From last session
+bun memory distill --last 5 --yes  # Batch mode
 
 # Search and recall
 bun memory recall "query"          # Semantic search
@@ -74,6 +79,19 @@ bun memory task list               # List pending tasks
 bun memory task <id> done          # Update task status
 bun memory export                  # Export to markdown (structured Lesson format)
 ```
+
+### Slash Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/memory-save-full` | Full context save - Claude asks for wins, challenges, learnings |
+| `/memory-save` | Quick save with auto-capture |
+| `/memory-distill` | Extract learnings from past sessions |
+| `/memory-recall` | Search or resume sessions |
+| `/memory-list` | Browse sessions or learnings |
+| `/memory-learn` | Quick learning capture |
+| `/memory-stats` | View statistics |
+| `/memory-export` | Export learnings to markdown |
 
 ### Auto-Captured Context
 

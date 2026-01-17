@@ -30,11 +30,23 @@ The Memory System enables persistent knowledge capture across Claude Code sessio
 
 ## Command Reference
 
-### Primary Commands
+### Slash Commands (via Claude)
+
+| Command | Purpose | Full Context |
+|---------|---------|--------------|
+| `/memory-save-full` | Save with wins, challenges, learnings (Claude asks questions) | Yes |
+| `/memory-save` | Quick save with auto-capture | No |
+| `/memory-distill` | Extract learnings from past sessions | - |
+| `/memory-recall` | Search or resume sessions | - |
+| `/memory-list` | Browse sessions or learnings | - |
+| `/memory-learn` | Quick learning capture | - |
+
+### CLI Commands
 
 | Command | Purpose | Creates |
 |---------|---------|---------|
-| `bun memory save` | End session, capture context + learnings | Session + Learnings |
+| `bun memory save` | Interactive save (prompts for everything) | Session + Learnings |
+| `bun memory save "summary"` | Quick save with git context | Session |
 | `bun memory learn <cat> "title"` | Quick insight capture | Learning only |
 | `bun memory distill` | Extract from past sessions | Learnings |
 | `bun memory recall [query]` | Search or resume | - |
@@ -42,7 +54,11 @@ The Memory System enables persistent knowledge capture across Claude Code sessio
 ### Full Command List
 
 ```bash
-# Session Management
+# Session Management - Slash Commands
+/memory-save-full                  # Full context (Claude asks for wins/challenges/learnings)
+/memory-save                       # Quick save with auto-capture
+
+# Session Management - CLI
 bun memory save                    # Interactive save with learning prompts
 bun memory save "quick summary"    # Quick save (still prompts for learnings)
 bun memory recall                  # Resume last session
