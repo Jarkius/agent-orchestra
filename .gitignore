@@ -74,3 +74,4 @@ playwright-report/
 *.key
 credentials.json
 secrets.json
+export
