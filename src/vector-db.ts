@@ -972,7 +972,7 @@ export async function ensureChromaRunning(): Promise<{ started: boolean; contain
       "--name", containerName,
       "--restart", "unless-stopped",
       "-p", `${chromaPort}:8000`,
-      "-v", "chromadb_data:/chroma/chroma",
+      "-v", `${process.cwd()}/chroma_data:/data`,
       "chromadb/chroma"
     ], {
       stdout: "pipe",

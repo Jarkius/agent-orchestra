@@ -93,6 +93,11 @@ async function main() {
       await import('./reset');
       break;
 
+    case 'reindex':
+      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      await import('./reindex');
+      break;
+
     case 'task':
       process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
       await import('./task-update');
@@ -128,6 +133,7 @@ Commands:
   task <id> <status> Update task status (done/pending/blocked/in_progress)
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
+  reindex [type]    Re-index SQLite data into ChromaDB vectors
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing
@@ -145,6 +151,8 @@ Examples:
   bun memory recall "embedding performance"   # Semantic search
   bun memory export ./docs/LEARNINGS.md
   bun memory stats
+  bun memory reindex                        # Re-index all vectors
+  bun memory reindex sessions               # Re-index only sessions
 
 Aliases:
   search = recall

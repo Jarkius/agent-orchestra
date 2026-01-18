@@ -30,7 +30,7 @@ bun install
 
 # Start ChromaDB (persisted, auto-restarts)
 docker run -d --name chromadb --restart unless-stopped \
-  -p 8100:8000 -v chromadb_data:/chroma/chroma \
+  -p 8100:8000 -v $(pwd)/chroma_data:/data \
   chromadb/chroma
 
 # Spawn 3 agents with worktree isolation
