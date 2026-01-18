@@ -11,7 +11,6 @@ import {
   validateLearning as validateLearningInDb,
   createLearningLink,
   getLinkedLearnings,
-  getLearningsBySession,
   type LearningRecord,
   type Visibility,
 } from '../../../db';
@@ -25,9 +24,8 @@ import {
 import type { ToolDefinition, ToolHandler } from '../../types';
 import { z } from 'zod';
 
-// ============ Schemas ============
+// ============ Categories ============
 
-// Categories: 7 technical + 5 wisdom
 const TECHNICAL_CATEGORIES = ['performance', 'architecture', 'tooling', 'process', 'debugging', 'security', 'testing'] as const;
 const WISDOM_CATEGORIES = ['philosophy', 'principle', 'insight', 'pattern', 'retrospective'] as const;
 const ALL_CATEGORIES = [...TECHNICAL_CATEGORIES, ...WISDOM_CATEGORIES] as const;
@@ -35,6 +33,8 @@ const ALL_CATEGORIES = [...TECHNICAL_CATEGORIES, ...WISDOM_CATEGORIES] as const;
 export function isWisdomCategory(category: string): boolean {
   return (WISDOM_CATEGORIES as readonly string[]).includes(category);
 }
+
+// ============ Schemas ============
 
 const AddLearningSchema = z.object({
   category: z.enum(ALL_CATEGORIES),
@@ -45,7 +45,6 @@ const AddLearningSchema = z.object({
   confidence: z.enum(['low', 'medium', 'high', 'proven']).optional(),
   agent_id: z.number().int().nullable().optional(),
   visibility: z.enum(['private', 'shared', 'public']).optional(),
-  // Structured learning fields
   what_happened: z.string().optional(),
   lesson: z.string().optional(),
   prevention: z.string().optional(),
@@ -76,12 +75,6 @@ const ValidateLearningSchema = z.object({
   learning_id: z.number().int().positive(),
 });
 
-const LinkLearningsSchema = z.object({
-  from_id: z.number().int().positive(),
-  to_id: z.number().int().positive(),
-  link_type: z.enum(['related', 'contradicts', 'extends', 'supersedes']),
-});
-
 // ============ Ensure DBs ready ============
 
 async function ensureVectorDB() {
@@ -99,7 +92,7 @@ export const learningTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        category: { type: "string", enum: [...TECHNICAL_CATEGORIES, ...WISDOM_CATEGORIES] },
+        category: { type: "string", enum: [...ALL_CATEGORIES] },
         title: { type: "string" },
         description: { type: "string" },
         context: { type: "string" },
@@ -107,9 +100,6 @@ export const learningTools: ToolDefinition[] = [
         confidence: { type: "string", enum: ["low", "medium", "high", "proven"] },
         agent_id: { type: "number" },
         visibility: { type: "string", enum: ["private", "shared", "public"] },
-        what_happened: { type: "string" },
-        lesson: { type: "string" },
-        prevention: { type: "string" },
       },
       required: ["category", "title"],
     },
@@ -131,7 +121,7 @@ export const learningTools: ToolDefinition[] = [
   },
   {
     name: "get_learning",
-    description: "Full learning details",
+    description: "Learning details",
     inputSchema: {
       type: "object",
       properties: {
@@ -166,19 +156,6 @@ export const learningTools: ToolDefinition[] = [
       required: ["learning_id"],
     },
   },
-  {
-    name: "link_learnings",
-    description: "Link learnings",
-    inputSchema: {
-      type: "object",
-      properties: {
-        from_id: { type: "number" },
-        to_id: { type: "number" },
-        link_type: { type: "string", enum: ["related", "contradicts", "extends", "supersedes"] },
-      },
-      required: ["from_id", "to_id", "link_type"],
-    },
-  },
 ];
 
 // ============ Tool Handlers ============
@@ -189,13 +166,9 @@ async function handleAddLearning(args: unknown) {
 
   const agentId = input.agent_id ?? null;
   const visibility = input.visibility || (agentId === null ? 'public' : 'private') as Visibility;
-
-  // All learnings start at 'low' by default
-  // Use 'medium' only when explicitly confirmed during session save
   const confidence = input.confidence || 'low';
 
   try {
-    // 1. Save to SQLite (source of truth) with structured fields
     const learningId = createLearning({
       category: input.category,
       title: input.title,
@@ -210,7 +183,6 @@ async function handleAddLearning(args: unknown) {
       prevention: input.prevention,
     });
 
-    // 2. Save to ChromaDB (search index)
     const searchContent = `${input.title} ${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
     await saveLearningToChroma(learningId, searchContent, {
       category: input.category,
@@ -220,14 +192,12 @@ async function handleAddLearning(args: unknown) {
       visibility,
     });
 
-    // 3. Auto-link to similar learnings (with agent scoping)
     const { autoLinked, suggested } = await findSimilarLearnings(searchContent, {
       excludeId: learningId,
       agentId,
       crossAgentLinking: false,
     });
 
-    // Create auto-links in SQLite
     for (const link of autoLinked) {
       createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
     }
@@ -301,13 +271,11 @@ async function handleGetLearning(args: unknown) {
       return errorResponse(`Learning not found: ${input.learning_id}`);
     }
 
-    // Check access control if agent_id is specified
     const requestingAgentId = input.agent_id ?? null;
     if (!canAccessLearning(requestingAgentId, learning)) {
       return errorResponse(`Access denied: Learning ${input.learning_id} is not accessible to agent ${requestingAgentId}`);
     }
 
-    // Get linked learnings
     const linkedLearnings = getLinkedLearnings(input.learning_id);
 
     return jsonResponse({
@@ -324,7 +292,6 @@ async function handleGetLearning(args: unknown) {
         agent_id: learning.agent_id,
         visibility: learning.visibility,
         created_at: learning.created_at,
-        // Structured learning fields
         what_happened: (learning as any).what_happened,
         lesson: (learning as any).lesson,
         prevention: (learning as any).prevention,
@@ -342,15 +309,10 @@ async function handleGetLearning(args: unknown) {
   }
 }
 
-// Access control helper
 function canAccessLearning(agentId: number | null, learning: LearningRecord): boolean {
-  // Orchestrator (null) can access everything
   if (agentId === null) return true;
-  // Owner can always access
   if (learning.agent_id === agentId) return true;
-  // Orchestrator learnings are public by default
   if (learning.agent_id === null) return true;
-  // Check visibility
   return learning.visibility === 'shared' || learning.visibility === 'public';
 }
 
@@ -396,14 +358,11 @@ async function handleValidateLearning(args: unknown) {
     }
 
     const previousConfidence = learning.confidence;
-    const previousValidations = learning.times_validated;
-
     const success = validateLearningInDb(input.learning_id);
     if (!success) {
       return errorResponse(`Failed to validate learning: ${input.learning_id}`);
     }
 
-    // Get updated learning
     const updated = getLearningById(input.learning_id);
 
     return jsonResponse({
@@ -432,36 +391,6 @@ function getValidationsNeeded(currentConfidence: string): number {
   }
 }
 
-async function handleLinkLearnings(args: unknown) {
-  const input = LinkLearningsSchema.parse(args);
-
-  try {
-    // Verify both learnings exist
-    const fromLearning = getLearningById(input.from_id);
-    const toLearning = getLearningById(input.to_id);
-
-    if (!fromLearning) {
-      return errorResponse(`Learning not found: ${input.from_id}`);
-    }
-    if (!toLearning) {
-      return errorResponse(`Learning not found: ${input.to_id}`);
-    }
-
-    const success = createLearningLink(input.from_id, input.to_id, input.link_type);
-
-    return jsonResponse({
-      success,
-      from_id: input.from_id,
-      from_title: fromLearning.title,
-      to_id: input.to_id,
-      to_title: toLearning.title,
-      link_type: input.link_type,
-    });
-  } catch (error) {
-    return errorResponse(`Failed to link learnings: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
 // ============ Export Handlers Map ============
 
 export const learningHandlers: Record<string, ToolHandler> = {
@@ -470,5 +399,4 @@ export const learningHandlers: Record<string, ToolHandler> = {
   get_learning: handleGetLearning,
   list_learnings: handleListLearnings,
   validate_learning: handleValidateLearning,
-  link_learnings: handleLinkLearnings,
 };

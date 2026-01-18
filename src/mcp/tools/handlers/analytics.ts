@@ -1,30 +1,31 @@
 /**
  * Analytics Tool Handlers
- * MCP tools for stats, reports, context bundles, and exports
+ * Consolidated stats tool + exports
  */
 
 import { writeFileSync } from 'fs';
-import { join } from 'path';
+import { z } from 'zod';
 import { jsonResponse, errorResponse } from '../../utils/response';
 import {
   getSessionStats,
   getImprovementReport,
   listSessionsFromDb,
   listLearningsFromDb,
-  getSessionById,
-  getLinkedSessions,
-  getLearningsBySession,
+  getDashboardData,
 } from '../../../db';
 import {
-  searchSessions,
   searchLearnings,
+  getCollectionStats,
   isInitialized,
   initVectorDB,
 } from '../../../vector-db';
 import type { ToolDefinition, ToolHandler } from '../../types';
-import { z } from 'zod';
 
 // ============ Schemas ============
+
+const StatsSchema = z.object({
+  type: z.enum(['session', 'improvement', 'vector', 'dashboard']),
+});
 
 const GetContextBundleSchema = z.object({
   query: z.string().optional(),
@@ -40,10 +41,6 @@ const ExportLearningsSchema = z.object({
   include_sessions: z.boolean().default(false),
 });
 
-const RebuildIndexSchema = z.object({
-  collection: z.enum(['sessions', 'learnings', 'all']).default('all'),
-});
-
 // ============ Ensure DBs ready ============
 
 async function ensureVectorDB() {
@@ -56,98 +53,116 @@ async function ensureVectorDB() {
 
 export const analyticsTools: ToolDefinition[] = [
   {
-    name: "get_session_stats",
-    description: "Session stats",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "get_improvement_report",
-    description: "Improvement report",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "get_context_bundle",
-    description: "Context bundle",
+    name: 'stats',
+    description: 'System stats',
     inputSchema: {
-      type: "object",
+      type: 'object',
       properties: {
-        query: { type: "string" },
-        include_learnings: { type: "boolean" },
-        include_recent_sessions: { type: "boolean" },
-        sessions_limit: { type: "number" },
-        learnings_limit: { type: "number" },
+        type: { type: 'string', enum: ['session', 'improvement', 'vector', 'dashboard'] },
+      },
+      required: ['type'],
+    },
+  },
+  {
+    name: 'get_context_bundle',
+    description: 'Context bundle',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+        include_learnings: { type: 'boolean' },
+        include_recent_sessions: { type: 'boolean' },
+        sessions_limit: { type: 'number' },
+        learnings_limit: { type: 'number' },
       },
     },
   },
   {
-    name: "export_learnings",
-    description: "Export learnings",
+    name: 'export_learnings',
+    description: 'Export learnings',
     inputSchema: {
-      type: "object",
+      type: 'object',
       properties: {
-        output_path: { type: "string" },
-        format: { type: "string", enum: ["markdown", "json"] },
-        include_sessions: { type: "boolean" },
+        output_path: { type: 'string' },
+        format: { type: 'string', enum: ['markdown', 'json'] },
+        include_sessions: { type: 'boolean' },
       },
-    },
-  },
-  {
-    name: "rebuild_search_index",
-    description: "Rebuild index",
-    inputSchema: {
-      type: "object",
-      properties: { collection: { type: "string", enum: ["sessions", "learnings", "all"] } },
     },
   },
 ];
 
-// ============ Tool Handlers ============
+// ============ Stats Handler ============
 
-async function handleGetSessionStats(_args: unknown) {
+async function handleStats(args: unknown) {
+  const input = StatsSchema.parse(args);
+
   try {
-    const stats = getSessionStats();
+    switch (input.type) {
+      case 'session': {
+        const stats = getSessionStats();
+        return jsonResponse({
+          type: 'session',
+          total_sessions: stats.total_sessions,
+          avg_duration_mins: stats.avg_duration_mins ? Number(stats.avg_duration_mins.toFixed(1)) : null,
+          total_commits: stats.total_commits,
+          sessions_this_week: stats.sessions_this_week,
+          sessions_this_month: stats.sessions_this_month,
+          top_tags: stats.top_tags.slice(0, 10),
+          sessions_by_month: stats.sessions_by_month,
+        });
+      }
 
-    return jsonResponse({
-      total_sessions: stats.total_sessions,
-      avg_duration_mins: stats.avg_duration_mins ? Number(stats.avg_duration_mins.toFixed(1)) : null,
-      total_commits: stats.total_commits,
-      sessions_this_week: stats.sessions_this_week,
-      sessions_this_month: stats.sessions_this_month,
-      top_tags: stats.top_tags.slice(0, 10),
-      sessions_by_month: stats.sessions_by_month,
-    });
+      case 'improvement': {
+        const report = getImprovementReport();
+        return jsonResponse({
+          type: 'improvement',
+          total_learnings: report.total_learnings,
+          by_category: report.by_category,
+          by_confidence: report.by_confidence,
+          recently_validated: report.recently_validated.map(l => ({
+            id: l.id,
+            title: l.title,
+            category: l.category,
+            confidence: l.confidence,
+            times_validated: l.times_validated,
+            last_validated_at: l.last_validated_at,
+          })),
+          proven_learnings: report.proven_learnings.map(l => ({
+            id: l.id,
+            title: l.title,
+            category: l.category,
+            times_validated: l.times_validated,
+          })),
+        });
+      }
+
+      case 'vector': {
+        await ensureVectorDB();
+        const stats = await getCollectionStats();
+        return jsonResponse({
+          type: 'vector',
+          collections: stats,
+          total: Object.values(stats).reduce((a, b) => a + b, 0),
+        });
+      }
+
+      case 'dashboard': {
+        const dashboard = getDashboardData();
+        return jsonResponse({
+          type: 'dashboard',
+          ...dashboard,
+        });
+      }
+
+      default:
+        return errorResponse(`Unknown stats type: ${input.type}`);
+    }
   } catch (error) {
-    return errorResponse(`Failed to get session stats: ${error instanceof Error ? error.message : String(error)}`);
+    return errorResponse(`Failed to get stats: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-async function handleGetImprovementReport(_args: unknown) {
-  try {
-    const report = getImprovementReport();
-
-    return jsonResponse({
-      total_learnings: report.total_learnings,
-      by_category: report.by_category,
-      by_confidence: report.by_confidence,
-      recently_validated: report.recently_validated.map(l => ({
-        id: l.id,
-        title: l.title,
-        category: l.category,
-        confidence: l.confidence,
-        times_validated: l.times_validated,
-        last_validated_at: l.last_validated_at,
-      })),
-      proven_learnings: report.proven_learnings.map(l => ({
-        id: l.id,
-        title: l.title,
-        category: l.category,
-        times_validated: l.times_validated,
-      })),
-    });
-  } catch (error) {
-    return errorResponse(`Failed to get improvement report: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
+// ============ Context Bundle Handler ============
 
 async function handleGetContextBundle(args: unknown) {
   await ensureVectorDB();
@@ -159,7 +174,6 @@ async function handleGetContextBundle(args: unknown) {
       query: input.query || null,
     };
 
-    // Get recent sessions
     if (input.include_recent_sessions) {
       const recentSessions = listSessionsFromDb({ limit: input.sessions_limit });
       bundle.recent_sessions = recentSessions.map(s => ({
@@ -171,10 +185,8 @@ async function handleGetContextBundle(args: unknown) {
       }));
     }
 
-    // Get relevant learnings
     if (input.include_learnings) {
       if (input.query) {
-        // Semantic search for relevant learnings
         const searchResults = await searchLearnings(input.query, input.learnings_limit);
         const learningIds = searchResults.ids[0] || [];
 
@@ -191,13 +203,7 @@ async function handleGetContextBundle(args: unknown) {
           };
         });
       } else {
-        // Get high-confidence learnings
-        const learnings = listLearningsFromDb({
-          confidence: 'proven',
-          limit: input.learnings_limit,
-        });
-
-        // If not enough proven, get high confidence too
+        const learnings = listLearningsFromDb({ confidence: 'proven', limit: input.learnings_limit });
         if (learnings.length < input.learnings_limit) {
           const highConfidence = listLearningsFromDb({
             confidence: 'high',
@@ -217,7 +223,6 @@ async function handleGetContextBundle(args: unknown) {
       }
     }
 
-    // Add stats summary
     const stats = getSessionStats();
     bundle.stats_summary = {
       total_sessions: stats.total_sessions,
@@ -230,6 +235,8 @@ async function handleGetContextBundle(args: unknown) {
     return errorResponse(`Failed to get context bundle: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
+
+// ============ Export Handler ============
 
 async function handleExportLearnings(args: unknown) {
   const input = ExportLearningsSchema.parse(args);
@@ -271,7 +278,6 @@ async function handleExportLearnings(args: unknown) {
     md += `_Auto-generated: ${new Date().toISOString()}_\n\n`;
     md += `**Total:** ${learnings.length} learnings\n\n`;
 
-    // Group by category
     const byCategory: Record<string, typeof learnings> = {};
     for (const l of learnings) {
       if (!byCategory[l.category]) {
@@ -280,7 +286,6 @@ async function handleExportLearnings(args: unknown) {
       byCategory[l.category].push(l);
     }
 
-    // Confidence badges
     const confidenceBadge = (c: string) => {
       switch (c) {
         case 'proven': return '**[PROVEN]**';
@@ -291,7 +296,6 @@ async function handleExportLearnings(args: unknown) {
       }
     };
 
-    // Sort categories
     const categoryOrder = ['architecture', 'performance', 'tooling', 'debugging', 'process', 'security', 'testing'];
     const sortedCategories = Object.keys(byCategory).sort((a, b) => {
       const aIdx = categoryOrder.indexOf(a);
@@ -306,7 +310,6 @@ async function handleExportLearnings(args: unknown) {
       const items = byCategory[category];
       md += `## ${capitalize(category)}\n\n`;
 
-      // Sort by confidence (proven first) then by times_validated
       items.sort((a, b) => {
         const confOrder = ['proven', 'high', 'medium', 'low'];
         const aConf = confOrder.indexOf(a.confidence || 'medium');
@@ -337,7 +340,6 @@ async function handleExportLearnings(args: unknown) {
       }
     }
 
-    // Add summary stats
     const report = getImprovementReport();
     md += '---\n\n';
     md += '## Summary\n\n';
@@ -372,49 +374,10 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-async function handleRebuildSearchIndex(args: unknown) {
-  await ensureVectorDB();
-  const input = RebuildIndexSchema.parse(args);
-
-  try {
-    const results: any = { rebuilt: [] };
-
-    if (input.collection === 'sessions' || input.collection === 'all') {
-      const sessions = listSessionsFromDb({ limit: 10000 });
-      // Note: Would need to implement batch upsert to ChromaDB
-      // For now, just return count
-      results.sessions = {
-        count: sessions.length,
-        status: 'ready_for_rebuild',
-      };
-      results.rebuilt.push('sessions');
-    }
-
-    if (input.collection === 'learnings' || input.collection === 'all') {
-      const learnings = listLearningsFromDb({ limit: 10000 });
-      results.learnings = {
-        count: learnings.length,
-        status: 'ready_for_rebuild',
-      };
-      results.rebuilt.push('learnings');
-    }
-
-    return jsonResponse({
-      success: true,
-      ...results,
-      hint: "Full rebuild requires manual implementation of batch upsert",
-    });
-  } catch (error) {
-    return errorResponse(`Failed to rebuild index: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
 // ============ Export Handlers Map ============
 
 export const analyticsHandlers: Record<string, ToolHandler> = {
-  get_session_stats: handleGetSessionStats,
-  get_improvement_report: handleGetImprovementReport,
+  stats: handleStats,
   get_context_bundle: handleGetContextBundle,
   export_learnings: handleExportLearnings,
-  rebuild_search_index: handleRebuildSearchIndex,
 };

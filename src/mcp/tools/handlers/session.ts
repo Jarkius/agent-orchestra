@@ -1,6 +1,6 @@
 /**
  * Session Persistence Tool Handlers
- * Enhanced session management with SQLite + ChromaDB sync and auto-linking
+ * Session management with SQLite + ChromaDB sync
  */
 
 import { jsonResponse, errorResponse } from '../../utils/response';
@@ -29,21 +29,7 @@ import { z } from 'zod';
 
 const SaveSessionSchema = z.object({
   summary: z.string().min(1),
-  full_context: z.object({
-    wins: z.array(z.string()).optional(),
-    issues: z.array(z.string()).optional(),
-    key_decisions: z.array(z.string()).optional(),
-    challenges: z.array(z.string()).optional(),
-    next_steps: z.array(z.string()).optional(),
-    learnings: z.array(z.string()).optional(),
-    future_ideas: z.array(z.string()).optional(),
-    blockers_resolved: z.array(z.string()).optional(),
-    // Git context (auto-captured)
-    git_branch: z.string().optional(),
-    git_commits: z.array(z.string()).optional(),
-    files_changed: z.array(z.string()).optional(),
-    diff_summary: z.string().optional(),
-  }).optional(),
+  full_context: z.record(z.any()).optional(),  // Simplified: accept any object
   duration_mins: z.number().optional(),
   commits_count: z.number().optional(),
   tags: z.array(z.string()).optional(),
@@ -72,12 +58,6 @@ const ListSessionsSchema = z.object({
   include_shared: z.boolean().default(true),
 });
 
-const LinkSessionsSchema = z.object({
-  from_id: z.string().min(1),
-  to_id: z.string().min(1),
-  link_type: z.enum(['continues', 'related', 'supersedes']),
-});
-
 // ============ Ensure DBs ready ============
 
 async function ensureVectorDB() {
@@ -96,23 +76,7 @@ export const sessionTools: ToolDefinition[] = [
       type: "object",
       properties: {
         summary: { type: "string" },
-        full_context: {
-          type: "object",
-          properties: {
-            wins: { type: "array", items: { type: "string" } },
-            issues: { type: "array", items: { type: "string" } },
-            key_decisions: { type: "array", items: { type: "string" } },
-            challenges: { type: "array", items: { type: "string" } },
-            next_steps: { type: "array", items: { type: "string" } },
-            learnings: { type: "array", items: { type: "string" } },
-            future_ideas: { type: "array", items: { type: "string" } },
-            blockers_resolved: { type: "array", items: { type: "string" } },
-            git_branch: { type: "string" },
-            git_commits: { type: "array", items: { type: "string" } },
-            files_changed: { type: "array", items: { type: "string" } },
-            diff_summary: { type: "string" },
-          },
-        },
+        full_context: { type: "object" },  // Simplified: no nested properties
         duration_mins: { type: "number" },
         commits_count: { type: "number" },
         tags: { type: "array", items: { type: "string" } },
@@ -139,7 +103,7 @@ export const sessionTools: ToolDefinition[] = [
   },
   {
     name: "get_session",
-    description: "Full session details",
+    description: "Session details",
     inputSchema: {
       type: "object",
       properties: {
@@ -163,19 +127,6 @@ export const sessionTools: ToolDefinition[] = [
       },
     },
   },
-  {
-    name: "link_sessions",
-    description: "Link sessions",
-    inputSchema: {
-      type: "object",
-      properties: {
-        from_id: { type: "string" },
-        to_id: { type: "string" },
-        link_type: { type: "string", enum: ["continues", "related", "supersedes"] },
-      },
-      required: ["from_id", "to_id", "link_type"],
-    },
-  },
 ];
 
 // ============ Tool Handlers ============
@@ -190,7 +141,7 @@ async function handleSaveSession(args: unknown) {
   const visibility = input.visibility || (agentId === null ? 'public' : 'private') as Visibility;
 
   try {
-    const fullContext: FullContext | undefined = input.full_context;
+    const fullContext = input.full_context as FullContext | undefined;
 
     // 1. Save to SQLite (source of truth)
     const session: SessionRecord = {
@@ -209,13 +160,13 @@ async function handleSaveSession(args: unknown) {
     // 2. Save to ChromaDB (search index) with rich content
     const searchParts = [input.summary];
     if (input.tags?.length) searchParts.push(input.tags.join(' '));
-    if (fullContext.key_decisions?.length) searchParts.push(`Decisions: ${fullContext.key_decisions.join('. ')}`);
-    if (fullContext.wins?.length) searchParts.push(`Wins: ${fullContext.wins.join('. ')}`);
-    if (fullContext.issues?.length) searchParts.push(`Issues: ${fullContext.issues.join('. ')}`);
-    if (fullContext.challenges?.length) searchParts.push(`Challenges: ${fullContext.challenges.join('. ')}`);
-    if (fullContext.next_steps?.length) searchParts.push(`Next: ${fullContext.next_steps.join('. ')}`);
-    if (fullContext.files_changed?.length) searchParts.push(`Files: ${fullContext.files_changed.slice(0, 10).join(' ')}`);
-    if (fullContext.git_commits?.length) searchParts.push(`Commits: ${fullContext.git_commits.slice(0, 5).join(' ')}`);
+    if (fullContext?.key_decisions?.length) searchParts.push(`Decisions: ${fullContext.key_decisions.join('. ')}`);
+    if (fullContext?.wins?.length) searchParts.push(`Wins: ${fullContext.wins.join('. ')}`);
+    if (fullContext?.issues?.length) searchParts.push(`Issues: ${fullContext.issues.join('. ')}`);
+    if (fullContext?.challenges?.length) searchParts.push(`Challenges: ${fullContext.challenges.join('. ')}`);
+    if (fullContext?.next_steps?.length) searchParts.push(`Next: ${fullContext.next_steps.join('. ')}`);
+    if (fullContext?.files_changed?.length) searchParts.push(`Files: ${fullContext.files_changed.slice(0, 10).join(' ')}`);
+    if (fullContext?.git_commits?.length) searchParts.push(`Commits: ${fullContext.git_commits.slice(0, 5).join(' ')}`);
 
     const searchContent = searchParts.join(' ');
     await saveSessionToChroma(sessionId, searchContent, {
@@ -225,14 +176,13 @@ async function handleSaveSession(args: unknown) {
       visibility,
     });
 
-    // 3. Auto-link to similar sessions (with agent scoping)
+    // 3. Auto-link to similar sessions
     const { autoLinked, suggested } = await findSimilarSessions(searchContent, {
       excludeId: sessionId,
       agentId,
       crossAgentLinking: false,
     });
 
-    // Create auto-links in SQLite
     for (const link of autoLinked) {
       createSessionLink(sessionId, link.id, 'auto_strong', link.similarity);
     }
@@ -307,16 +257,12 @@ async function handleGetSession(args: unknown) {
       return errorResponse(`Session not found: ${input.session_id}`);
     }
 
-    // Check access control if agent_id is specified
     const requestingAgentId = input.agent_id ?? null;
     if (!canAccessSession(requestingAgentId, session)) {
       return errorResponse(`Access denied: Session ${input.session_id} is not accessible to agent ${requestingAgentId}`);
     }
 
-    // Get linked sessions
     const linkedSessions = getLinkedSessions(input.session_id);
-
-    // Get learnings from this session
     const learnings = getLearningsBySession(input.session_id);
 
     return jsonResponse({
@@ -352,15 +298,10 @@ async function handleGetSession(args: unknown) {
   }
 }
 
-// Access control helper
 function canAccessSession(agentId: number | null, session: SessionRecord): boolean {
-  // Orchestrator (null) can access everything
   if (agentId === null) return true;
-  // Owner can always access
   if (session.agent_id === agentId) return true;
-  // Orchestrator sessions are public by default
   if (session.agent_id === null) return true;
-  // Check visibility
   return session.visibility === 'shared' || session.visibility === 'public';
 }
 
@@ -396,34 +337,6 @@ async function handleListSessions(args: unknown) {
   }
 }
 
-async function handleLinkSessions(args: unknown) {
-  const input = LinkSessionsSchema.parse(args);
-
-  try {
-    // Verify both sessions exist
-    const fromSession = getSessionById(input.from_id);
-    const toSession = getSessionById(input.to_id);
-
-    if (!fromSession) {
-      return errorResponse(`Session not found: ${input.from_id}`);
-    }
-    if (!toSession) {
-      return errorResponse(`Session not found: ${input.to_id}`);
-    }
-
-    const success = createSessionLink(input.from_id, input.to_id, input.link_type);
-
-    return jsonResponse({
-      success,
-      from_id: input.from_id,
-      to_id: input.to_id,
-      link_type: input.link_type,
-    });
-  } catch (error) {
-    return errorResponse(`Failed to link sessions: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
 // ============ Export Handlers Map ============
 
 export const sessionHandlers: Record<string, ToolHandler> = {
@@ -431,5 +344,4 @@ export const sessionHandlers: Record<string, ToolHandler> = {
   recall_session: handleRecallSession,
   get_session: handleGetSession,
   list_sessions: handleListSessions,
-  link_sessions: handleLinkSessions,
 };
