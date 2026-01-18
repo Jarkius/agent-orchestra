@@ -73,218 +73,116 @@ const FailMissionSchema = z.object({
 export const ptyTools: ToolDefinition[] = [
   {
     name: 'spawn_agent',
-    description: 'Spawn a new Claude agent with optional role and model tier. Returns agent details.',
+    description: 'Spawn agent',
     inputSchema: {
       type: 'object',
       properties: {
-        role: {
-          type: 'string',
-          enum: ['coder', 'tester', 'analyst', 'reviewer', 'generalist', 'oracle', 'architect', 'debugger', 'researcher', 'scribe'],
-          description: 'Agent specialization role (default: generalist)',
-        },
-        model: {
-          type: 'string',
-          enum: ['haiku', 'sonnet', 'opus'],
-          description: 'Model tier for the agent (default: sonnet)',
-        },
-        system_prompt: {
-          type: 'string',
-          description: 'Custom system prompt (default: role-based prompt)',
-        },
-        auto_restart: {
-          type: 'boolean',
-          description: 'Auto-restart on crash (default: true)',
-        },
+        role: { type: 'string', enum: ['coder', 'tester', 'analyst', 'reviewer', 'generalist', 'oracle', 'architect', 'debugger', 'researcher', 'scribe'] },
+        model: { type: 'string', enum: ['haiku', 'sonnet', 'opus'] },
+        system_prompt: { type: 'string' },
+        auto_restart: { type: 'boolean' },
       },
     },
   },
   {
     name: 'spawn_pool',
-    description: 'Spawn multiple agents with the same configuration. Returns array of agent details.',
+    description: 'Spawn agent pool',
     inputSchema: {
       type: 'object',
       properties: {
-        count: {
-          type: 'number',
-          description: 'Number of agents to spawn (1-10)',
-        },
-        role: {
-          type: 'string',
-          enum: ['coder', 'tester', 'analyst', 'reviewer', 'generalist', 'oracle', 'architect', 'debugger', 'researcher', 'scribe'],
-          description: 'Agent specialization role (default: generalist)',
-        },
-        model: {
-          type: 'string',
-          enum: ['haiku', 'sonnet', 'opus'],
-          description: 'Model tier for agents (default: sonnet)',
-        },
+        count: { type: 'number' },
+        role: { type: 'string', enum: ['coder', 'tester', 'analyst', 'reviewer', 'generalist', 'oracle', 'architect', 'debugger', 'researcher', 'scribe'] },
+        model: { type: 'string', enum: ['haiku', 'sonnet', 'opus'] },
       },
       required: ['count'],
     },
   },
   {
     name: 'kill_agent',
-    description: 'Terminate an agent by ID',
+    description: 'Kill agent',
     inputSchema: {
       type: 'object',
-      properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID to terminate',
-        },
-      },
+      properties: { agent_id: { type: 'number' } },
       required: ['agent_id'],
     },
   },
   {
     name: 'restart_agent',
-    description: 'Restart an agent by ID',
+    description: 'Restart agent',
     inputSchema: {
       type: 'object',
-      properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID to restart',
-        },
-      },
+      properties: { agent_id: { type: 'number' } },
       required: ['agent_id'],
     },
   },
   {
     name: 'get_agent_health',
-    description: 'Check health status of an agent',
+    description: 'Agent health',
     inputSchema: {
       type: 'object',
-      properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID to check',
-        },
-      },
+      properties: { agent_id: { type: 'number' } },
       required: ['agent_id'],
     },
   },
   {
     name: 'get_all_agent_health',
-    description: 'Check health status of all agents',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
+    description: 'All agents health',
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'distribute_mission',
-    description: 'Distribute a mission to the best available agent based on type and priority',
+    description: 'Distribute mission',
     inputSchema: {
       type: 'object',
       properties: {
-        prompt: {
-          type: 'string',
-          description: 'Mission prompt/instructions',
-        },
-        context: {
-          type: 'string',
-          description: 'Additional context for the mission',
-        },
-        priority: {
-          type: 'string',
-          enum: ['critical', 'high', 'normal', 'low'],
-          description: 'Mission priority (default: normal)',
-        },
-        type: {
-          type: 'string',
-          enum: ['extraction', 'analysis', 'synthesis', 'review', 'general'],
-          description: 'Mission type for model selection (default: general)',
-        },
-        timeout_ms: {
-          type: 'number',
-          description: 'Timeout in milliseconds (default: 120000)',
-        },
-        max_retries: {
-          type: 'number',
-          description: 'Maximum retry attempts (default: 3)',
-        },
-        depends_on: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Mission IDs this depends on',
-        },
+        prompt: { type: 'string' },
+        context: { type: 'string' },
+        priority: { type: 'string', enum: ['critical', 'high', 'normal', 'low'] },
+        type: { type: 'string', enum: ['extraction', 'analysis', 'synthesis', 'review', 'general'] },
+        timeout_ms: { type: 'number' },
+        max_retries: { type: 'number' },
+        depends_on: { type: 'array', items: { type: 'string' } },
       },
       required: ['prompt'],
     },
   },
   {
     name: 'complete_mission',
-    description: 'Mark a mission as completed with result',
+    description: 'Complete mission',
     inputSchema: {
       type: 'object',
       properties: {
-        mission_id: {
-          type: 'string',
-          description: 'Mission ID to complete',
-        },
-        output: {
-          type: 'string',
-          description: 'Mission output/result',
-        },
-        duration_ms: {
-          type: 'number',
-          description: 'Duration in milliseconds',
-        },
-        token_usage: {
-          type: 'object',
-          properties: {
-            input: { type: 'number' },
-            output: { type: 'number' },
-          },
-          description: 'Token usage statistics',
-        },
+        mission_id: { type: 'string' },
+        output: { type: 'string' },
+        duration_ms: { type: 'number' },
+        token_usage: { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' } } },
       },
       required: ['mission_id', 'output'],
     },
   },
   {
     name: 'fail_mission',
-    description: 'Mark a mission as failed with error details',
+    description: 'Fail mission',
     inputSchema: {
       type: 'object',
       properties: {
-        mission_id: {
-          type: 'string',
-          description: 'Mission ID that failed',
-        },
-        error_code: {
-          type: 'string',
-          enum: ['timeout', 'crash', 'validation', 'resource', 'auth', 'rate_limit', 'unknown'],
-          description: 'Error classification',
-        },
-        message: {
-          type: 'string',
-          description: 'Error message',
-        },
-        recoverable: {
-          type: 'boolean',
-          description: 'Whether the error is recoverable (default: auto-detected)',
-        },
+        mission_id: { type: 'string' },
+        error_code: { type: 'string', enum: ['timeout', 'crash', 'validation', 'resource', 'auth', 'rate_limit', 'unknown'] },
+        message: { type: 'string' },
+        recoverable: { type: 'boolean' },
       },
       required: ['mission_id', 'error_code', 'message'],
     },
   },
   {
     name: 'get_mission_queue_status',
-    description: 'Get status of the mission queue',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
+    description: 'Mission queue status',
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'get_agent_status',
-    description: 'Get status of all spawned agents',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
+    description: 'Agent status',
+    inputSchema: { type: 'object', properties: {} },
   },
 ];
 

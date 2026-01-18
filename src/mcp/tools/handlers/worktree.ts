@@ -40,99 +40,61 @@ const SyncWorktreeSchema = z.object({
 export const worktreeTools: ToolDefinition[] = [
   {
     name: 'provision_worktree',
-    description: 'Create an isolated git worktree for an agent. Returns path and branch info.',
+    description: 'Create worktree',
     inputSchema: {
       type: 'object',
       properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID to create worktree for',
-        },
-        task_id: {
-          type: 'string',
-          description: 'Optional task ID (for per-task branching)',
-        },
-        base_branch: {
-          type: 'string',
-          description: 'Base branch to create from (default: auto-detect main/master)',
-        },
-        conflict_strategy: {
-          type: 'string',
-          enum: ['abort', 'stash', 'theirs', 'ours'],
-          description: 'How to handle conflicts on merge (default: abort)',
-        },
+        agent_id: { type: 'number' },
+        task_id: { type: 'string' },
+        base_branch: { type: 'string' },
+        conflict_strategy: { type: 'string', enum: ['abort', 'stash', 'theirs', 'ours'] },
       },
       required: ['agent_id'],
     },
   },
   {
     name: 'merge_worktree',
-    description: "Merge an agent's worktree work back to the base branch",
+    description: 'Merge worktree',
     inputSchema: {
       type: 'object',
-      properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID whose worktree to merge',
-        },
-      },
+      properties: { agent_id: { type: 'number' } },
       required: ['agent_id'],
     },
   },
   {
     name: 'sync_worktree',
-    description: 'Sync worktree with latest base branch changes via rebase or merge',
+    description: 'Sync worktree',
     inputSchema: {
       type: 'object',
       properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID whose worktree to sync',
-        },
-        strategy: {
-          type: 'string',
-          enum: ['rebase', 'merge'],
-          description: 'Sync strategy (default: rebase)',
-        },
+        agent_id: { type: 'number' },
+        strategy: { type: 'string', enum: ['rebase', 'merge'] },
       },
       required: ['agent_id'],
     },
   },
   {
     name: 'cleanup_worktree',
-    description: 'Remove worktree and cleanup associated branch',
+    description: 'Cleanup worktree',
     inputSchema: {
       type: 'object',
-      properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID whose worktree to cleanup',
-        },
-      },
+      properties: { agent_id: { type: 'number' } },
       required: ['agent_id'],
     },
   },
   {
     name: 'get_worktree_status',
-    description: 'Get git status and info for an agent worktree',
+    description: 'Worktree status',
     inputSchema: {
       type: 'object',
-      properties: {
-        agent_id: {
-          type: 'number',
-          description: 'Agent ID to check',
-        },
-      },
+      properties: { agent_id: { type: 'number' } },
       required: ['agent_id'],
     },
   },
   {
     name: 'list_worktrees',
-    description: 'List all active agent worktrees',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
+    description: 'List worktrees',
+    inputSchema: { type: 'object', properties: {} },
   },
 ];
 

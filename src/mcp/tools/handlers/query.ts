@@ -36,106 +36,61 @@ import type { ToolDefinition, ToolHandler } from '../../types';
 export const queryTools: ToolDefinition[] = [
   {
     name: "query_task_history",
-    description: "Query task history with filtering by agent, status, and pagination",
+    description: "Query tasks",
     inputSchema: {
       type: "object",
       properties: {
-        agent_id: {
-          type: "number",
-          description: "Filter by agent ID",
-        },
-        status: {
-          type: "string",
-          enum: ["pending", "queued", "processing", "completed", "failed", "cancelled"],
-          description: "Filter by task status",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum results to return (default: 20)",
-        },
-        offset: {
-          type: "number",
-          description: "Number of results to skip (for pagination)",
-        },
-        since: {
-          type: "string",
-          description: "ISO date string - only return tasks after this time",
-        },
+        agent_id: { type: "number" },
+        status: { type: "string", enum: ["pending", "queued", "processing", "completed", "failed", "cancelled"] },
+        limit: { type: "number" },
+        offset: { type: "number" },
+        since: { type: "string" },
       },
     },
   },
   {
     name: "get_task_details",
-    description: "Get detailed metrics for a specific task including tokens, duration, and result",
+    description: "Task details",
     inputSchema: {
       type: "object",
-      properties: {
-        task_id: {
-          type: "string",
-          description: "The task ID to get details for",
-        },
-      },
+      properties: { task_id: { type: "string" } },
       required: ["task_id"],
     },
   },
   {
     name: "get_agent_metrics",
-    description: "Get comprehensive performance metrics for an agent",
+    description: "Agent metrics",
     inputSchema: {
       type: "object",
-      properties: {
-        agent_id: {
-          type: "number",
-          description: "The agent ID",
-        },
-      },
+      properties: { agent_id: { type: "number" } },
       required: ["agent_id"],
     },
   },
   {
     name: "get_system_dashboard",
-    description: "Get system-wide metrics: all agents, task stats, recent events",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    description: "System dashboard",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "get_message_history",
-    description: "Get communication history between agents and orchestrator",
+    description: "Message history",
     inputSchema: {
       type: "object",
       properties: {
-        agent_id: {
-          type: "number",
-          description: "Filter by agent ID",
-        },
-        direction: {
-          type: "string",
-          enum: ["inbound", "outbound"],
-          description: "Filter by message direction",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum messages to return (default: 20)",
-        },
+        agent_id: { type: "number" },
+        direction: { type: "string", enum: ["inbound", "outbound"] },
+        limit: { type: "number" },
       },
     },
   },
   {
     name: "cancel_task",
-    description: "Cancel a pending or queued task",
+    description: "Cancel task",
     inputSchema: {
       type: "object",
       properties: {
-        task_id: {
-          type: "string",
-          description: "The task ID to cancel",
-        },
-        agent_id: {
-          type: "number",
-          description: "The agent ID (optional - will search all agents if not provided)",
-        },
+        task_id: { type: "string" },
+        agent_id: { type: "number" },
       },
       required: ["task_id"],
     },

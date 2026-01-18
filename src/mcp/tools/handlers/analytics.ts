@@ -57,54 +57,46 @@ async function ensureVectorDB() {
 export const analyticsTools: ToolDefinition[] = [
   {
     name: "get_session_stats",
-    description: "Get overall session statistics",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    description: "Session stats",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "get_improvement_report",
-    description: "Get learning improvement report with confidence distribution",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    description: "Improvement report",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "get_context_bundle",
-    description: "Get a context bundle for starting a new session (recent sessions + relevant learnings)",
+    description: "Context bundle",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Optional query to find relevant context" },
-        include_learnings: { type: "boolean", description: "Include learnings (default: true)" },
-        include_recent_sessions: { type: "boolean", description: "Include recent sessions (default: true)" },
-        sessions_limit: { type: "number", description: "Max recent sessions (default: 3)" },
-        learnings_limit: { type: "number", description: "Max learnings (default: 10)" },
+        query: { type: "string" },
+        include_learnings: { type: "boolean" },
+        include_recent_sessions: { type: "boolean" },
+        sessions_limit: { type: "number" },
+        learnings_limit: { type: "number" },
       },
     },
   },
   {
     name: "export_learnings",
-    description: "Export learnings to LEARNINGS.md or JSON",
+    description: "Export learnings",
     inputSchema: {
       type: "object",
       properties: {
-        output_path: { type: "string", description: "Output file path (default: LEARNINGS.md)" },
-        format: { type: "string", enum: ["markdown", "json"], description: "Output format (default: markdown)" },
-        include_sessions: { type: "boolean", description: "Include session references (default: false)" },
+        output_path: { type: "string" },
+        format: { type: "string", enum: ["markdown", "json"] },
+        include_sessions: { type: "boolean" },
       },
     },
   },
   {
     name: "rebuild_search_index",
-    description: "Rebuild ChromaDB search index from SQLite",
+    description: "Rebuild index",
     inputSchema: {
       type: "object",
-      properties: {
-        collection: { type: "string", enum: ["sessions", "learnings", "all"], description: "Which index to rebuild" },
-      },
+      properties: { collection: { type: "string", enum: ["sessions", "learnings", "all"] } },
     },
   },
 ];

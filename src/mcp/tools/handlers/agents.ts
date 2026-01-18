@@ -19,23 +19,15 @@ import type { ToolDefinition, ToolHandler } from '../../types';
 export const agentTools: ToolDefinition[] = [
   {
     name: "get_agents",
-    description: "Get the status of all running Claude sub-agents",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    description: "Agent statuses",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "get_agent_workload",
-    description: "Get pending tasks in an agent's inbox",
+    description: "Agent workload",
     inputSchema: {
       type: "object",
-      properties: {
-        agent_id: {
-          type: "number",
-          description: "The agent ID",
-        },
-      },
+      properties: { agent_id: { type: "number" } },
       required: ["agent_id"],
     },
   },

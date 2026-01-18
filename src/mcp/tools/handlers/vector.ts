@@ -42,116 +42,67 @@ async function ensureVectorDB() {
 export const vectorTools: ToolDefinition[] = [
   {
     name: "search_similar_tasks",
-    description: "Semantic search for similar past task prompts using vector similarity",
+    description: "Find similar tasks",
     inputSchema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Natural language query to find similar tasks",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum results to return (default: 5, max: 20)",
-        },
-        agent_id: {
-          type: "number",
-          description: "Optional: filter by specific agent",
-        },
+        query: { type: "string" },
+        limit: { type: "number" },
+        agent_id: { type: "number" },
       },
       required: ["query"],
     },
   },
   {
     name: "search_similar_results",
-    description: "Find past task results similar to a query using semantic search",
+    description: "Find similar results",
     inputSchema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Natural language query to find similar results",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum results to return (default: 5, max: 20)",
-        },
+        query: { type: "string" },
+        limit: { type: "number" },
       },
       required: ["query"],
     },
   },
   {
     name: "search_message_history",
-    description: "Semantic search through agent communication history",
+    description: "Search messages",
     inputSchema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Natural language query to search messages",
-        },
-        direction: {
-          type: "string",
-          enum: ["inbound", "outbound"],
-          description: "Filter by message direction (optional)",
-        },
-        agent_id: {
-          type: "number",
-          description: "Filter by agent ID (optional)",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum results to return (default: 10, max: 20)",
-        },
+        query: { type: "string" },
+        direction: { type: "string", enum: ["inbound", "outbound"] },
+        agent_id: { type: "number" },
+        limit: { type: "number" },
       },
       required: ["query"],
     },
   },
   {
     name: "get_related_memory",
-    description: "Get all contextually relevant past work - combines tasks, results, and messages",
+    description: "Related memory",
     inputSchema: {
       type: "object",
       properties: {
-        query: {
-          type: "string",
-          description: "Natural language query to find related memory",
-        },
-        include_tasks: {
-          type: "boolean",
-          description: "Include similar task prompts (default: true)",
-        },
-        include_results: {
-          type: "boolean",
-          description: "Include similar task results (default: true)",
-        },
-        include_messages: {
-          type: "boolean",
-          description: "Include similar messages (default: true)",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum results per category (default: 5)",
-        },
+        query: { type: "string" },
+        include_tasks: { type: "boolean" },
+        include_results: { type: "boolean" },
+        include_messages: { type: "boolean" },
+        limit: { type: "number" },
       },
       required: ["query"],
     },
   },
   {
     name: "get_vector_stats",
-    description: "Get statistics about the vector database collections",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    description: "Vector stats",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "health_check",
-    description: "Check health status of ChromaDB, embedding model, and vector collections",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    description: "Health check",
+    inputSchema: { type: "object", properties: {} },
   },
 ];
 

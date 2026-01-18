@@ -20,36 +20,24 @@ import type { ToolDefinition, ToolHandler } from '../../types';
 export const resultsTools: ToolDefinition[] = [
   {
     name: "get_task_result",
-    description: "Get the result of a completed task",
+    description: "Task result",
     inputSchema: {
       type: "object",
       properties: {
-        task_id: {
-          type: "string",
-          description: "The task ID to get results for",
-        },
-        agent_id: {
-          type: "number",
-          description: "The agent ID that processed the task",
-        },
+        task_id: { type: "string" },
+        agent_id: { type: "number" },
       },
       required: ["task_id", "agent_id"],
     },
   },
   {
     name: "get_all_results",
-    description: "Get all completed task results from a specific agent",
+    description: "Agent results",
     inputSchema: {
       type: "object",
       properties: {
-        agent_id: {
-          type: "number",
-          description: "The agent ID",
-        },
-        limit: {
-          type: "number",
-          description: "Maximum number of results to return (default: 20)",
-        },
+        agent_id: { type: "number" },
+        limit: { type: "number" },
       },
       required: ["agent_id"],
     },

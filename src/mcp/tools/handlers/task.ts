@@ -72,57 +72,29 @@ function buildContextBundle(): string {
 export const taskTools: ToolDefinition[] = [
   {
     name: "assign_task",
-    description: "Assign a task to a specific Claude sub-agent. The agent will use real Claude CLI to process the task.",
+    description: "Assign task",
     inputSchema: {
       type: "object",
       properties: {
-        agent_id: {
-          type: "number",
-          description: "The agent ID (1, 2, 3, etc.)",
-        },
-        task: {
-          type: "string",
-          description: "The task prompt to send to the agent",
-        },
-        context: {
-          type: "string",
-          description: "Optional context to include with the task",
-        },
-        priority: {
-          type: "string",
-          enum: ["low", "normal", "high"],
-          description: "Task priority (default: normal)",
-        },
-        session_id: {
-          type: "string",
-          description: "Link this task to an existing session for tracking",
-        },
-        include_context_bundle: {
-          type: "boolean",
-          description: "Include recent sessions and high-confidence learnings in context (default: false)",
-        },
-        auto_save_session: {
-          type: "boolean",
-          description: "Auto-create a mini-session after task completion (default: false)",
-        },
+        agent_id: { type: "number" },
+        task: { type: "string" },
+        context: { type: "string" },
+        priority: { type: "string", enum: ["low", "normal", "high"] },
+        session_id: { type: "string" },
+        include_context_bundle: { type: "boolean" },
+        auto_save_session: { type: "boolean" },
       },
       required: ["agent_id", "task"],
     },
   },
   {
     name: "broadcast_task",
-    description: "Send the same task to all available agents",
+    description: "Broadcast task",
     inputSchema: {
       type: "object",
       properties: {
-        task: {
-          type: "string",
-          description: "The task prompt to broadcast",
-        },
-        context: {
-          type: "string",
-          description: "Optional context to include",
-        },
+        task: { type: "string" },
+        context: { type: "string" },
       },
       required: ["task"],
     },

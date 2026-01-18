@@ -19,25 +19,17 @@ import { embedContext, isInitialized } from '../../../vector-db';
 export const contextTools: ToolDefinition[] = [
   {
     name: "update_shared_context",
-    description: "Update the shared context that all agents can access",
+    description: "Update context",
     inputSchema: {
       type: "object",
-      properties: {
-        content: {
-          type: "string",
-          description: "The shared context content (markdown)",
-        },
-      },
+      properties: { content: { type: "string" } },
       required: ["content"],
     },
   },
   {
     name: "get_shared_context",
-    description: "Get the current shared context",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
+    description: "Get context",
+    inputSchema: { type: "object", properties: {} },
   },
 ];
 
