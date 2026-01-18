@@ -16,14 +16,22 @@ Expert Multi-Agent Orchestration System for spawning and coordinating real Claud
 - **MCP Integration** - 25+ tools for orchestration, memory, and analytics
 - **Session Memory** - Persistent context across sessions with semantic search
 
+## Prerequisites
+
+- **Bun** 1.0+ ([install](https://bun.sh))
+- **Docker** (for ChromaDB vector database)
+- **tmux** (for agent PTY management)
+
 ## Quick Start
 
 ```bash
 # Install dependencies
 bun install
 
-# Start ChromaDB (for vector search)
-docker run -d -p 8000:8000 chromadb/chroma
+# Start ChromaDB (persisted, auto-restarts)
+docker run -d --name chromadb --restart unless-stopped \
+  -p 8100:8000 -v chromadb_data:/chroma/chroma \
+  chromadb/chroma
 
 # Spawn 3 agents with worktree isolation
 bun run spawn --count 3 --isolation worktree
@@ -174,7 +182,9 @@ bun memory list learnings       # list learnings
 
 ```bash
 # .env
-CHROMA_URL=http://localhost:8000
+CHROMA_URL=http://localhost:8100
+CHROMA_PORT=8100
+CHROMA_CONTAINER=chromadb
 EMBEDDING_PROVIDER=transformers
 EMBEDDING_MODEL=bge-small-en-v1.5
 ```
