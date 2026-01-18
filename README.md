@@ -13,7 +13,7 @@ Expert Multi-Agent Orchestration System for spawning and coordinating real Claud
 - **Role-Based Agents** - Specialized roles: coder, tester, analyst, oracle, debugger, etc.
 - **Model Tier Selection** - Automatic model selection (haiku/sonnet/opus) based on task complexity
 - **Mission Queue** - Priority-based task queue with retry logic and dependencies
-- **MCP Integration** - 25+ tools for orchestration, memory, and analytics
+- **MCP Integration** - 31 consolidated tools for orchestration, memory, and analytics
 - **Session Memory** - Persistent context across sessions with semantic search
 
 ## Prerequisites
@@ -116,39 +116,26 @@ await spawner.spawnAgent({
 
 ## MCP Tools
 
-### PTY Orchestration
+Tools are consolidated with `action` parameters for efficiency.
+
+### Orchestration
+
+| Tool | Actions | Description |
+|------|---------|-------------|
+| `agent` | spawn, spawn_pool, kill, restart, health, health_all, status | Agent lifecycle management |
+| `mission` | distribute, complete, fail, status | Mission queue operations |
+| `worktree` | provision, merge, sync, cleanup, status, list | Git worktree isolation |
+
+### Memory & Search
 
 | Tool | Description |
 |------|-------------|
-| `spawn_agent` | Spawn agent with role and model |
-| `spawn_pool` | Spawn multiple agents |
-| `kill_agent` | Terminate an agent |
-| `restart_agent` | Restart crashed agent |
-| `get_agent_health` | Check agent health |
-| `get_agent_status` | List all agents |
-| `distribute_mission` | Assign task to best agent |
-| `complete_mission` | Mark mission complete |
-| `fail_mission` | Report mission failure |
-
-### Worktree Management
-
-| Tool | Description |
-|------|-------------|
-| `provision_worktree` | Create worktree for agent |
-| `merge_worktree` | Merge work to base branch |
-| `sync_worktree` | Rebase/merge with base |
-| `cleanup_worktree` | Remove worktree |
-| `get_worktree_status` | Check worktree status |
-| `list_worktrees` | List all worktrees |
-
-### Session Memory
-
-| Tool | Description |
-|------|-------------|
-| `save_session` | Save session context |
+| `save_session` | Save session with context |
 | `recall_session` | Search past sessions |
 | `add_learning` | Capture a learning |
 | `recall_learnings` | Search learnings |
+| `search` | Semantic search (tasks, results, messages, memory) |
+| `stats` | System stats (session, improvement, vector, dashboard) |
 | `get_context_bundle` | Get context for new session |
 | `export_learnings` | Export to markdown |
 

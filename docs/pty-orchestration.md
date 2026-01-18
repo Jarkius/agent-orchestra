@@ -245,10 +245,15 @@ for await (const event of manager.watchAll()) {
 
 ## MCP Tools
 
-### spawn_agent
+Tools are consolidated with `action` parameters for efficiency.
+
+### agent
+
+Unified agent lifecycle management.
 
 ```json
 {
+  "action": "spawn",
   "role": "coder",
   "model": "sonnet",
   "system_prompt": "Custom prompt...",
@@ -256,20 +261,22 @@ for await (const event of manager.watchAll()) {
 }
 ```
 
-### spawn_pool
+Actions:
+- `spawn` - Spawn single agent
+- `spawn_pool` - Spawn multiple agents (requires `count`)
+- `kill` - Terminate agent (requires `agent_id`)
+- `restart` - Restart agent (requires `agent_id`)
+- `health` - Check single agent health (requires `agent_id`)
+- `health_all` - Check all agents health
+- `status` - List all agents with stats
+
+### mission
+
+Unified mission queue operations.
 
 ```json
 {
-  "count": 3,
-  "role": "tester",
-  "model": "haiku"
-}
-```
-
-### distribute_mission
-
-```json
-{
+  "action": "distribute",
   "prompt": "Implement feature X",
   "context": "Additional context...",
   "priority": "high",
@@ -280,9 +287,13 @@ for await (const event of manager.watchAll()) {
 }
 ```
 
-### get_agent_status
+Actions:
+- `distribute` - Assign task to best agent
+- `complete` - Mark mission complete (requires `mission_id`, `output`)
+- `fail` - Report failure (requires `mission_id`, `error_code`, `message`)
+- `status` - Get queue status
 
-Returns all agents with their current status:
+### Example: Agent Status Response
 
 ```json
 {

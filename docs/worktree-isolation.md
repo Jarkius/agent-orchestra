@@ -190,12 +190,15 @@ interface MergeResult {
 
 ## MCP Tools
 
-### provision_worktree
+All worktree operations are consolidated into a single `worktree` tool with an `action` parameter.
 
-Create worktree for an agent.
+### worktree
+
+Unified worktree management.
 
 ```json
 {
+  "action": "provision",
   "agent_id": 1,
   "task_id": "task-123",
   "base_branch": "develop",
@@ -203,28 +206,31 @@ Create worktree for an agent.
 }
 ```
 
-Response:
+**Actions:**
+
+| Action | Required Params | Description |
+|--------|-----------------|-------------|
+| `provision` | `agent_id` | Create worktree for agent |
+| `merge` | `agent_id` | Merge work back to base branch |
+| `sync` | `agent_id` | Sync with base (optional: `strategy`) |
+| `cleanup` | `agent_id` | Remove worktree |
+| `status` | `agent_id` | Get worktree status |
+| `list` | - | List all worktrees |
+
+### Example Responses
+
+**provision:**
 ```json
 {
-  "success": true,
   "agent_id": 1,
   "path": "/workspace/.worktrees/agent-1",
   "branch": "agent-1/work-1705678901234",
-  "base_branch": "main"
+  "base_branch": "main",
+  "status": "active"
 }
 ```
 
-### merge_worktree
-
-Merge agent's work back to base branch.
-
-```json
-{
-  "agent_id": 1
-}
-```
-
-Response:
+**merge:**
 ```json
 {
   "success": true,
@@ -234,28 +240,7 @@ Response:
 }
 ```
 
-### sync_worktree
-
-Sync worktree with latest base branch changes.
-
-```json
-{
-  "agent_id": 1,
-  "strategy": "rebase"
-}
-```
-
-### get_worktree_status
-
-Get status of agent's worktree.
-
-```json
-{
-  "agent_id": 1
-}
-```
-
-Response:
+**status:**
 ```json
 {
   "agent_id": 1,
@@ -268,11 +253,7 @@ Response:
 }
 ```
 
-### list_worktrees
-
-List all active worktrees.
-
-Response:
+**list:**
 ```json
 {
   "managed_worktrees": [
@@ -284,10 +265,7 @@ Response:
     }
   ],
   "managed_count": 1,
-  "git_worktrees": [
-    "/workspace",
-    "/workspace/.worktrees/agent-1"
-  ],
+  "git_worktrees": ["/workspace", "/workspace/.worktrees/agent-1"],
   "git_worktree_count": 2
 }
 ```
