@@ -14,6 +14,7 @@ import {
   isInitialized,
   initVectorDB,
   getHealthStatus,
+  reconnectVectorDB,
 } from '../../../vector-db';
 import type { ToolDefinition, ToolHandler } from '../../types';
 
@@ -62,7 +63,12 @@ export const vectorTools: ToolDefinition[] = [
   {
     name: 'health_check',
     description: 'Health check',
-    inputSchema: { type: 'object', properties: {} },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reconnect: { type: 'boolean', description: 'Reconnect to ChromaDB (use after reindex)' },
+      },
+    },
   },
 ];
 
@@ -178,14 +184,22 @@ async function handleSearch(args: unknown) {
   }
 }
 
-async function handleHealthCheck() {
+async function handleHealthCheck(args: unknown) {
   try {
+    const input = args as { reconnect?: boolean };
+
+    // Reconnect if requested (use after reindex/reset)
+    if (input?.reconnect) {
+      await reconnectVectorDB();
+    }
+
     const health = await getHealthStatus();
     return jsonResponse({
       status: health.chromadb.status === 'healthy' && health.collections.initialized ? 'healthy' : 'degraded',
       chromadb: health.chromadb,
       embedding: health.embedding,
       collections: health.collections,
+      reconnected: input?.reconnect || false,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

@@ -118,6 +118,24 @@ function ensureInitialized(): VectorCollections {
   return collections;
 }
 
+/**
+ * Reconnect to ChromaDB and refresh all collection references.
+ * Use after reindex or reset to ensure fresh connections.
+ */
+export async function reconnectVectorDB(): Promise<void> {
+  console.error("[VectorDB] Reconnecting...");
+
+  // Reset state
+  initialized = false;
+  collections = null;
+  client = null;
+  // Keep embeddingFunction - model doesn't need reload
+
+  // Reinitialize
+  await initVectorDB();
+  console.error("[VectorDB] Reconnected successfully");
+}
+
 // ============ TASK EMBEDDINGS ============
 
 export async function embedTask(
