@@ -89,6 +89,7 @@ interface StructuredLearningInput {
   what_happened?: string;
   lesson?: string;
   prevention?: string;
+  confidence?: 'low' | 'medium' | 'high' | 'proven';
 }
 
 async function saveLearning(category: Category, input: StructuredLearningInput) {
@@ -99,8 +100,8 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
   const agentIdStr = process.env.MEMORY_AGENT_ID;
   const agentId = agentIdStr ? parseInt(agentIdStr) : null;
 
-  // All quick learnings start at 'low' - use 'bun memory save' for medium confidence
-  const defaultConfidence = 'low';
+  // Use provided confidence or default to 'low'
+  const confidence = input.confidence || 'low';
 
   // 1. Save to SQLite with structured fields
   const learningId = createLearning({
@@ -108,7 +109,7 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
     title: input.title,
     description: input.description,
     context: input.context,
-    confidence: defaultConfidence,
+    confidence: confidence,
     agent_id: agentId,
     visibility: agentId === null ? 'public' : 'private',
     what_happened: input.what_happened,
@@ -120,7 +121,7 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
   const searchText = `${input.title} ${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
   await saveLearningToChroma(learningId, input.title, input.lesson || input.description || input.context || '', {
     category,
-    confidence: defaultConfidence,
+    confidence: confidence,
     created_at: new Date().toISOString(),
     agent_id: agentId,
     visibility: agentId === null ? 'public' : 'private',
@@ -148,7 +149,7 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
   if (input.lesson) console.log(`  Lesson:     ${input.lesson}`);
   if (input.prevention) console.log(`  Prevention: ${input.prevention}`);
   if (input.context) console.log(`  Context:    ${input.context}`);
-  console.log(`  Confidence: ${defaultConfidence}`);
+  console.log(`  Confidence: ${confidence}`);
 
   if (autoLinked.length > 0) {
     console.log(`\n  🔗 Auto-linked to ${autoLinked.length} similar learning(s):`);
@@ -222,6 +223,7 @@ Options:
   --interactive, -i   Interactive mode with structured prompts
   --lesson "..."      What you learned (key insight)
   --prevention "..."  How to prevent/apply in future
+  --confidence <lvl>  Confidence level: low, medium, high, proven (default: low)
   --help, -h          Show this help
 
 Quick Examples:
@@ -239,6 +241,9 @@ Quick Examples:
   let context: string | undefined;
   let lesson: string | undefined;
   let prevention: string | undefined;
+  let confidence: 'low' | 'medium' | 'high' | 'proven' | undefined;
+
+  const validConfidenceLevels = ['low', 'medium', 'high', 'proven'];
 
   for (let i = 1; i < args.length; i++) {
     if (args[i] === '--lesson' && args[i + 1]) {
@@ -246,6 +251,14 @@ Quick Examples:
       i++;
     } else if (args[i] === '--prevention' && args[i + 1]) {
       prevention = args[i + 1];
+      i++;
+    } else if (args[i] === '--confidence' && args[i + 1]) {
+      const level = args[i + 1].toLowerCase();
+      if (validConfidenceLevels.includes(level)) {
+        confidence = level as 'low' | 'medium' | 'high' | 'proven';
+      } else {
+        console.warn(`⚠️  Invalid confidence level: ${args[i + 1]}. Using 'low'. Valid: ${validConfidenceLevels.join(', ')}`);
+      }
       i++;
     } else if (!title) {
       title = args[i];
@@ -271,6 +284,7 @@ Quick Examples:
     context,
     lesson,
     prevention,
+    confidence,
     what_happened: context, // Use context as what_happened for backward compatibility
   });
 }
