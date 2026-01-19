@@ -586,13 +586,83 @@ export function getDashboardData() {
 
 // ============ Session Memory Functions ============
 
+/**
+ * Code breadcrumb - reference to a specific code location
+ */
+export interface CodeBreadcrumb {
+  file: string;           // Relative path from project root
+  line?: number;          // Line number (optional)
+  symbol?: string;        // Function/class/interface name
+  type?: 'function' | 'class' | 'interface' | 'method' | 'type' | 'variable' | 'file';
+  note?: string;          // Brief context about why this location matters
+}
+
+/**
+ * Structured next step with actionable details
+ */
+export interface StructuredNextStep {
+  action: string;                    // What needs to be done (imperative)
+  priority?: 'high' | 'normal' | 'low';
+  breadcrumbs?: CodeBreadcrumb[];    // Relevant code locations
+  dependencies?: string[];           // What must be done first
+  testCommand?: string;              // How to verify completion
+}
+
+/**
+ * Mid-change state - captures work in progress
+ */
+export interface MidChangeState {
+  uncommittedFiles?: string[];       // Files with uncommitted changes
+  stagedFiles?: string[];            // Files staged for commit
+  partialImplementations?: Array<{
+    file: string;
+    interface?: string;              // Interface being implemented
+    implemented: string[];           // Methods/functions done
+    pending: string[];               // Methods/functions remaining
+  }>;
+  currentFocus?: {                   // What was being worked on when paused
+    file: string;
+    task: string;
+    line?: number;
+  };
+  gitDiff?: string;                  // Truncated diff of uncommitted changes
+}
+
+/**
+ * Continuation bundle - everything needed to resume work
+ */
+export interface ContinuationBundle {
+  // Priority reading list
+  filesToRead: Array<{
+    file: string;
+    reason: string;                  // Why to read this file
+    sections?: string[];             // Specific sections/functions to focus on
+  }>;
+  // Interface/type context
+  keyTypes?: Array<{
+    name: string;
+    file: string;
+    line?: number;
+  }>;
+  // Pending work with full context
+  pendingWork: StructuredNextStep[];
+  // Test/verify commands
+  verifyCommands?: string[];
+  // Quick context (1-2 sentences each)
+  quickContext?: {
+    whatWasDone: string;
+    whatRemains: string;
+    blockers?: string;
+  };
+}
+
 export interface FullContext {
   // Session outcomes
   wins?: string[];
   issues?: string[];
   key_decisions?: string[];
   challenges?: string[];
-  next_steps?: string[];
+  next_steps?: string[];                          // Legacy: simple string list
   // Ideas and learnings
   learnings?: string[];
   future_ideas?: string[];
@@ -611,6 +681,11 @@ export interface FullContext {
   plan_title?: string;
   claude_session_id?: string;
   message_count?: number;
+  // Enhanced continuation support (new)
+  structured_next_steps?: StructuredNextStep[];   // Detailed actionable items
+  code_breadcrumbs?: CodeBreadcrumb[];            // Key code locations
+  mid_change_state?: MidChangeState;              // Work in progress
+  continuation_bundle?: ContinuationBundle;       // Full handoff data
 }
 
 export type Visibility = 'private' | 'shared' | 'public';

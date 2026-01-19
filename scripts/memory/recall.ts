@@ -17,7 +17,7 @@ import { join, basename } from 'path';
 import { homedir } from 'os';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
 import { type SessionTask, getLearningEntities, getRelatedEntities } from '../../src/db';
-import { formatFullContext, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
+import { formatFullContext, formatFullContextEnhanced, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
 import { getGitStatus, getChangesSinceCommit, getLastCommitHash } from '../../src/utils/git-context';
 
 // ============ Enhanced Resume Context ============
@@ -231,9 +231,9 @@ function displayResumeContext(result: RecallResult) {
     }
   }
 
-  // Show full context (includes next_steps, challenges, git info)
+  // Show full context (includes next_steps, challenges, git info, continuation bundle)
   if (session.full_context) {
-    const contextLines = formatFullContext(session.full_context);
+    const contextLines = formatFullContextEnhanced(session.full_context);
     if (contextLines.length > 0) {
       console.log('\n' + '─'.repeat(40));
       console.log('  SESSION CONTEXT');
@@ -331,9 +331,9 @@ function displaySessionDetails(ctx: SessionWithContext) {
   console.log(`Owner: ${ownerLabel} | Visibility: ${session.visibility || 'public'}`);
   console.log(`Created: ${toLocalTime(session.created_at)}`);
 
-  // Full context (includes next_steps, challenges, git info)
+  // Full context (includes next_steps, challenges, git info, continuation bundle)
   if (session.full_context) {
-    const contextLines = formatFullContext(session.full_context);
+    const contextLines = formatFullContextEnhanced(session.full_context);
     if (contextLines.length > 0) {
       console.log('\n' + '─'.repeat(40));
       console.log('  CONTEXT');

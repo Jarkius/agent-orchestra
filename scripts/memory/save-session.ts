@@ -36,7 +36,13 @@ import {
   findSimilarLearnings,
 } from '../../src/vector-db';
 import { createLearningLink } from '../../src/db';
-import { captureFromClaudeCode, formatCapturedContext, type CapturedContext } from './capture-context';
+import {
+  captureFromClaudeCode,
+  formatCapturedContext,
+  captureMidChangeState,
+  suggestFilesToRead,
+  type CapturedContext,
+} from './capture-context';
 
 // ============ Git Context Auto-Capture ============
 
@@ -392,6 +398,8 @@ async function interactiveMode() {
 async function quickMode() {
   // Auto-capture git context even in quick mode
   const gitContext = captureGitContext();
+  // Capture mid-change state (uncommitted files, staged files, diff)
+  const midChangeState = captureMidChangeState();
 
   console.log('\n📝 Quick Save Mode');
   if (gitContext) {
@@ -404,6 +412,20 @@ async function quickMode() {
     }
   }
 
+  // Show mid-change state if present
+  if (midChangeState.uncommittedFiles?.length || midChangeState.stagedFiles?.length) {
+    console.log('   📌 Work in progress:');
+    if (midChangeState.uncommittedFiles?.length) {
+      console.log(`      - ${midChangeState.uncommittedFiles.length} uncommitted files`);
+    }
+    if (midChangeState.stagedFiles?.length) {
+      console.log(`      - ${midChangeState.stagedFiles.length} staged files`);
+    }
+  }
+
+  // Auto-suggest files to read for continuation
+  const filesToRead = suggestFilesToRead(midChangeState);
+
   return {
     summary,
     tags,
@@ -415,6 +437,22 @@ async function quickMode() {
       git_commits: gitContext?.recentCommits.length ? gitContext.recentCommits : undefined,
       files_changed: gitContext?.filesChanged.length ? gitContext.filesChanged : undefined,
       diff_summary: gitContext?.diffSummary || undefined,
+      // Enhanced continuation support
+      mid_change_state: (midChangeState.uncommittedFiles?.length || midChangeState.stagedFiles?.length)
+        ? midChangeState
+        : undefined,
+      continuation_bundle: filesToRead.length > 0
+        ? {
+            filesToRead,
+            pendingWork: [],
+            quickContext: {
+              whatWasDone: summary,
+              whatRemains: midChangeState.uncommittedFiles?.length
+                ? `${midChangeState.uncommittedFiles.length} files with uncommitted changes`
+                : 'No uncommitted changes',
+            },
+          }
+        : undefined,
     } as FullContext,
   };
 }
@@ -436,6 +474,22 @@ async function autoCaptureMode() {
 
   // Also get git context for additional info
   const gitContext = captureGitContext();
+  // Capture mid-change state
+  const midChangeState = captureMidChangeState();
+
+  // Show mid-change state if present
+  if (midChangeState.uncommittedFiles?.length || midChangeState.stagedFiles?.length) {
+    console.log('\n   📌 Work in progress:');
+    if (midChangeState.uncommittedFiles?.length) {
+      console.log(`      - ${midChangeState.uncommittedFiles.length} uncommitted files`);
+      for (const f of midChangeState.uncommittedFiles.slice(0, 5)) {
+        console.log(`        ${f}`);
+      }
+    }
+    if (midChangeState.stagedFiles?.length) {
+      console.log(`      - ${midChangeState.stagedFiles.length} staged files`);
+    }
+  }
 
   // Build user messages summary for search content
   const messagesSummary = captured.userMessages.length > 0
@@ -446,6 +500,12 @@ async function autoCaptureMode() {
   const planTitle = captured.planContent
     ? captured.planContent.split('\n').find(l => l.startsWith('# '))?.replace('# ', '')
     : undefined;
+
+  // Auto-suggest files to read for continuation
+  const filesToRead = suggestFilesToRead(midChangeState);
+
+  // Build structured next steps from CLI flags
+  const structuredNextSteps = cliNextSteps.map(step => ({ action: step }));
 
   return {
     summary,
@@ -470,6 +530,25 @@ async function autoCaptureMode() {
       git_commits: gitContext?.recentCommits.length ? gitContext.recentCommits : undefined,
       files_changed: gitContext?.filesChanged.length ? gitContext.filesChanged : undefined,
       diff_summary: gitContext?.diffSummary || undefined,
+      // Enhanced continuation support
+      structured_next_steps: structuredNextSteps.length > 0 ? structuredNextSteps : undefined,
+      mid_change_state: (midChangeState.uncommittedFiles?.length || midChangeState.stagedFiles?.length)
+        ? midChangeState
+        : undefined,
+      continuation_bundle: filesToRead.length > 0
+        ? {
+            filesToRead,
+            pendingWork: structuredNextSteps,
+            quickContext: {
+              whatWasDone: summary,
+              whatRemains: cliNextSteps.length > 0
+                ? cliNextSteps.join(', ')
+                : midChangeState.uncommittedFiles?.length
+                  ? `${midChangeState.uncommittedFiles.length} files with uncommitted changes`
+                  : 'No specific next steps captured',
+            },
+          }
+        : undefined,
     } as FullContext,
   };
 }

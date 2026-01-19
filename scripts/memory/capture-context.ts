@@ -15,6 +15,8 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { execSync } from 'child_process';
+import type { MidChangeState, CodeBreadcrumb, ContinuationBundle, StructuredNextStep } from '../../src/db';
 
 const CLAUDE_DIR = join(homedir(), '.claude');
 
@@ -212,6 +214,212 @@ export function formatCapturedContext(context: CapturedContext): string {
   }
 
   return lines.join('\n');
+}
+
+// ============ Mid-Change State Capture ============
+
+/**
+ * Capture git mid-change state (uncommitted files, staged files, diff)
+ */
+export function captureMidChangeState(projectPath?: string): MidChangeState {
+  const cwd = projectPath || process.cwd();
+  const state: MidChangeState = {};
+
+  try {
+    // Get uncommitted files (modified but not staged)
+    const unstaged = execSync('git diff --name-only', { cwd, encoding: 'utf-8' }).trim();
+    if (unstaged) {
+      state.uncommittedFiles = unstaged.split('\n').filter(Boolean);
+    }
+
+    // Get staged files
+    const staged = execSync('git diff --cached --name-only', { cwd, encoding: 'utf-8' }).trim();
+    if (staged) {
+      state.stagedFiles = staged.split('\n').filter(Boolean);
+    }
+
+    // Get truncated diff (max 2000 chars for storage)
+    const diff = execSync('git diff', { cwd, encoding: 'utf-8' });
+    if (diff.length > 0) {
+      state.gitDiff = diff.length > 2000
+        ? diff.substring(0, 2000) + '\n... (truncated)'
+        : diff;
+    }
+  } catch {
+    // Not a git repo or git command failed
+  }
+
+  return state;
+}
+
+/**
+ * Detect partial interface implementations in TypeScript files
+ */
+export function detectPartialImplementations(
+  filePath: string,
+  projectPath?: string
+): MidChangeState['partialImplementations'] {
+  const cwd = projectPath || process.cwd();
+  const fullPath = join(cwd, filePath);
+
+  if (!existsSync(fullPath)) return undefined;
+
+  try {
+    const content = readFileSync(fullPath, 'utf-8');
+    const implementations: MidChangeState['partialImplementations'] = [];
+
+    // Find "implements Partial<Interface>" patterns
+    const partialMatch = content.match(/implements\s+Partial<(\w+)>/);
+    if (partialMatch) {
+      const interfaceName = partialMatch[1];
+
+      // Extract method names from class
+      const methodMatches = content.matchAll(/(?:async\s+)?(\w+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/g);
+      const implemented: string[] = [];
+      for (const match of methodMatches) {
+        if (match[1] && !['constructor', 'if', 'for', 'while', 'switch'].includes(match[1])) {
+          implemented.push(match[1]);
+        }
+      }
+
+      implementations.push({
+        file: filePath,
+        interface: interfaceName,
+        implemented,
+        pending: [], // Would need interface definition to know pending
+      });
+    }
+
+    // Find "implements Interface" (full implementation check)
+    const fullMatch = content.match(/implements\s+(\w+)\s*\{/);
+    if (fullMatch && !partialMatch) {
+      const interfaceName = fullMatch[1];
+
+      const methodMatches = content.matchAll(/(?:async\s+)?(\w+)\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/g);
+      const implemented: string[] = [];
+      for (const match of methodMatches) {
+        if (match[1] && !['constructor', 'if', 'for', 'while', 'switch'].includes(match[1])) {
+          implemented.push(match[1]);
+        }
+      }
+
+      implementations.push({
+        file: filePath,
+        interface: interfaceName,
+        implemented,
+        pending: [],
+      });
+    }
+
+    return implementations.length > 0 ? implementations : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Create a code breadcrumb from file path and optional details
+ */
+export function createBreadcrumb(
+  file: string,
+  options?: {
+    line?: number;
+    symbol?: string;
+    type?: CodeBreadcrumb['type'];
+    note?: string;
+  }
+): CodeBreadcrumb {
+  return {
+    file,
+    ...options,
+  };
+}
+
+/**
+ * Create a structured next step
+ */
+export function createNextStep(
+  action: string,
+  options?: {
+    priority?: StructuredNextStep['priority'];
+    breadcrumbs?: CodeBreadcrumb[];
+    dependencies?: string[];
+    testCommand?: string;
+  }
+): StructuredNextStep {
+  return {
+    action,
+    ...options,
+  };
+}
+
+/**
+ * Build a continuation bundle for session handoff
+ */
+export function buildContinuationBundle(options: {
+  whatWasDone: string;
+  whatRemains: string;
+  blockers?: string;
+  filesToRead: Array<{ file: string; reason: string; sections?: string[] }>;
+  pendingWork: StructuredNextStep[];
+  keyTypes?: Array<{ name: string; file: string; line?: number }>;
+  verifyCommands?: string[];
+}): ContinuationBundle {
+  return {
+    filesToRead: options.filesToRead,
+    keyTypes: options.keyTypes,
+    pendingWork: options.pendingWork,
+    verifyCommands: options.verifyCommands,
+    quickContext: {
+      whatWasDone: options.whatWasDone,
+      whatRemains: options.whatRemains,
+      blockers: options.blockers,
+    },
+  };
+}
+
+/**
+ * Auto-detect files to read based on mid-change state
+ */
+export function suggestFilesToRead(midChange: MidChangeState): ContinuationBundle['filesToRead'] {
+  const files: ContinuationBundle['filesToRead'] = [];
+
+  // Add uncommitted files (highest priority - active work)
+  if (midChange.uncommittedFiles) {
+    for (const file of midChange.uncommittedFiles.slice(0, 5)) {
+      files.push({
+        file,
+        reason: 'Has uncommitted changes',
+      });
+    }
+  }
+
+  // Add staged files
+  if (midChange.stagedFiles) {
+    for (const file of midChange.stagedFiles.slice(0, 3)) {
+      if (!files.find(f => f.file === file)) {
+        files.push({
+          file,
+          reason: 'Staged for commit',
+        });
+      }
+    }
+  }
+
+  // Add partial implementation files
+  if (midChange.partialImplementations) {
+    for (const impl of midChange.partialImplementations) {
+      if (!files.find(f => f.file === impl.file)) {
+        files.push({
+          file: impl.file,
+          reason: `Partial implementation of ${impl.interface}`,
+          sections: impl.pending,
+        });
+      }
+    }
+  }
+
+  return files;
 }
 
 // CLI: Run directly to test
