@@ -47,9 +47,9 @@ pct_int=$(echo "scale=0; ($used * 100) / $ctx_size" | bc)
 [ "$pct_int" -gt 100 ] && pct_int=100
 [ "$pct_int" -lt 0 ] && pct_int=0
 
-# Warning thresholds (adjust as needed)
-WARN_THRESHOLD=60   # Yellow warning
-CRIT_THRESHOLD=80   # Red critical
+# Warning thresholds (compensate for hidden context ~15-20%)
+WARN_THRESHOLD=50   # Yellow warning (Claude ~65-70%)
+CRIT_THRESHOLD=70   # Red critical (Claude ~85-90%)
 
 # Build progress bar (20 chars) with color based on usage
 filled=$(echo "scale=0; $pct_int * 20 / 100" | bc)
