@@ -9,7 +9,7 @@ Extract learnings from past sessions and save them as structured knowledge.
 ## Usage
 
 ```
-/memory-distill [session_id] [--last N] [--yes]
+/memory-distill [session_id] [--last N] [--all] [--yes]
 ```
 
 ## Examples
@@ -24,9 +24,13 @@ Extract learnings from past sessions and save them as structured knowledge.
 # From last 5 sessions
 /memory-distill --last 5
 
+# From ALL sessions (full extraction)
+/memory-distill --all
+
 # Auto-accept all suggestions (batch mode)
 /memory-distill --yes
 /memory-distill --last 5 --yes
+/memory-distill --all --yes
 ```
 
 ## What Gets Extracted

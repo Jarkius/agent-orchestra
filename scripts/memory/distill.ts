@@ -304,11 +304,13 @@ Usage:
   bun memory distill                     # From last session
   bun memory distill session_123         # From specific session
   bun memory distill --last 5            # From last N sessions
+  bun memory distill --all               # From ALL sessions
   bun memory distill --yes               # Auto-accept all suggestions
-  bun memory distill --last 5 --yes      # Combine flags
+  bun memory distill --all --yes         # Distill all with auto-accept
 
 Options:
   --yes, -y    Auto-accept all suggestions (no prompts)
+  --all        Process ALL sessions (use with --yes for batch mode)
 
 This extracts learnings, wins, and challenges from session context
 and saves them as proper learnings with category and confidence.
@@ -316,7 +318,10 @@ and saves them as proper learnings with category and confidence.
     return;
   }
 
-  if (args[0] === '--last') {
+  if (args[0] === '--all' || args.includes('--all')) {
+    sessions = listSessionsFromDb({ limit: 10000 }); // Effectively all
+    console.log(`\nDistilling from ALL ${sessions.length} session(s)...\n`);
+  } else if (args[0] === '--last') {
     const count = parseInt(args[1] ?? '5') || 5;
     sessions = listSessionsFromDb({ limit: count });
     console.log(`\nDistilling from last ${sessions.length} session(s)...\n`);
