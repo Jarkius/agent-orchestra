@@ -11,6 +11,7 @@ import { MissionQueue, getMissionQueue } from '../../../pty/mission-queue';
 import { getPTYManager } from '../../../pty/manager';
 import { getWorktreeManager } from '../../../pty/worktree-manager';
 import { getLearningLoop } from '../../../learning';
+import { getOracleOrchestrator } from '../../../oracle/orchestrator';
 import { selectModel, ROLE_PROMPTS } from '../../../interfaces/spawner';
 import type { AgentRole, ModelTier, Task } from '../../../interfaces/spawner';
 import type { Priority } from '../../../interfaces/mission';
@@ -31,7 +32,7 @@ const AgentSchema = z.object({
 });
 
 const MissionSchema = z.object({
-  action: z.enum(['distribute', 'complete', 'fail', 'cancel', 'status']),
+  action: z.enum(['distribute', 'complete', 'fail', 'cancel', 'status', 'optimize', 'rebalance', 'bottlenecks']),
   mission_id: z.string().optional(),
   prompt: z.string().optional(),
   context: z.string().optional(),
@@ -46,6 +47,7 @@ const MissionSchema = z.object({
   error_code: z.enum(['timeout', 'crash', 'validation', 'resource', 'auth', 'rate_limit', 'unknown']).optional(),
   message: z.string().optional(),
   recoverable: z.boolean().optional(),
+  apply: z.boolean().optional(), // For optimize action - apply suggested changes
 });
 
 // ============ Tool Definitions ============
@@ -74,7 +76,7 @@ export const ptyTools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['distribute', 'complete', 'fail', 'cancel', 'status'] },
+        action: { type: 'string', enum: ['distribute', 'complete', 'fail', 'cancel', 'status', 'optimize', 'rebalance', 'bottlenecks'] },
         mission_id: { type: 'string' },
         prompt: { type: 'string' },
         context: { type: 'string' },
@@ -86,6 +88,7 @@ export const ptyTools: ToolDefinition[] = [
         output: { type: 'string' },
         error_code: { type: 'string', enum: ['timeout', 'crash', 'validation', 'resource', 'auth', 'rate_limit', 'unknown'] },
         message: { type: 'string' },
+        apply: { type: 'boolean' },
       },
       required: ['action'],
     },
@@ -436,6 +439,92 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
             prompt: m.prompt.substring(0, 50) + (m.prompt.length > 50 ? '...' : ''),
             depends_on: m.dependsOn,
           })),
+        });
+      }
+
+      case 'optimize': {
+        const oracle = getOracleOrchestrator();
+        const adjustments = oracle.optimizeMissionQueue();
+        const insights = await oracle.getEfficiencyInsights();
+
+        let applied = 0;
+        if (parsed.apply && adjustments.length > 0) {
+          applied = oracle.applyPriorityAdjustments(adjustments);
+        }
+
+        return jsonResponse({
+          priority_adjustments: adjustments.map(a => ({
+            mission_id: a.missionId,
+            current: a.currentPriority,
+            suggested: a.suggestedPriority,
+            reason: a.reason,
+          })),
+          efficiency_insights: insights.map(i => ({
+            category: i.category,
+            title: i.title,
+            description: i.description,
+            impact: i.impact,
+            actionable: i.actionable,
+          })),
+          applied: parsed.apply ? applied : undefined,
+          hint: !parsed.apply && adjustments.length > 0
+            ? 'Use apply: true to apply suggested priority adjustments'
+            : undefined,
+        });
+      }
+
+      case 'rebalance': {
+        const oracle = getOracleOrchestrator();
+        const analysis = oracle.analyzeWorkload();
+        const suggestions = oracle.suggestRebalancing();
+
+        return jsonResponse({
+          workload: {
+            total_agents: analysis.totalAgents,
+            active: analysis.activeAgents,
+            idle: analysis.idleAgents,
+            overloaded: analysis.overloadedAgents,
+            underutilized: analysis.underutilizedAgents,
+            average_success_rate: `${(analysis.averageSuccessRate * 100).toFixed(1)}%`,
+            bottleneck_roles: analysis.bottleneckRoles,
+          },
+          role_distribution: analysis.roleDistribution,
+          model_distribution: analysis.modelDistribution,
+          suggestions: suggestions.map(s => ({
+            type: s.type,
+            agent_id: s.agentId,
+            target_role: s.targetRole,
+            reason: s.reason,
+            priority: s.priority,
+          })),
+          agent_metrics: analysis.agentMetrics.map(m => ({
+            agent_id: m.agentId,
+            name: m.name,
+            role: m.role,
+            model: m.model,
+            status: m.status,
+            success_rate: `${(m.successRate * 100).toFixed(1)}%`,
+            utilization: `${(m.utilizationScore * 100).toFixed(0)}%`,
+          })),
+        });
+      }
+
+      case 'bottlenecks': {
+        const oracle = getOracleOrchestrator();
+        const bottlenecks = oracle.identifyBottlenecks();
+
+        return jsonResponse({
+          count: bottlenecks.length,
+          bottlenecks: bottlenecks.map(b => ({
+            type: b.type,
+            description: b.description,
+            severity: b.severity,
+            affected_missions: b.affectedMissions.length,
+            suggested_action: b.suggestedAction,
+          })),
+          summary: bottlenecks.length === 0
+            ? 'No bottlenecks detected'
+            : `${bottlenecks.filter(b => b.severity === 'critical').length} critical, ${bottlenecks.filter(b => b.severity === 'high').length} high severity`,
         });
       }
 
