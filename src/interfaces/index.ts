@@ -21,7 +21,8 @@ export type {
   AgentConfig,
   Task,
 } from './spawner';
-export { AgentRole, ModelTier, selectModel, ROLE_PROMPTS } from './spawner';
+export type { AgentRole, ModelTier } from './spawner';
+export { selectModel, ROLE_PROMPTS, ROLE_MODELS } from './spawner';
 
 // Mission Queue
 export type {
@@ -30,13 +31,8 @@ export type {
   MissionResult,
   ErrorContext,
 } from './mission';
-export {
-  MissionStatus,
-  Priority,
-  ErrorCode,
-  calculateBackoff,
-  isRecoverable,
-} from './mission';
+export type { MissionStatus, Priority, ErrorCode } from './mission';
+export { calculateBackoff, isRecoverable } from './mission';
 
 // Learning Loop
 export type {
@@ -50,7 +46,7 @@ export type {
   CompletedMission,
   FailedMission,
 } from './learning';
-export { LearningCategory, Confidence } from './learning';
+export type { LearningCategory, Confidence } from './learning';
 
 // Status Monitor
 export type {
@@ -63,4 +59,5 @@ export type {
   SystemMetrics,
   SystemSnapshot,
 } from './monitor';
-export { AlertType, COLORS, STATUS_ICONS } from './monitor';
+export type { AlertType } from './monitor';
+export { COLORS, STATUS_ICONS } from './monitor';

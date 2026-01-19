@@ -9,7 +9,7 @@
  * - all-MiniLM-L6-v2 (384 dims, classic)
  */
 
-import type { IEmbeddingFunction } from "chromadb";
+import type { EmbeddingFunction } from "chromadb";
 import type { EmbeddingConfig } from "./index";
 
 // Model configurations
@@ -37,7 +37,7 @@ const MODEL_CONFIGS: Record<string, { id: string; dimensions: number }> = {
   },
 };
 
-export class TransformersEmbeddingFunction implements IEmbeddingFunction {
+export class TransformersEmbeddingFunction implements EmbeddingFunction {
   private extractor: any = null;
   private initPromise: Promise<void> | null = null;
   private initError: Error | null = null;
@@ -46,7 +46,7 @@ export class TransformersEmbeddingFunction implements IEmbeddingFunction {
 
   constructor(config?: Partial<EmbeddingConfig>) {
     const modelName = config?.model || "bge-small-en-v1.5";
-    this.modelConfig = MODEL_CONFIGS[modelName] || MODEL_CONFIGS.default;
+    this.modelConfig = MODEL_CONFIGS[modelName] ?? MODEL_CONFIGS["default"]!;
 
     this.config = {
       model: modelName,

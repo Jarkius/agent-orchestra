@@ -183,8 +183,8 @@ async function handleAddLearning(args: unknown) {
       prevention: input.prevention,
     });
 
-    const searchContent = `${input.title} ${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
-    await saveLearningToChroma(learningId, searchContent, {
+    const searchContent = `${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
+    await saveLearningToChroma(learningId, input.title, searchContent, {
       category: input.category,
       confidence,
       created_at: new Date().toISOString(),

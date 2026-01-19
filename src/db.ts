@@ -557,6 +557,8 @@ export interface SessionRecord {
   agent_id?: number | null;
   visibility?: Visibility;
   created_at?: string;
+  next_steps?: string[];
+  challenges?: string[];
 }
 
 export function createSession(session: SessionRecord): void {

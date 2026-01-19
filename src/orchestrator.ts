@@ -32,7 +32,7 @@ function clearScreen() {
 }
 
 function getAgentColor(id: number): string {
-  return AGENT_COLORS[(id - 1) % AGENT_COLORS.length];
+  return AGENT_COLORS[(id - 1) % AGENT_COLORS.length] ?? '\x1b[37m';
 }
 
 function formatTime(timestamp: string): string {
@@ -166,7 +166,7 @@ async function handleInput() {
     // t <id> <text> - type into agent pane
     if (input.startsWith("t ") || input.startsWith("type ")) {
       const parts = input.split(" ");
-      const agentId = parseInt(parts[1]);
+      const agentId = parseInt(parts[1] ?? "0");
       const text = parts.slice(2).join(" ");
 
       if (!agentId || !text) {

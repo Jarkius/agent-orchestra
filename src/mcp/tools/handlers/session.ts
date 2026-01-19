@@ -29,7 +29,7 @@ import { z } from 'zod';
 
 const SaveSessionSchema = z.object({
   summary: z.string().min(1),
-  full_context: z.record(z.any()).optional(),  // Simplified: accept any object
+  full_context: z.record(z.string(), z.any()).optional(),  // Simplified: accept any object
   duration_mins: z.number().optional(),
   commits_count: z.number().optional(),
   tags: z.array(z.string()).optional(),

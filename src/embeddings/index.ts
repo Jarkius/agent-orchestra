@@ -11,9 +11,10 @@
  * Configure via EMBEDDING_MODEL env var
  */
 
-import type { IEmbeddingFunction } from "chromadb";
+import type { EmbeddingFunction } from "chromadb";
 
 export interface EmbeddingConfig {
+  provider?: string;
   model?: string;
   dimensions?: number;
   cacheDir?: string;
@@ -33,7 +34,7 @@ export function getEmbeddingConfig(): EmbeddingConfig {
 // Factory function to create the embedding function
 export async function createEmbeddingFunction(
   config?: Partial<EmbeddingConfig>
-): Promise<IEmbeddingFunction> {
+): Promise<EmbeddingFunction> {
   const finalConfig = { ...getEmbeddingConfig(), ...config };
   const { TransformersEmbeddingFunction } = await import("./transformers-provider");
   return new TransformersEmbeddingFunction(finalConfig);

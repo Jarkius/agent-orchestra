@@ -13,13 +13,13 @@
  * Configure model via EMBEDDING_MODEL env var
  */
 
-import { ChromaClient, type Collection, type IEmbeddingFunction } from 'chromadb';
+import { ChromaClient, type Collection, type EmbeddingFunction, type Where } from 'chromadb';
 import { createEmbeddingFunction, getEmbeddingConfig } from './embeddings';
 
 // ChromaDB client - connects to server at localhost:8100
 // Start server with: chroma run --path ./chroma_data --port 8100
 let client: ChromaClient | null = null;
-let embeddingFunction: IEmbeddingFunction | null = null;
+let embeddingFunction: EmbeddingFunction | null = null;
 
 function getClient(): ChromaClient {
   if (!client) {
@@ -30,7 +30,7 @@ function getClient(): ChromaClient {
   return client;
 }
 
-async function getEmbeddingFunction(): Promise<IEmbeddingFunction> {
+async function getEmbeddingFunction(): Promise<EmbeddingFunction> {
   if (!embeddingFunction) {
     const config = getEmbeddingConfig();
     console.error(`[VectorDB] Using Transformers.js with model: ${config.model}`);
@@ -462,7 +462,7 @@ export async function searchSessions(
   const { limit = 3, agentId, includeShared = true } = options;
 
   // Build where clause for agent filtering
-  let where: Record<string, unknown> | undefined;
+  let where: Where | undefined;
   if (agentId !== undefined) {
     if (includeShared) {
       // ChromaDB doesn't have OR conditions, so we use $or operator
@@ -563,7 +563,7 @@ export async function searchLearnings(
   const { limit = 5, agentId, includeShared = true, category: cat } = options;
 
   // Build where clause
-  let where: Record<string, unknown> | undefined;
+  let where: Where | undefined;
   const conditions: Record<string, unknown>[] = [];
 
   if (cat) {
@@ -741,7 +741,7 @@ export async function findSimilarSessions(
   } = options;
 
   // Build where clause for agent filtering
-  let where: Record<string, unknown> | undefined;
+  let where: Where | undefined;
   if (agentId !== undefined && !crossAgentLinking) {
     // Only search within same agent's sessions (or orchestrator + public/shared)
     where = {
@@ -810,7 +810,7 @@ export async function findSimilarLearnings(
   } = options;
 
   // Build where clause for agent filtering
-  let where: Record<string, unknown> | undefined;
+  let where: Where | undefined;
   if (agentId !== undefined && !crossAgentLinking) {
     // Only search within same agent's learnings (or orchestrator + public/shared)
     where = {
