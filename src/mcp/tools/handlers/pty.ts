@@ -32,7 +32,7 @@ const AgentSchema = z.object({
 });
 
 const MissionSchema = z.object({
-  action: z.enum(['distribute', 'complete', 'fail', 'cancel', 'status', 'optimize', 'rebalance', 'bottlenecks']),
+  action: z.enum(['distribute', 'complete', 'fail', 'cancel', 'status', 'optimize', 'rebalance', 'bottlenecks', 'auto_optimize', 'execute_rebalance']),
   mission_id: z.string().optional(),
   prompt: z.string().optional(),
   context: z.string().optional(),
@@ -76,7 +76,7 @@ export const ptyTools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['distribute', 'complete', 'fail', 'cancel', 'status', 'optimize', 'rebalance', 'bottlenecks'] },
+        action: { type: 'string', enum: ['distribute', 'complete', 'fail', 'cancel', 'status', 'optimize', 'rebalance', 'bottlenecks', 'auto_optimize', 'execute_rebalance'] },
         mission_id: { type: 'string' },
         prompt: { type: 'string' },
         context: { type: 'string' },
@@ -278,9 +278,14 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
         });
 
         let assignedAgent = null;
+        let selectionMethod = 'none';
         try {
-          const agent = spawner.getAvailableAgent(parsed.type);
+          // Use Oracle for intelligent agent selection
+          const oracle = getOracleOrchestrator();
+          const agent = oracle.recommendAgentForTask(parsed.type, task.priority);
+
           if (agent) {
+            selectionMethod = 'oracle';
             const mission = queue.dequeue(agent.id);
             if (mission) {
               assignedAgent = {
@@ -298,6 +303,7 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           model_tier: modelTier,
           status: assignedAgent ? 'assigned' : 'queued',
           assigned_agent: assignedAgent,
+          selection_method: assignedAgent ? selectionMethod : undefined,
           queue_length: queue.getQueueLength(),
           suggested_learnings: suggestedLearnings.length > 0 ? suggestedLearnings : undefined,
         });
@@ -525,6 +531,61 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           summary: bottlenecks.length === 0
             ? 'No bottlenecks detected'
             : `${bottlenecks.filter(b => b.severity === 'critical').length} critical, ${bottlenecks.filter(b => b.severity === 'high').length} high severity`,
+        });
+      }
+
+      case 'auto_optimize': {
+        const oracle = getOracleOrchestrator();
+        const result = await oracle.autoOptimize();
+
+        return jsonResponse({
+          success: true,
+          summary: {
+            bottlenecks_found: result.bottlenecksFound,
+            critical_bottlenecks: result.criticalBottlenecks,
+            priorities_adjusted: result.prioritiesAdjusted,
+            agents_spawned: result.agentsSpawned,
+            agents_reassigned: result.agentsReassigned,
+            agents_retired: result.agentsRetired,
+            actions_failed: result.actionsFailed,
+          },
+          insights: result.insights.map(i => ({
+            category: i.category,
+            title: i.title,
+            impact: i.impact,
+          })),
+          message: result.agentsSpawned + result.agentsReassigned > 0
+            ? `Auto-optimized: spawned ${result.agentsSpawned}, reassigned ${result.agentsReassigned} agents`
+            : 'No immediate actions needed',
+        });
+      }
+
+      case 'execute_rebalance': {
+        const oracle = getOracleOrchestrator();
+        const result = await oracle.executeRebalancing();
+
+        return jsonResponse({
+          success: result.failed.length === 0,
+          spawned: result.spawned.map(s => ({
+            agent_id: s.agentId,
+            role: s.role,
+            model: s.model,
+          })),
+          reassigned: result.reassigned.map(r => ({
+            agent_id: r.agentId,
+            new_role: r.newRole,
+          })),
+          retired: result.retired.map(r => ({
+            agent_id: r.agentId,
+            role: r.role,
+            reason: r.reason,
+          })),
+          failed: result.failed.map(f => ({
+            action_type: f.action.type,
+            target_role: f.action.targetRole,
+            error: f.error,
+          })),
+          summary: `Spawned: ${result.spawned.length}, Reassigned: ${result.reassigned.length}, Retired: ${result.retired.length}, Failed: ${result.failed.length}`,
         });
       }
 

@@ -68,6 +68,24 @@ export interface EfficiencyInsight {
   actionable: boolean;
 }
 
+export interface RebalanceResult {
+  spawned: Array<{ agentId: number; role: AgentRole; model: ModelTier }>;
+  reassigned: Array<{ agentId: number; newRole: AgentRole }>;
+  retired: Array<{ agentId: number; role: AgentRole; reason: string }>;
+  failed: Array<{ action: RebalanceAction; error: string }>;
+}
+
+export interface AutoOptimizeResult {
+  bottlenecksFound: number;
+  criticalBottlenecks: number;
+  prioritiesAdjusted: number;
+  agentsSpawned: number;
+  agentsReassigned: number;
+  agentsRetired: number;
+  actionsFailed: number;
+  insights: EfficiencyInsight[];
+}
+
 // ============ Oracle Orchestrator ============
 
 export class OracleOrchestrator {
@@ -404,6 +422,128 @@ export class OracleOrchestrator {
       applied++;
     }
     return applied;
+  }
+
+  /**
+   * Execute rebalancing actions - spawn, reassign, or retire agents
+   */
+  async executeRebalancing(actions?: RebalanceAction[]): Promise<RebalanceResult> {
+    const suggestions = actions || this.suggestRebalancing();
+    const result: RebalanceResult = {
+      spawned: [],
+      reassigned: [],
+      retired: [],
+      failed: [],
+    };
+
+    for (const action of suggestions) {
+      try {
+        switch (action.type) {
+          case 'spawn': {
+            const agent = await this.spawner.spawnAgent({
+              role: action.targetRole,
+            });
+            result.spawned.push({
+              agentId: agent.id,
+              role: agent.role,
+              model: agent.model,
+            });
+            break;
+          }
+
+          case 'reassign': {
+            if (action.agentId) {
+              this.spawner.assignRole(action.agentId, action.targetRole);
+              result.reassigned.push({
+                agentId: action.agentId,
+                newRole: action.targetRole,
+              });
+            }
+            break;
+          }
+
+          case 'retire': {
+            if (action.agentId) {
+              const agent = this.spawner.getAgent(action.agentId);
+              if (agent && agent.status === 'idle') {
+                // Mark for retirement (don't assign new tasks)
+                // In a real system, we'd gracefully shut down the agent
+                result.retired.push({
+                  agentId: action.agentId,
+                  role: agent.role,
+                  reason: action.reason,
+                });
+              }
+            }
+            break;
+          }
+        }
+      } catch (error) {
+        result.failed.push({
+          action,
+          error: String(error),
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Auto-optimize: Run all optimizations and apply them
+   */
+  async autoOptimize(): Promise<AutoOptimizeResult> {
+    // 1. Identify and fix bottlenecks
+    const bottlenecks = this.identifyBottlenecks();
+    const criticalBottlenecks = bottlenecks.filter(b => b.severity === 'critical' || b.severity === 'high');
+
+    // 2. Get and apply priority adjustments
+    const priorityAdjustments = this.optimizeMissionQueue();
+    const prioritiesApplied = this.applyPriorityAdjustments(priorityAdjustments);
+
+    // 3. Execute rebalancing for high-priority suggestions only
+    const suggestions = this.suggestRebalancing();
+    const highPrioritySuggestions = suggestions.filter(s => s.priority === 'high');
+    const rebalanceResult = await this.executeRebalancing(highPrioritySuggestions);
+
+    // 4. Get efficiency insights
+    const insights = await this.getEfficiencyInsights();
+
+    return {
+      bottlenecksFound: bottlenecks.length,
+      criticalBottlenecks: criticalBottlenecks.length,
+      prioritiesAdjusted: prioritiesApplied,
+      agentsSpawned: rebalanceResult.spawned.length,
+      agentsReassigned: rebalanceResult.reassigned.length,
+      agentsRetired: rebalanceResult.retired.length,
+      actionsFailed: rebalanceResult.failed.length,
+      insights: insights.filter(i => i.actionable),
+    };
+  }
+
+  /**
+   * Get recommended agent for a task (Oracle-driven selection)
+   */
+  recommendAgentForTask(taskType?: string, taskPriority?: Priority): Agent | null {
+    const analysis = this.analyzeWorkload();
+
+    // First try specialist
+    let agent = this.spawner.getAvailableAgent(taskType);
+    if (agent) return agent;
+
+    // If high priority and no specialist, find any idle agent with good success rate
+    if (taskPriority === 'critical' || taskPriority === 'high') {
+      const idleAgents = analysis.agentMetrics
+        .filter(m => m.status === 'idle')
+        .sort((a, b) => b.successRate - a.successRate);
+
+      if (idleAgents.length > 0) {
+        return this.spawner.getAgent(idleAgents[0]!.agentId);
+      }
+    }
+
+    // Fallback to least busy
+    return this.spawner.getLeastBusyAgent();
   }
 
   // ============ Private Helpers ============

@@ -11,4 +11,6 @@ export {
   type PriorityAdjustment,
   type Bottleneck,
   type EfficiencyInsight,
+  type RebalanceResult,
+  type AutoOptimizeResult,
 } from './orchestrator';
