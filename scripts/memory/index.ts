@@ -103,6 +103,11 @@ async function main() {
       await import('./graph');
       break;
 
+    case 'absorb':
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./absorb');
+      break;
+
     case 'task':
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./task-update');
@@ -139,6 +144,7 @@ Commands:
   graph             List top entities in knowledge graph
   graph "entity"    Show related entities and learnings
   graph "A" "B"     Find path between two entities
+  absorb <path>     Auto-capture knowledge from codebase exploration
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
   reindex [type]    Re-index SQLite data into ChromaDB vectors

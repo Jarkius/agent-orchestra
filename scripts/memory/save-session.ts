@@ -43,6 +43,7 @@ import {
   suggestFilesToRead,
   type CapturedContext,
 } from './capture-context';
+import { getLearningLoop } from '../../src/learning/loop';
 
 // ============ Git Context Auto-Capture ============
 
@@ -553,6 +554,99 @@ async function autoCaptureMode() {
   };
 }
 
+/**
+ * Auto-distill learnings from session context
+ * Extracts learnings from wins, challenges, and explicit learnings
+ */
+async function autoDistillFromContext(sessionId: string, context: FullContext, timestamp: string): Promise<number> {
+  let count = 0;
+  const loop = getLearningLoop();
+
+  // Extract from explicit learnings in context
+  if (context.learnings && context.learnings.length > 0) {
+    for (const learning of context.learnings) {
+      const category = detectCategory(learning);
+      const learningId = createLearning({
+        category,
+        title: learning.slice(0, 100),
+        lesson: learning,
+        confidence: 'medium',
+        source_session_id: sessionId,
+      });
+      await saveLearningToChroma(learningId, learning.slice(0, 100), learning, {
+        category,
+        confidence: 'medium',
+        source_session_id: sessionId,
+        created_at: timestamp,
+      });
+      count++;
+    }
+  }
+
+  // Extract from wins (success patterns)
+  if (context.wins && context.wins.length > 0) {
+    for (const win of context.wins) {
+      // Only auto-capture wins that look like learnings (not just "fixed X")
+      if (win.length > 30 && (win.includes('because') || win.includes('by') || win.includes('using'))) {
+        const category = detectCategory(win);
+        const learningId = createLearning({
+          category,
+          title: `Win: ${win.slice(0, 80)}`,
+          what_happened: win,
+          confidence: 'low',
+          source_session_id: sessionId,
+        });
+        await saveLearningToChroma(learningId, `Win: ${win.slice(0, 80)}`, win, {
+          category,
+          confidence: 'low',
+          source_session_id: sessionId,
+          created_at: timestamp,
+        });
+        count++;
+      }
+    }
+  }
+
+  // Extract from challenges (problem patterns)
+  if (context.challenges && context.challenges.length > 0) {
+    for (const challenge of context.challenges) {
+      // Only auto-capture challenges that seem resolved or insightful
+      if (challenge.length > 40) {
+        const category = detectCategory(challenge);
+        const learningId = createLearning({
+          category: category === 'insight' ? 'debugging' : category,
+          title: `Challenge: ${challenge.slice(0, 80)}`,
+          what_happened: challenge,
+          confidence: 'low',
+          source_session_id: sessionId,
+        });
+        await saveLearningToChroma(learningId, `Challenge: ${challenge.slice(0, 80)}`, challenge, {
+          category: category === 'insight' ? 'debugging' : category,
+          confidence: 'low',
+          source_session_id: sessionId,
+          created_at: timestamp,
+        });
+        count++;
+      }
+    }
+  }
+
+  return count;
+}
+
+// Simple category detection based on keywords
+function detectCategory(text: string): Category {
+  const lower = text.toLowerCase();
+  if (lower.includes('performance') || lower.includes('fast') || lower.includes('slow') || lower.includes('optimize')) return 'performance';
+  if (lower.includes('architecture') || lower.includes('design') || lower.includes('pattern') || lower.includes('structure')) return 'architecture';
+  if (lower.includes('tool') || lower.includes('cli') || lower.includes('config') || lower.includes('setup')) return 'tooling';
+  if (lower.includes('debug') || lower.includes('error') || lower.includes('bug') || lower.includes('fix')) return 'debugging';
+  if (lower.includes('test') || lower.includes('spec') || lower.includes('coverage')) return 'testing';
+  if (lower.includes('security') || lower.includes('auth') || lower.includes('permission')) return 'security';
+  if (lower.includes('process') || lower.includes('workflow') || lower.includes('pipeline')) return 'process';
+  return 'insight';
+}
+
 async function saveCurrentSession() {
   // Initialize
   console.log('Initializing vector DB...');
@@ -687,7 +781,13 @@ async function saveCurrentSession() {
     }
   }
 
-  console.log('\n6. Session stats:');
+  // Auto-distill learnings from context (evolution: automatic learning capture)
+  const autoDistilledCount = await autoDistillFromContext(sessionId, data.fullContext, now);
+  if (autoDistilledCount > 0) {
+    console.log(`\n6. Auto-distilled ${autoDistilledCount} learnings from session context`);
+  }
+
+  console.log('\n7. Session stats:');
   const stats = getSessionStats();
   console.log(`   Total sessions: ${stats.total_sessions}`);
   console.log(`   Average duration: ${stats.avg_duration_mins?.toFixed(1) || 'N/A'} mins`);
