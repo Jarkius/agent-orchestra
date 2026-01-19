@@ -71,6 +71,20 @@ export function selectModel(task: Task): ModelTier {
   return 'haiku';
 }
 
+// Role-based model selection
+export const ROLE_MODELS: Record<AgentRole, ModelTier> = {
+  oracle: 'opus',
+  architect: 'opus',
+  coder: 'sonnet',
+  analyst: 'sonnet',
+  reviewer: 'sonnet',
+  tester: 'sonnet',      // upgraded from haiku for better test quality
+  debugger: 'sonnet',
+  researcher: 'haiku',   // quick lookups, speed matters
+  scribe: 'sonnet',      // upgraded from haiku for better documentation
+  generalist: 'sonnet',
+};
+
 // Role-based system prompts
 export const ROLE_PROMPTS: Record<AgentRole, string> = {
   coder: 'You are a coding specialist. Focus on implementation, best practices, and clean code.',

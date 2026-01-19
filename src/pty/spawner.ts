@@ -13,7 +13,7 @@ import type {
   ModelTier,
 } from '../interfaces/spawner';
 import type { PTYHandle } from '../interfaces/pty';
-import { selectModel, ROLE_PROMPTS } from '../interfaces/spawner';
+import { selectModel, ROLE_PROMPTS, ROLE_MODELS } from '../interfaces/spawner';
 import { createAgentSession, searchAgentLearnings } from '../services/agent-memory-service';
 
 const DEFAULT_AGENT_CONFIG: Required<Omit<AgentConfig, 'worktree'>> & { worktree: undefined } = {
@@ -46,6 +46,11 @@ export class AgentSpawner implements IAgentSpawner {
 
   async spawnAgent(config?: AgentConfig): Promise<Agent> {
     const cfg = { ...DEFAULT_AGENT_CONFIG, ...config };
+
+    // Use role-based model if no explicit model specified
+    if (config?.role && !config?.model) {
+      cfg.model = ROLE_MODELS[cfg.role!];
+    }
     const agentId = this.nextAgentId++;
 
     // Configure worktree based on isolation mode

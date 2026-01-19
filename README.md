@@ -79,10 +79,10 @@ bun run spawn --count 3 --isolation worktree
 | `coder` | sonnet | Implementation, coding |
 | `analyst` | sonnet | Requirements analysis, problem breakdown |
 | `reviewer` | sonnet | Code review, quality assurance |
-| `tester` | haiku | Test creation, coverage |
+| `tester` | sonnet | Test creation, edge cases, coverage |
 | `debugger` | sonnet | Bug investigation, fixes |
-| `researcher` | haiku | Information gathering |
-| `scribe` | haiku | Documentation, session notes |
+| `researcher` | haiku | Quick information gathering |
+| `scribe` | sonnet | Documentation, session notes |
 | `generalist` | sonnet | General-purpose tasks |
 
 ## Git Worktree Isolation
