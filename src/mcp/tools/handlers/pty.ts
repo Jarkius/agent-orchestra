@@ -9,6 +9,7 @@ import { jsonResponse, errorResponse } from '../../utils/response';
 import { AgentSpawner, getAgentSpawner } from '../../../pty/spawner';
 import { MissionQueue, getMissionQueue } from '../../../pty/mission-queue';
 import { getPTYManager } from '../../../pty/manager';
+import { getWorktreeManager } from '../../../pty/worktree-manager';
 import { selectModel, ROLE_PROMPTS } from '../../../interfaces/spawner';
 import type { AgentRole, ModelTier, Task } from '../../../interfaces/spawner';
 import type { Priority } from '../../../interfaces/mission';
@@ -29,7 +30,7 @@ const AgentSchema = z.object({
 });
 
 const MissionSchema = z.object({
-  action: z.enum(['distribute', 'complete', 'fail', 'status']),
+  action: z.enum(['distribute', 'complete', 'fail', 'cancel', 'status']),
   mission_id: z.string().optional(),
   prompt: z.string().optional(),
   context: z.string().optional(),
@@ -72,7 +73,7 @@ export const ptyTools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['distribute', 'complete', 'fail', 'status'] },
+        action: { type: 'string', enum: ['distribute', 'complete', 'fail', 'cancel', 'status'] },
         mission_id: { type: 'string' },
         prompt: { type: 'string' },
         context: { type: 'string' },
@@ -308,6 +309,18 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
 
         if (mission.assignedTo) {
           spawner.completeTask(parsed.mission_id, true);
+
+          // Auto-merge worktree if agent has one
+          try {
+            const worktreeManager = getWorktreeManager();
+            const worktree = worktreeManager.getWorktree(mission.assignedTo);
+            if (worktree && worktree.status === 'active') {
+              const mergeResult = await worktreeManager.merge(mission.assignedTo);
+              if (mergeResult.success) {
+                await worktreeManager.cleanup(mission.assignedTo);
+              }
+            }
+          } catch { /* Worktree merge is best-effort */ }
         }
 
         return jsonResponse({
@@ -351,6 +364,26 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           mission_id: parsed.mission_id,
           retry_count: updatedMission?.retryCount || 0,
           max_retries: mission.maxRetries,
+        });
+      }
+
+      case 'cancel': {
+        if (!parsed.mission_id) {
+          return errorResponse('mission_id required for cancel action');
+        }
+        const queue = getMissionQueue();
+        const mission = queue.getMission(parsed.mission_id);
+        if (!mission) {
+          return errorResponse(`Mission not found: ${parsed.mission_id}`);
+        }
+        if (mission.status === 'completed' || mission.status === 'failed') {
+          return errorResponse(`Cannot cancel ${mission.status} mission`);
+        }
+        queue.updateStatus(parsed.mission_id, 'cancelled');
+        return jsonResponse({
+          cancelled: true,
+          mission_id: parsed.mission_id,
+          previous_status: mission.status,
         });
       }
 

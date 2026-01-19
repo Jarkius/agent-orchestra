@@ -3,7 +3,7 @@
  * Self-correcting task queue with retry, timeout, and dependencies
  */
 
-export type MissionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'retrying' | 'blocked';
+export type MissionStatus = 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'retrying' | 'blocked' | 'cancelled';
 export type Priority = 'critical' | 'high' | 'normal' | 'low';
 export type ErrorCode = 'timeout' | 'crash' | 'validation' | 'resource' | 'auth' | 'rate_limit' | 'unknown';
 

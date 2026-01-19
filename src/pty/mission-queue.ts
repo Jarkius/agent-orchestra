@@ -18,6 +18,7 @@ export class MissionQueue implements IMissionQueue {
   private missions: Map<string, Mission> = new Map();
   private queue: string[] = []; // Mission IDs in priority order
   private waitTimes: Map<string, number> = new Map();
+  private timeoutChecker: Timer | null = null;
 
   private priorityOrder: Record<Priority, number> = {
     critical: 0,
@@ -304,6 +305,37 @@ export class MissionQueue implements IMissionQueue {
     }
   }
 
+  // Start background timeout enforcement
+  startTimeoutEnforcement(checkIntervalMs: number = 5000): void {
+    if (this.timeoutChecker) return; // Already running
+
+    this.timeoutChecker = setInterval(() => {
+      const now = Date.now();
+
+      for (const mission of this.missions.values()) {
+        if (mission.status === 'running' && mission.startedAt) {
+          const elapsed = now - mission.startedAt.getTime();
+          if (elapsed > mission.timeoutMs) {
+            this.fail(mission.id, {
+              code: 'timeout',
+              message: `Mission timed out after ${mission.timeoutMs}ms (elapsed: ${elapsed}ms)`,
+              recoverable: true,
+              timestamp: new Date(),
+            });
+          }
+        }
+      }
+    }, checkIntervalMs);
+  }
+
+  // Stop timeout enforcement
+  stopTimeoutEnforcement(): void {
+    if (this.timeoutChecker) {
+      clearInterval(this.timeoutChecker);
+      this.timeoutChecker = null;
+    }
+  }
+
   // Clear completed/failed missions older than given age
   cleanup(olderThanMs: number = 3600000): void {
     const now = Date.now();
@@ -330,6 +362,7 @@ let instance: MissionQueue | null = null;
 export function getMissionQueue(): MissionQueue {
   if (!instance) {
     instance = new MissionQueue();
+    instance.startTimeoutEnforcement(); // Auto-start timeout enforcement
   }
   return instance;
 }
