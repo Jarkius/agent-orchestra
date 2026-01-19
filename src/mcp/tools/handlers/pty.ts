@@ -10,6 +10,7 @@ import { AgentSpawner, getAgentSpawner } from '../../../pty/spawner';
 import { MissionQueue, getMissionQueue } from '../../../pty/mission-queue';
 import { getPTYManager } from '../../../pty/manager';
 import { getWorktreeManager } from '../../../pty/worktree-manager';
+import { getLearningLoop } from '../../../learning';
 import { selectModel, ROLE_PROMPTS } from '../../../interfaces/spawner';
 import type { AgentRole, ModelTier, Task } from '../../../interfaces/spawner';
 import type { Priority } from '../../../interfaces/mission';
@@ -254,6 +255,15 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
         };
 
         const modelTier = selectModel(task);
+
+        // Suggest relevant learnings for context enrichment
+        let suggestedLearnings: string[] = [];
+        try {
+          const loop = getLearningLoop();
+          const learnings = await loop.suggestLearnings({ prompt: parsed.prompt });
+          suggestedLearnings = learnings.map(l => l.title);
+        } catch { /* Learning suggestions are best-effort */ }
+
         const missionId = queue.enqueue({
           prompt: parsed.prompt,
           context: parsed.context,
@@ -286,6 +296,7 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           status: assignedAgent ? 'assigned' : 'queued',
           assigned_agent: assignedAgent,
           queue_length: queue.getQueueLength(),
+          suggested_learnings: suggestedLearnings.length > 0 ? suggestedLearnings : undefined,
         });
       }
 
@@ -323,10 +334,25 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           } catch { /* Worktree merge is best-effort */ }
         }
 
+        // Harvest learnings from completed mission
+        let harvestedLearnings: number = 0;
+        try {
+          const loop = getLearningLoop();
+          const completedMission = {
+            ...mission,
+            status: 'completed' as const,
+            result: { output: parsed.output, durationMs: parsed.duration_ms || 0 },
+            completedAt: new Date(),
+          };
+          const learnings = await loop.harvestFromMission(completedMission);
+          harvestedLearnings = learnings.length;
+        } catch { /* Learning harvest is best-effort */ }
+
         return jsonResponse({
           completed: true,
           mission_id: parsed.mission_id,
           agent_id: mission.assignedTo,
+          harvested_learnings: harvestedLearnings > 0 ? harvestedLearnings : undefined,
         });
       }
 
