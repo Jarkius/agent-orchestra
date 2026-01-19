@@ -21,9 +21,30 @@ import {
   getLearningById,
   listLearningsFromDb,
   validateLearning as dbValidateLearning,
+  createKnowledge,
+  getKnowledgeById,
+  listKnowledge,
+  createLesson,
+  getLessonById,
+  listLessons,
+  findOrCreateLesson,
+  updateLessonConfidence,
+  getSessionById,
+  decayStaleConfidence,
+  getAgent,
   type LearningRecord,
+  type KnowledgeRecord,
+  type LessonRecord,
 } from '../db';
-import { searchLearnings, initVectorDB, isInitialized } from '../vector-db';
+import {
+  searchLearnings,
+  initVectorDB,
+  isInitialized,
+  embedKnowledge,
+  searchKnowledgeVector,
+  embedLesson,
+  searchLessonsVector,
+} from '../vector-db';
 
 // Category detection keywords
 const CATEGORY_KEYWORDS: Record<LearningCategory, string[]> = {
@@ -41,7 +62,7 @@ const CATEGORY_KEYWORDS: Record<LearningCategory, string[]> = {
   retrospective: ['reflection', 'hindsight', 'looking back', 'lesson'],
 };
 
-export class LearningLoop implements Partial<ILearningLoop> {
+export class LearningLoop implements ILearningLoop {
   /**
    * Extract learnings from a completed mission
    */
@@ -206,6 +227,302 @@ export class LearningLoop implements Partial<ILearningLoop> {
    */
   boostConfidence(learningId: number, _reason: string): void {
     this.validateLearning(learningId);
+  }
+
+  /**
+   * Decay confidence of stale learnings
+   */
+  decayStale(olderThanDays: number): void {
+    decayStaleConfidence(olderThanDays);
+  }
+
+  // ============ Dual-Collection Methods ============
+
+  /**
+   * Add a knowledge entry (raw facts/observations)
+   */
+  async addKnowledge(entry: Omit<KnowledgeEntry, 'id' | 'timestamp'>): Promise<string> {
+    if (!isInitialized()) await initVectorDB();
+
+    // Create in SQLite
+    const id = createKnowledge({
+      content: entry.content,
+      mission_id: entry.missionId,
+      category: entry.category,
+      agent_id: null,
+    });
+
+    const knowledgeId = `knowledge_${id}`;
+
+    // Embed in ChromaDB
+    await embedKnowledge(knowledgeId, entry.content, {
+      mission_id: entry.missionId,
+      category: entry.category,
+    });
+
+    return knowledgeId;
+  }
+
+  /**
+   * Add a lesson entry (problem → solution → outcome)
+   */
+  async addLesson(entry: Omit<LessonEntry, 'id'>): Promise<string> {
+    if (!isInitialized()) await initVectorDB();
+
+    // Find or create in SQLite (deduplicates by problem)
+    const id = findOrCreateLesson({
+      problem: entry.problem,
+      solution: entry.solution,
+      outcome: entry.outcome,
+      category: entry.category,
+      confidence: entry.confidence,
+      agent_id: null,
+    });
+
+    const lessonId = `lesson_${id}`;
+
+    // Embed the combined text for better semantic search
+    const embedText = `Problem: ${entry.problem}\nSolution: ${entry.solution}\nOutcome: ${entry.outcome}`;
+    await embedLesson(lessonId, embedText, {
+      problem: entry.problem,
+      solution: entry.solution,
+      outcome: entry.outcome,
+      category: entry.category,
+      confidence: entry.confidence,
+      frequency: entry.frequency,
+    });
+
+    return lessonId;
+  }
+
+  /**
+   * Search knowledge entries by semantic similarity
+   */
+  async searchKnowledge(query: string, limit = 5): Promise<KnowledgeEntry[]> {
+    if (!isInitialized()) await initVectorDB();
+
+    const results = await searchKnowledgeVector(query, { limit });
+    const entries: KnowledgeEntry[] = [];
+
+    if (results.ids[0]) {
+      for (let i = 0; i < results.ids[0].length; i++) {
+        const id = results.ids[0][i];
+        const numId = parseInt(id.replace('knowledge_', ''));
+        const record = getKnowledgeById(numId);
+        if (record) {
+          entries.push({
+            id,
+            content: record.content,
+            missionId: record.mission_id || '',
+            category: record.category || 'general',
+            timestamp: new Date(record.created_at || Date.now()),
+          });
+        }
+      }
+    }
+
+    return entries;
+  }
+
+  /**
+   * Search lesson entries by semantic similarity
+   */
+  async searchLessons(query: string, limit = 5): Promise<LessonEntry[]> {
+    if (!isInitialized()) await initVectorDB();
+
+    const results = await searchLessonsVector(query, { limit });
+    const entries: LessonEntry[] = [];
+
+    if (results.ids[0]) {
+      for (let i = 0; i < results.ids[0].length; i++) {
+        const id = results.ids[0][i];
+        const numId = parseInt(id.replace('lesson_', ''));
+        const record = getLessonById(numId);
+        if (record) {
+          entries.push({
+            id,
+            problem: record.problem,
+            solution: record.solution,
+            outcome: record.outcome,
+            category: record.category as LearningCategory,
+            confidence: record.confidence,
+            frequency: record.frequency,
+          });
+        }
+      }
+    }
+
+    return entries;
+  }
+
+  // ============ Session Harvesting ============
+
+  /**
+   * Harvest learnings from a session's context
+   */
+  async harvestFromSession(sessionId: string): Promise<Learning[]> {
+    const session = getSessionById(sessionId);
+    if (!session) return [];
+
+    const learnings: Learning[] = [];
+    const fullContext = session.full_context;
+
+    // Extract from wins
+    if (fullContext?.wins) {
+      for (const win of fullContext.wins) {
+        const category = this.detectCategory(win);
+        const learningId = createLearning({
+          category,
+          title: win.slice(0, 100),
+          description: win,
+          confidence: 'medium', // Wins have medium confidence
+          source_session_id: sessionId,
+        });
+        const record = getLearningById(learningId);
+        if (record) learnings.push(this.recordToLearning(record));
+      }
+    }
+
+    // Extract from challenges (create lessons)
+    if (fullContext?.challenges) {
+      for (const challenge of fullContext.challenges) {
+        const category = this.detectCategory(challenge);
+        const learningId = createLearning({
+          category: category === 'insight' ? 'debugging' : category,
+          title: `Challenge: ${challenge.slice(0, 80)}`,
+          what_happened: challenge,
+          confidence: 'low',
+          source_session_id: sessionId,
+        });
+        const record = getLearningById(learningId);
+        if (record) learnings.push(this.recordToLearning(record));
+      }
+    }
+
+    // Extract from learnings in context
+    if (fullContext?.learnings) {
+      for (const insight of fullContext.learnings) {
+        const category = this.detectCategory(insight);
+        const learningId = createLearning({
+          category,
+          title: insight.slice(0, 100),
+          lesson: insight,
+          confidence: 'medium',
+          source_session_id: sessionId,
+        });
+        const record = getLearningById(learningId);
+        if (record) learnings.push(this.recordToLearning(record));
+      }
+    }
+
+    return learnings;
+  }
+
+  // ============ Pattern Recognition ============
+
+  /**
+   * Cluster similar failures together
+   */
+  clusterSimilarFailures(failures: FailedMission[]): Map<string, FailedMission[]> {
+    const clusters = new Map<string, FailedMission[]>();
+
+    for (const failure of failures) {
+      // Cluster by error code + first word of message
+      const errorCode = failure.error.code;
+      const firstWord = failure.error.message.split(/\s+/)[0]?.toLowerCase() || 'unknown';
+      const clusterKey = `${errorCode}:${firstWord}`;
+
+      if (!clusters.has(clusterKey)) {
+        clusters.set(clusterKey, []);
+      }
+      clusters.get(clusterKey)!.push(failure);
+    }
+
+    return clusters;
+  }
+
+  // ============ Recommendations ============
+
+  /**
+   * Recommend the best agent for a task based on history
+   */
+  async recommendAgent(task: { prompt: string; type?: string }): Promise<AgentRecommendation> {
+    if (!isInitialized()) await initVectorDB();
+
+    // Search for similar past tasks in learnings
+    const similarLearnings = await searchLearnings(task.prompt, { limit: 10 });
+
+    // Count which agents succeeded with similar tasks
+    const agentScores: Record<number, { success: number; total: number }> = {};
+
+    if (similarLearnings.ids[0]) {
+      for (const id of similarLearnings.ids[0]) {
+        const numId = parseInt(id.replace('learning_', ''));
+        const record = getLearningById(numId);
+        if (record?.agent_id) {
+          if (!agentScores[record.agent_id]) {
+            agentScores[record.agent_id] = { success: 0, total: 0 };
+          }
+          agentScores[record.agent_id].total++;
+          // Higher confidence = more successful outcomes
+          if (record.confidence === 'proven' || record.confidence === 'high') {
+            agentScores[record.agent_id].success++;
+          }
+        }
+      }
+    }
+
+    // Find best agent
+    let bestAgent = 1; // Default to agent 1
+    let bestScore = 0;
+    let bestReason = 'Default agent selection';
+    const alternatives: number[] = [];
+
+    for (const [agentId, scores] of Object.entries(agentScores)) {
+      const id = parseInt(agentId);
+      const successRate = scores.total > 0 ? scores.success / scores.total : 0;
+      const score = successRate * Math.log(scores.total + 1); // Weight by experience
+
+      if (score > bestScore) {
+        if (bestAgent !== 1) alternatives.push(bestAgent);
+        bestScore = score;
+        bestAgent = id;
+        bestReason = `${Math.round(successRate * 100)}% success rate on ${scores.total} similar tasks`;
+      } else if (score > 0) {
+        alternatives.push(id);
+      }
+    }
+
+    // Check if agent exists
+    const agent = getAgent(bestAgent);
+    if (!agent) {
+      bestAgent = 1;
+      bestReason = 'Fallback to default agent';
+    }
+
+    return {
+      agentId: bestAgent,
+      reason: bestReason,
+      confidence: Math.min(bestScore / 2, 1), // Normalize confidence
+      alternatives: alternatives.slice(0, 3),
+    };
+  }
+
+  /**
+   * Get lessons relevant to a problem
+   */
+  async getRelevantLessons(problem: string): Promise<LessonEntry[]> {
+    // Search lessons using semantic similarity
+    const lessons = await this.searchLessons(problem, 5);
+
+    // Sort by confidence and frequency
+    lessons.sort((a, b) => {
+      const scoreA = a.confidence * 0.7 + (a.frequency / 10) * 0.3;
+      const scoreB = b.confidence * 0.7 + (b.frequency / 10) * 0.3;
+      return scoreB - scoreA;
+    });
+
+    return lessons;
   }
 
   // ============ Private Helpers ============

@@ -52,6 +52,8 @@ interface VectorCollections {
   sessions: Collection;
   learnings: Collection;
   sessionTasks: Collection;
+  knowledge: Collection;  // Dual-collection: raw facts/observations
+  lessons: Collection;    // Dual-collection: problem→solution→outcome
 }
 
 let collections: VectorCollections | null = null;
@@ -115,9 +117,19 @@ export async function initVectorDB(): Promise<void> {
         metadata: { "hnsw:space": "cosine" },
         embeddingFunction: embedFn,
       }),
+      knowledge: await chromaClient.getOrCreateCollection({
+        name: "knowledge_entries",
+        metadata: { "hnsw:space": "cosine" },
+        embeddingFunction: embedFn,
+      }),
+      lessons: await chromaClient.getOrCreateCollection({
+        name: "lesson_entries",
+        metadata: { "hnsw:space": "cosine" },
+        embeddingFunction: embedFn,
+      }),
     };
     initialized = true;
-    console.error("[VectorDB] Initialized with 8 collections");
+    console.error("[VectorDB] Initialized with 10 collections");
   } catch (error) {
     console.error("[VectorDB] Failed to initialize:", error);
     throw error;
@@ -1105,4 +1117,189 @@ export async function initVectorDBWithAutoStart(): Promise<HealthStatus> {
 
   // Return health status
   return getHealthStatus();
+}
+
+// ============ KNOWLEDGE EMBEDDINGS (Dual-Collection Pattern) ============
+
+export async function embedKnowledge(
+  knowledgeId: string,
+  content: string,
+  metadata: {
+    category?: string;
+    mission_id?: string;
+    agent_id?: number;
+    created_at?: string;
+  }
+): Promise<void> {
+  const cols = ensureInitialized();
+  await cols.knowledge.add({
+    ids: [knowledgeId],
+    documents: [content],
+    metadatas: [{
+      category: metadata.category || "",
+      mission_id: metadata.mission_id || "",
+      agent_id: metadata.agent_id ?? -1,
+      created_at: metadata.created_at || new Date().toISOString(),
+    }],
+  });
+}
+
+export async function searchKnowledgeVector(
+  query: string,
+  options?: {
+    limit?: number;
+    category?: string;
+    agentId?: number;
+  }
+): Promise<{
+  ids: string[][];
+  documents: (string | null)[][];
+  distances: (number | null)[][] | null;
+  metadatas: (Record<string, any> | null)[][] | null;
+}> {
+  const cols = ensureInitialized();
+  const { limit = 10, category, agentId } = options || {};
+
+  const where: Where = {};
+  if (category) where.category = category;
+  if (agentId !== undefined) where.agent_id = agentId;
+
+  const results = await cols.knowledge.query({
+    queryTexts: [query],
+    nResults: limit,
+    where: Object.keys(where).length > 0 ? where : undefined,
+  });
+
+  return {
+    ids: results.ids,
+    documents: results.documents || [[]],
+    distances: results.distances,
+    metadatas: results.metadatas,
+  };
+}
+
+// ============ LESSON EMBEDDINGS (Dual-Collection Pattern) ============
+
+export async function embedLesson(
+  lessonId: string,
+  content: string,  // problem + solution + outcome concatenated
+  metadata: {
+    problem: string;
+    solution: string;
+    outcome: string;
+    category?: string;
+    confidence?: number;
+    frequency?: number;
+    agent_id?: number;
+    created_at?: string;
+  }
+): Promise<void> {
+  const cols = ensureInitialized();
+  await cols.lessons.add({
+    ids: [lessonId],
+    documents: [content],
+    metadatas: [{
+      problem: metadata.problem,
+      solution: metadata.solution,
+      outcome: metadata.outcome,
+      category: metadata.category || "",
+      confidence: metadata.confidence ?? 0.5,
+      frequency: metadata.frequency ?? 1,
+      agent_id: metadata.agent_id ?? -1,
+      created_at: metadata.created_at || new Date().toISOString(),
+    }],
+  });
+}
+
+export async function searchLessonsVector(
+  query: string,
+  options?: {
+    limit?: number;
+    category?: string;
+    minConfidence?: number;
+    agentId?: number;
+  }
+): Promise<{
+  ids: string[][];
+  documents: (string | null)[][];
+  distances: (number | null)[][] | null;
+  metadatas: (Record<string, any> | null)[][] | null;
+}> {
+  const cols = ensureInitialized();
+  const { limit = 10, category, minConfidence, agentId } = options || {};
+
+  // Build where clause
+  const where: Where = {};
+  if (category) where.category = category;
+  if (agentId !== undefined) where.agent_id = agentId;
+
+  const results = await cols.lessons.query({
+    queryTexts: [query],
+    nResults: limit * 2, // Fetch extra for post-filtering
+    where: Object.keys(where).length > 0 ? where : undefined,
+  });
+
+  // Post-filter by minConfidence if specified
+  if (minConfidence !== undefined && results.metadatas?.[0]) {
+    const filteredIds: string[] = [];
+    const filteredDocs: (string | null)[] = [];
+    const filteredMetas: (Record<string, any> | null)[] = [];
+    const filteredDists: (number | null)[] = [];
+
+    for (let i = 0; i < results.ids[0]!.length; i++) {
+      const meta = results.metadatas[0]![i];
+      if (meta) {
+        const conf = typeof meta.confidence === 'number' ? meta.confidence : 0;
+        if (conf >= minConfidence) {
+          filteredIds.push(results.ids[0]![i]!);
+          filteredDocs.push(results.documents?.[0]?.[i] ?? null);
+          filteredMetas.push(meta);
+          if (results.distances?.[0]) {
+            filteredDists.push(results.distances[0][i] ?? null);
+          }
+        }
+      }
+    }
+
+    return {
+      ids: [filteredIds.slice(0, limit)],
+      documents: [filteredDocs.slice(0, limit)],
+      distances: filteredDists.length > 0 ? [filteredDists.slice(0, limit)] : null,
+      metadatas: [filteredMetas.slice(0, limit)],
+    };
+  }
+
+  // Trim to limit
+  return {
+    ids: [results.ids[0]?.slice(0, limit) || []],
+    documents: [results.documents?.[0]?.slice(0, limit) || []],
+    distances: results.distances ? [results.distances[0]?.slice(0, limit) || []] : null,
+    metadatas: results.metadatas ? [results.metadatas[0]?.slice(0, limit) || []] : null,
+  };
+}
+
+export async function updateLessonEmbedding(
+  lessonId: string,
+  metadata: {
+    confidence?: number;
+    frequency?: number;
+  }
+): Promise<void> {
+  const cols = ensureInitialized();
+
+  // Get existing
+  const existing = await cols.lessons.get({ ids: [lessonId] });
+  if (!existing.metadatas?.[0]) return;
+
+  const currentMeta = existing.metadatas[0];
+  if (!currentMeta) return;
+
+  await cols.lessons.update({
+    ids: [lessonId],
+    metadatas: [{
+      ...currentMeta,
+      confidence: metadata.confidence !== undefined ? metadata.confidence : (currentMeta.confidence ?? 0.5),
+      frequency: metadata.frequency !== undefined ? metadata.frequency : (currentMeta.frequency ?? 1),
+    }],
+  });
 }

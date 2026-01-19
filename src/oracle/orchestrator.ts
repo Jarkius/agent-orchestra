@@ -523,6 +523,7 @@ export class OracleOrchestrator {
 
   /**
    * Get recommended agent for a task (Oracle-driven selection)
+   * Uses workload analysis for immediate selection
    */
   recommendAgentForTask(taskType?: string, taskPriority?: Priority): Agent | null {
     const analysis = this.analyzeWorkload();
@@ -544,6 +545,64 @@ export class OracleOrchestrator {
 
     // Fallback to least busy
     return this.spawner.getLeastBusyAgent();
+  }
+
+  /**
+   * Get recommended agent using learning loop history
+   * Considers historical success rates on similar tasks
+   */
+  async recommendAgentWithLearning(task: { prompt: string; type?: string }): Promise<{
+    agent: Agent | null;
+    recommendation: { reason: string; confidence: number; alternatives: number[] };
+  }> {
+    // Get learning-based recommendation
+    const learningRec = await this.learningLoop.recommendAgent(task);
+
+    // Try to get the recommended agent
+    let agent = this.spawner.getAgent(learningRec.agentId);
+
+    // If not available, try alternatives
+    if (!agent || agent.status !== 'idle') {
+      for (const altId of learningRec.alternatives || []) {
+        const altAgent = this.spawner.getAgent(altId);
+        if (altAgent && altAgent.status === 'idle') {
+          agent = altAgent;
+          break;
+        }
+      }
+    }
+
+    // Final fallback to workload-based selection
+    if (!agent || agent.status !== 'idle') {
+      agent = this.recommendAgentForTask(task.type);
+    }
+
+    return {
+      agent,
+      recommendation: {
+        reason: learningRec.reason,
+        confidence: learningRec.confidence,
+        alternatives: learningRec.alternatives || [],
+      },
+    };
+  }
+
+  /**
+   * Get relevant lessons for a problem (used before task assignment)
+   */
+  async getLessonsForTask(taskPrompt: string): Promise<Array<{
+    problem: string;
+    solution: string;
+    outcome: string;
+    confidence: number;
+  }>> {
+    const lessons = await this.learningLoop.getRelevantLessons(taskPrompt);
+    return lessons.map(l => ({
+      problem: l.problem,
+      solution: l.solution,
+      outcome: l.outcome,
+      confidence: l.confidence,
+    }));
   }
 
   // ============ Private Helpers ============
