@@ -11,9 +11,9 @@ This document tracks our journey from simple parallel shell scripts to a full ag
 - No central coordination
 
 **Scripts:**
-- `spawn_test.sh` - Background processes with interleaved output
-- `spawn_tmux.sh` - Visual panes, but isolated agents
-- `spawn_ghostty.sh` - Terminal-native splits
+- `scripts/spawn/spawn_test.sh` - Background processes with interleaved output
+- `scripts/spawn/spawn_tmux.sh` - Visual panes, but isolated agents
+- `scripts/spawn/spawn_ghostty.sh` - Terminal-native splits
 
 **Limitation:** Agents couldn't share state or receive commands.
 
@@ -41,7 +41,7 @@ This document tracks our journey from simple parallel shell scripts to a full ag
 - `src/db.ts` - Database schema and helpers
 - `src/orchestrator.ts` - Central dashboard
 - `src/agent-report.ts` - CLI for agents to report status
-- `spawn_orchestrated.sh` - tmux layout with orchestrator pane
+- `scripts/spawn/spawn_orchestrated.sh` - tmux layout with orchestrator pane
 
 **Communication flow:**
 1. Agent spawns → registers in SQLite
@@ -74,7 +74,7 @@ Orchestrator                          Agent Panes
 
 **Run it:**
 ```bash
-./spawn_orchestrated.sh 3
+./scripts/spawn/spawn_orchestrated.sh 3
 ```
 
 ---
@@ -197,7 +197,7 @@ db.run("INSERT INTO agents (id, status) VALUES (?, ?)", [1, "running"]);
 |------|---------|
 | `src/mcp-server.ts` | MCP server exposing tools to Claude |
 | `src/agent-watcher.ts` | Bun-based inbox watcher for agents |
-| `spawn_mcp.sh` | Launches MCP-enabled tmux session |
+| `scripts/spawn/spawn_mcp.sh` | Launches MCP-enabled tmux session |
 | `.mcp.json` | Config for Claude Code to find the server |
 
 ### Key Learnings
@@ -211,7 +211,7 @@ db.run("INSERT INTO agents (id, status) VALUES (?, ?)", [1, "running"]);
 
 ```bash
 # Start MCP-enabled agents
-./spawn_mcp.sh 3
+./scripts/spawn/spawn_mcp.sh 3
 
 # Claude can now use tools:
 # - send_to_agent(1, "function test() { ... }")
@@ -256,13 +256,13 @@ db.run("INSERT INTO agents (id, status) VALUES (?, ?)", [1, "running"]);
 |------|---------|
 | `src/claude-agent.ts` | Wrapper for running `claude` CLI with tasks |
 | `src/agent-watcher.ts` | Watches inbox, runs Claude CLI, writes results |
-| `spawn_claude_agents.sh` | Launches real Claude agents in tmux |
+| `scripts/spawn/spawn_claude_agents.sh` | Launches real Claude agents in tmux |
 
 ### Usage
 
 ```bash
 # Start 3 real Claude agents
-./spawn_claude_agents.sh 3
+./scripts/spawn/spawn_claude_agents.sh 3
 
 # From orchestrator (MCP tools):
 assign_task(1, "Write a Python function to sort a list")

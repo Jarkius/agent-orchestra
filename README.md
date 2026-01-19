@@ -37,7 +37,7 @@ docker run -d --name chromadb --restart unless-stopped \
 bun run spawn --count 3 --isolation worktree
 
 # Or use the shell script
-./spawn_claude_agents.sh 3
+./scripts/spawn/spawn_claude_agents.sh 3
 ```
 
 ## Architecture
@@ -219,9 +219,11 @@ agent-orchestra/
 │   ├── services/               # Memory, sessions, etc.
 │   └── embeddings/             # Vector embeddings
 ├── scripts/
+│   ├── spawn/                  # Agent spawning scripts
 │   └── memory/                 # Memory CLI commands
-├── docs/                       # Documentation
-└── spawn_claude_agents.sh      # Agent launcher
+├── config/                     # Configuration files
+│   └── statusline.sh           # Claude statusline config
+└── docs/                       # Documentation
 ```
 
 ## Documentation

@@ -7,7 +7,7 @@ Claude Sub-Agent Orchestration System - spawns real Claude CLI instances as sub-
 ## Quick Start
 
 ```bash
-./spawn_claude_agents.sh [num_agents]  # Start agents
+./scripts/spawn/spawn_claude_agents.sh [num_agents]  # Start agents
 tmux attach -t claude-agents-<pid>      # View agents
 ```
 
@@ -30,7 +30,7 @@ Confidence: low → medium → high → proven (use validate_learning to increas
 - `src/mcp-server.ts` - MCP server with tools
 - `src/db.ts` - SQLite: agents, sessions, learnings
 - `src/vector-db.ts` - ChromaDB for semantic search
-- `spawn_claude_agents.sh` - Agent launcher
+- `scripts/spawn/spawn_claude_agents.sh` - Agent launcher
 
 ## Directory Structure
 
