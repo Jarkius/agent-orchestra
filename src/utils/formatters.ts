@@ -84,19 +84,41 @@ export function getStatusIcon(status: string): string {
 }
 
 /**
- * Get confidence badge for learnings
+ * Maturity stage icons (Oracle Incubate pattern)
  */
-export function getConfidenceBadge(confidence: string, validationCount?: number): string {
+const MATURITY_ICONS: Record<string, string> = {
+  observation: '🥒',
+  learning: '🌱',
+  pattern: '🌿',
+  principle: '🌳',
+  wisdom: '🔮',
+};
+
+/**
+ * Get maturity badge for learnings
+ */
+export function getMaturityBadge(maturityStage?: string): string {
+  if (!maturityStage) return '';
+  return MATURITY_ICONS[maturityStage] || '';
+}
+
+/**
+ * Get confidence badge for learnings
+ * Now includes maturity stage icon
+ */
+export function getConfidenceBadge(confidence: string, validationCount?: number, maturityStage?: string): string {
   const countSuffix = validationCount && validationCount > 0 ? ` (${validationCount}x)` : '';
+  const maturityIcon = maturityStage ? `${MATURITY_ICONS[maturityStage] || ''} ` : '';
+
   switch (confidence) {
     case 'proven':
-      return `★★${countSuffix}`;
+      return `${maturityIcon}★★${countSuffix}`;
     case 'high':
-      return `★${countSuffix}`;
+      return `${maturityIcon}★${countSuffix}`;
     case 'medium':
-      return `○${countSuffix}`;
+      return `${maturityIcon}○${countSuffix}`;
     default:
-      return `·${countSuffix}`;
+      return `${maturityIcon}·${countSuffix}`;
   }
 }
 

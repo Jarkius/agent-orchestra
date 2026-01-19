@@ -298,13 +298,13 @@ function displayResumeContext(result: RecallResult) {
     }
   }
 
-  // Show high-confidence learnings
+  // Show high-confidence learnings with maturity
   if (result.learnings.length > 0) {
     console.log('\n' + '─'.repeat(40));
     console.log('  KEY LEARNINGS');
     console.log('─'.repeat(40));
     for (const { learning } of result.learnings) {
-      const badge = getConfidenceBadge(learning.confidence || 'low', learning.times_validated);
+      const badge = getConfidenceBadge(learning.confidence || 'low', learning.times_validated, learning.maturity_stage);
       console.log(`  ${badge} #${learning.id} ${learning.title}`);
     }
   }
@@ -405,10 +405,11 @@ function displaySessionDetails(ctx: SessionWithContext) {
 function displayLearningDetails(ctx: LearningWithContext) {
   const { learning, linkedLearnings } = ctx;
 
-  const badge = getConfidenceBadge(learning.confidence || 'low', learning.times_validated);
+  const badge = getConfidenceBadge(learning.confidence || 'low', learning.times_validated, learning.maturity_stage);
   console.log(`\n${badge} Learning #${learning.id}`);
   console.log(`${learning.title}`);
-  console.log(`Category: ${learning.category} | Confidence: ${learning.confidence}`);
+  const maturityLabel = learning.maturity_stage ? ` | Maturity: ${learning.maturity_stage}` : '';
+  console.log(`Category: ${learning.category} | Confidence: ${learning.confidence}${maturityLabel}`);
 
   if (learning.description) {
     console.log(`\nDescription: ${learning.description}`);
@@ -452,7 +453,7 @@ function displayLearningDetails(ctx: LearningWithContext) {
     console.log('  RELATED LEARNINGS');
     console.log('─'.repeat(40));
     for (const { learning: linked, link_type, similarity } of linkedLearnings) {
-      const linkedBadge = getConfidenceBadge(linked.confidence || 'low');
+      const linkedBadge = getConfidenceBadge(linked.confidence || 'low', linked.times_validated, linked.maturity_stage);
       const score = similarity ? ` (${(similarity * 100).toFixed(0)}%)` : '';
       console.log(`  ${linkedBadge} #${linked.id} ${linked.title}${score}`);
     }
@@ -494,9 +495,9 @@ function displaySearchResults(result: RecallResult) {
   if (result.learnings.length > 0) {
     for (const { learning, similarity } of result.learnings) {
       const score = similarity ? `[${similarity.toFixed(3)}] ` : '';
-      const badge = getConfidenceBadge(learning.confidence || 'low');
-      console.log(`\n  ${score}#${learning.id} ${badge} ${learning.title}`);
-      console.log(`  Category: ${learning.category} | Confidence: ${learning.confidence}`);
+      const badge = getConfidenceBadge(learning.confidence || 'low', learning.times_validated, learning.maturity_stage);
+      console.log(`\n  ${score}#${learning.id} · ${learning.title}`);
+      console.log(`  ${badge} Category: ${learning.category} | Confidence: ${learning.confidence}`);
       if (learning.description) {
         console.log(`  ${truncate(learning.description, 80)}`);
       }

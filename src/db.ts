@@ -110,12 +110,20 @@ db.run(`
     context TEXT,
     source_session_id TEXT,
     confidence TEXT DEFAULT 'medium' CHECK(confidence IN ('low', 'medium', 'high', 'proven')),
+    maturity_stage TEXT DEFAULT 'observation' CHECK(maturity_stage IN ('observation', 'learning', 'pattern', 'principle', 'wisdom')),
     times_validated INTEGER DEFAULT 1,
     last_validated_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (source_session_id) REFERENCES sessions(id)
   )
 `);
+
+// Add maturity_stage column if it doesn't exist (migration for existing DBs)
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN maturity_stage TEXT DEFAULT 'observation' CHECK(maturity_stage IN ('observation', 'learning', 'pattern', 'principle', 'wisdom'))`);
+} catch {
+  // Column already exists
+}
 
 db.run(`
   CREATE TABLE IF NOT EXISTS session_links (
@@ -787,6 +795,25 @@ export function listSessionsFromDb(options?: ListSessionsOptions): SessionRecord
 
 // ============ Learning Functions ============
 
+// Maturity stages for knowledge progression (Oracle Incubate pattern)
+export type MaturityStage = 'observation' | 'learning' | 'pattern' | 'principle' | 'wisdom';
+
+export const MATURITY_ICONS: Record<MaturityStage, string> = {
+  observation: '🥒',
+  learning: '🌱',
+  pattern: '🌿',
+  principle: '🌳',
+  wisdom: '🔮',
+};
+
+export const MATURITY_CRITERIA: Record<MaturityStage, { minValidations: number; description: string }> = {
+  observation: { minValidations: 0, description: 'Raw insight, untested' },
+  learning: { minValidations: 1, description: 'Tested once, not disproven' },
+  pattern: { minValidations: 3, description: 'Used 3+ times, consistent results' },
+  principle: { minValidations: 5, description: 'Context-independent, universally true' },
+  wisdom: { minValidations: 10, description: 'Changed behavior fundamentally' },
+};
+
 export interface LearningRecord {
   id?: number;
   category: string;
@@ -796,11 +823,13 @@ export interface LearningRecord {
   source_session_id?: string;
   source_url?: string;  // External reference URL(s)
   confidence?: 'low' | 'medium' | 'high' | 'proven';
+  maturity_stage?: MaturityStage;
   times_validated?: number;
   last_validated_at?: string;
   agent_id?: number | null;
   visibility?: Visibility;
   created_at?: string;
+  updated_at?: string;
   // Structured learning fields
   what_happened?: string;
   lesson?: string;
@@ -884,7 +913,26 @@ export function listLearningsFromDb(options?: ListLearningsOptions): LearningRec
   }));
 }
 
-export function validateLearning(learningId: number): LearningRecord | null {
+export interface ValidationResult {
+  learning: LearningRecord;
+  promoted: boolean;
+  previousStage?: MaturityStage;
+  newStage?: MaturityStage;
+  promotionMessage?: string;
+}
+
+/**
+ * Calculate maturity stage based on times validated
+ */
+export function calculateMaturityStage(timesValidated: number): MaturityStage {
+  if (timesValidated >= 10) return 'wisdom';
+  if (timesValidated >= 5) return 'principle';
+  if (timesValidated >= 3) return 'pattern';
+  if (timesValidated >= 1) return 'learning';
+  return 'observation';
+}
+
+export function validateLearning(learningId: number): ValidationResult | null {
   const learning = getLearningById(learningId);
   if (!learning) return null;
 
@@ -896,12 +944,71 @@ export function validateLearning(learningId: number): LearningRecord | null {
   else if (newCount >= 3) newConfidence = 'high';
   else if (newCount >= 2) newConfidence = 'medium';
 
+  // Maturity stage progression (Oracle Incubate pattern)
+  const previousStage = learning.maturity_stage || 'observation';
+  const newStage = calculateMaturityStage(newCount);
+  const promoted = newStage !== previousStage;
+
   db.run(
-    `UPDATE learnings SET times_validated = ?, confidence = ?, last_validated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    [newCount, newConfidence, learningId]
+    `UPDATE learnings SET times_validated = ?, confidence = ?, maturity_stage = ?, last_validated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [newCount, newConfidence, newStage, learningId]
   );
 
-  return getLearningById(learningId);
+  const updatedLearning = getLearningById(learningId)!;
+
+  const result: ValidationResult = {
+    learning: updatedLearning,
+    promoted,
+  };
+
+  if (promoted) {
+    result.previousStage = previousStage;
+    result.newStage = newStage;
+    result.promotionMessage = `${MATURITY_ICONS[previousStage]} → ${MATURITY_ICONS[newStage]} Promoted from ${previousStage} to ${newStage}!`;
+  }
+
+  return result;
+}
+
+/**
+ * Get learnings that are ready for promotion (close to next threshold)
+ */
+export function getPromotionCandidates(limit = 10): Array<LearningRecord & { nextStage: MaturityStage; validationsNeeded: number }> {
+  const learnings = db.query(`
+    SELECT * FROM learnings
+    WHERE maturity_stage != 'wisdom'
+    ORDER BY times_validated DESC
+    LIMIT ?
+  `).all(limit) as LearningRecord[];
+
+  return learnings.map(l => {
+    const currentValidations = l.times_validated || 1;
+    const currentStage = l.maturity_stage || 'observation';
+
+    // Find next stage threshold
+    let nextStage: MaturityStage = 'learning';
+    let threshold = 1;
+
+    if (currentStage === 'observation') {
+      nextStage = 'learning';
+      threshold = 1;
+    } else if (currentStage === 'learning') {
+      nextStage = 'pattern';
+      threshold = 3;
+    } else if (currentStage === 'pattern') {
+      nextStage = 'principle';
+      threshold = 5;
+    } else if (currentStage === 'principle') {
+      nextStage = 'wisdom';
+      threshold = 10;
+    }
+
+    return {
+      ...l,
+      nextStage,
+      validationsNeeded: Math.max(0, threshold - currentValidations),
+    };
+  }).filter(l => l.validationsNeeded <= 2); // Only show if within 2 validations of promotion
 }
 
 export function getLearningsBySession(sessionId: string): LearningRecord[] {
