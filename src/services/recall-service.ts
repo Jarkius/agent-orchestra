@@ -57,7 +57,7 @@ export function detectQueryType(query: string | undefined): QueryType {
 export function extractLearningId(query: string): number | null {
   const match = query.match(LEARNING_ID_PATTERN);
   if (!match) return null;
-  return parseInt(match[1] || match[2]);
+  return parseInt(match[1] ?? match[2] ?? '0');
 }
 
 // ============ Result Types ============
@@ -155,7 +155,7 @@ async function recallRecent(
     };
   }
 
-  const latestSession = sessions[0];
+  const latestSession = sessions[0]!;
 
   // Get full context for the latest session
   const sessionsWithContext: SessionWithContext[] = [{
@@ -343,7 +343,7 @@ async function recallBySearch(
   const sessionsWithContext: SessionWithContext[] = [];
   if (sessionResults.ids[0]?.length) {
     for (let i = 0; i < sessionResults.ids[0].length; i++) {
-      const id = sessionResults.ids[0][i];
+      const id = sessionResults.ids[0]![i]!;
       const distance = sessionResults.distances?.[0]?.[i] || 0;
       const session = getSessionById(id);
 
@@ -363,7 +363,7 @@ async function recallBySearch(
   const learningsWithContext: LearningWithContext[] = [];
   if (learningResults.ids[0]?.length) {
     for (let i = 0; i < learningResults.ids[0].length; i++) {
-      const id = learningResults.ids[0][i];
+      const id = learningResults.ids[0]![i]!;
       const numId = parseInt(id.replace('learning_', ''));
       const distance = learningResults.distances?.[0]?.[i] || 0;
       const learning = getLearningById(numId);

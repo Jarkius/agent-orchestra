@@ -52,9 +52,9 @@ function cosineSimilarity(a: number[], b: number[]): number {
   let normA = 0;
   let normB = 0;
   for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+    dotProduct += a[i]! * b[i]!;
+    normA += a[i]! * a[i]!;
+    normB += b[i]! * b[i]!;
   }
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
@@ -106,7 +106,7 @@ async function testProvider(
   const corpusEmbeddings = await provider.generate(allDocs.map((d) => d.text));
   const embedTime = Date.now() - embedStart;
   console.log(`   Embedded ${allDocs.length} documents in ${embedTime}ms`);
-  console.log(`   Dimensions: ${corpusEmbeddings[0].length}`);
+  console.log(`   Dimensions: ${corpusEmbeddings[0]!.length}`);
 
   // 3. Test semantic search quality
   console.log("\n3. Testing semantic search quality...");
@@ -123,14 +123,14 @@ async function testProvider(
     let maxSim = -1;
     let bestIdx = 0;
     for (let i = 0; i < corpusEmbeddings.length; i++) {
-      const sim = cosineSimilarity(queryEmbedding, corpusEmbeddings[i]);
+      const sim = cosineSimilarity(queryEmbedding!, corpusEmbeddings[i]!);
       if (sim > maxSim) {
         maxSim = sim;
         bestIdx = i;
       }
     }
 
-    const topMatch = allDocs[bestIdx];
+    const topMatch = allDocs[bestIdx]!;
     const correct = topMatch.group === test.expectedGroup;
     if (correct) correctMatches++;
 
@@ -153,7 +153,7 @@ async function testProvider(
   return {
     provider: name,
     model: info.model,
-    dimensions: corpusEmbeddings[0].length,
+    dimensions: corpusEmbeddings[0]!.length,
     initTime,
     embedTime,
     avgQueryTime: totalQueryTime / TEST_QUERIES.length,

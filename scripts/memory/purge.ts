@@ -51,7 +51,7 @@ function parseArgs() {
       before = args[i + 1];
       i++;
     } else if (arg === '--keep' && args[i + 1]) {
-      keep = parseInt(args[i + 1]);
+      keep = parseInt(args[i + 1]!);
       i++;
     } else if (arg === '--yes' || arg === '-y') {
       force = true;
@@ -108,7 +108,7 @@ async function main() {
   const stats = getSessionStats();
   console.log(`\nCurrent memory state:`);
   console.log(`  Sessions: ${stats.total_sessions}`);
-  console.log(`  Learnings: ${stats.total_learnings || 'N/A'}`);
+  console.log(`  Learnings: ${(stats as any).total_learnings ?? 'N/A'}`);
 
   // Build description
   let description = `all ${target}`;
@@ -142,7 +142,7 @@ async function main() {
   const newStats = getSessionStats();
   console.log(`\nNew memory state:`);
   console.log(`  Sessions: ${newStats.total_sessions}`);
-  console.log(`  Learnings: ${newStats.total_learnings || 'N/A'}\n`);
+  console.log(`  Learnings: ${(newStats as any).total_learnings ?? 'N/A'}\n`);
 }
 
 main().catch(console.error);

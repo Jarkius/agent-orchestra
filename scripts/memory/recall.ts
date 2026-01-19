@@ -16,6 +16,7 @@ import { readdirSync, statSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
+import { type SessionTask } from '../../src/db';
 import { formatFullContext, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
 import { getGitStatus, getChangesSinceCommit, getLastCommitHash } from '../../src/utils/git-context';
 
@@ -55,7 +56,7 @@ function getRecentPlanFiles(): PlanFile[] {
           try {
             const content = readFileSync(filePath, 'utf-8');
             const match = content.match(/^#\s+(.+)$/m);
-            title = match ? match[1] : '';
+            title = match ? (match[1] ?? '') : '';
           } catch {
             // Ignore read errors
           }
@@ -136,7 +137,7 @@ function displayResumeContext(result: RecallResult) {
     return;
   }
 
-  const { session, tasks, linkedSessions } = result.sessions[0];
+  const { session, tasks, linkedSessions } = result.sessions[0]!;
 
   console.log('\n' + '═'.repeat(60));
   console.log('  RESUME SESSION');
@@ -215,8 +216,8 @@ function displayResumeContext(result: RecallResult) {
   console.log(`Created: ${toLocalTime(session.created_at)}`);
 
   // Show pending/in-progress tasks first (actionable)
-  const pendingTasks = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'blocked');
-  const doneTasks = tasks.filter(t => t.status === 'done');
+  const pendingTasks = tasks.filter((t: SessionTask) => t.status === 'pending' || t.status === 'in_progress' || t.status === 'blocked');
+  const doneTasks = tasks.filter((t: SessionTask) => t.status === 'done');
 
   if (pendingTasks.length > 0) {
     console.log('\n' + '─'.repeat(40));
@@ -291,11 +292,11 @@ function displayExactMatch(result: RecallResult) {
   console.log('═'.repeat(60));
 
   if (result.sessions.length > 0) {
-    displaySessionDetails(result.sessions[0]);
+    displaySessionDetails(result.sessions[0]!);
   }
 
   if (result.learnings.length > 0) {
-    displayLearningDetails(result.learnings[0]);
+    displayLearningDetails(result.learnings[0]!);
   }
 
   if (result.sessions.length === 0 && result.learnings.length === 0) {

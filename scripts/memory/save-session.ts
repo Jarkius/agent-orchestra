@@ -166,22 +166,22 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === '--auto') {
     autoMode = true;
   } else if (args[i] === '--tags' && args[i + 1]) {
-    tags = args[i + 1].split(',').map(t => t.trim());
+    tags = args[i + 1]!.split(',').map(t => t.trim());
     i++;
   } else if (args[i] === '--wins' && args[i + 1]) {
-    cliWins = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
+    cliWins = args[i + 1]!.split(',').map(t => t.trim()).filter(Boolean);
     i++;
   } else if (args[i] === '--challenges' && args[i + 1]) {
-    cliChallenges = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
+    cliChallenges = args[i + 1]!.split(',').map(t => t.trim()).filter(Boolean);
     i++;
   } else if (args[i] === '--learnings' && args[i + 1]) {
-    cliLearnings = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
+    cliLearnings = args[i + 1]!.split(',').map(t => t.trim()).filter(Boolean);
     i++;
   } else if (args[i] === '--next-steps' && args[i + 1]) {
-    cliNextSteps = args[i + 1].split(',').map(t => t.trim()).filter(Boolean);
+    cliNextSteps = args[i + 1]!.split(',').map(t => t.trim()).filter(Boolean);
     i++;
-  } else if (!args[i].startsWith('--')) {
-    summary = args[i];
+  } else if (!args[i]!.startsWith('--')) {
+    summary = args[i]!;
   }
 }
 

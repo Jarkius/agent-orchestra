@@ -213,7 +213,7 @@ export async function searchAgentSessions(
 
   if (results.ids[0]?.length) {
     for (let i = 0; i < results.ids[0].length; i++) {
-      const id = results.ids[0][i];
+      const id = results.ids[0]![i]!;
       const session = getSessionById(id);
 
       if (session && canAccessSession(agentId, session)) {
@@ -357,7 +357,7 @@ export async function searchAgentLearnings(
 
   if (results.ids[0]?.length) {
     for (let i = 0; i < results.ids[0].length; i++) {
-      const id = results.ids[0][i];
+      const id = results.ids[0]![i]!;
       const numId = parseInt(id);
       const learning = getLearningById(numId);
 

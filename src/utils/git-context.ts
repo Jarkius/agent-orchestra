@@ -82,10 +82,10 @@ export function getGitStatus(): GitStatus | null {
         untracked.push(path);
       } else {
         if (indexStatus !== ' ' && indexStatus !== '?') {
-          staged.push({ path, status: indexStatus });
+          staged.push({ path, status: indexStatus || ' ' });
         }
         if (workTreeStatus !== ' ' && workTreeStatus !== '?') {
-          uncommitted.push({ path, status: workTreeStatus });
+          uncommitted.push({ path, status: workTreeStatus || ' ' });
         }
       }
     }
@@ -139,9 +139,9 @@ export function getChangesSinceCommit(commitHash: string): GitChangesSince | nul
       const insertMatch = statsRaw.match(/(\d+) insertions?\(\+\)/);
       const deleteMatch = statsRaw.match(/(\d+) deletions?\(-\)/);
 
-      if (filesMatch) filesChanged = parseInt(filesMatch[1]);
-      if (insertMatch) insertions = parseInt(insertMatch[1]);
-      if (deleteMatch) deletions = parseInt(deleteMatch[1]);
+      if (filesMatch) filesChanged = parseInt(filesMatch[1] ?? '0');
+      if (insertMatch) insertions = parseInt(insertMatch[1] ?? '0');
+      if (deleteMatch) deletions = parseInt(deleteMatch[1] ?? '0');
     }
 
     return { newCommits, filesChanged, insertions, deletions };
@@ -156,6 +156,6 @@ export function getChangesSinceCommit(commitHash: string): GitChangesSince | nul
 export function getLastCommitHash(gitCommits?: string[]): string | null {
   if (!gitCommits || gitCommits.length === 0) return null;
   // Format is "abc1234 commit message"
-  const match = gitCommits[0].match(/^([a-f0-9]+)/i);
-  return match ? match[1] : null;
+  const match = gitCommits[0]!.match(/^([a-f0-9]+)/i);
+  return match ? (match[1] ?? null) : null;
 }

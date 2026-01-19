@@ -86,11 +86,11 @@ export function captureFromClaudeCode(projectPath?: string): CapturedContext {
     if (projectEntries.length === 0) {
       throw new Error(`No history entries for project: ${projectPath}`);
     }
-    currentSessionId = projectEntries[projectEntries.length - 1].sessionId;
+    currentSessionId = projectEntries[projectEntries.length - 1]!.sessionId;
     sessionEntries = projectEntries.filter((e) => e.sessionId === currentSessionId);
   } else {
     // Most recent session overall
-    currentSessionId = entries[entries.length - 1].sessionId;
+    currentSessionId = entries[entries.length - 1]!.sessionId;
     sessionEntries = entries.filter((e) => e.sessionId === currentSessionId);
   }
 
@@ -155,8 +155,8 @@ export function captureFromClaudeCode(projectPath?: string): CapturedContext {
         .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
       if (planFiles.length > 0) {
-        planFile = planFiles[0].name;
-        planContent = readFileSync(planFiles[0].path, 'utf-8');
+        planFile = planFiles[0]!.name;
+        planContent = readFileSync(planFiles[0]!.path, 'utf-8');
       }
     } catch {
       // Plans dir read failed, continue without plan

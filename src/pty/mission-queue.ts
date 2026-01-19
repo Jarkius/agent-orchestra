@@ -271,7 +271,7 @@ export class MissionQueue implements IMissionQueue {
     // Find insertion point
     let insertIndex = this.queue.length;
     for (let i = 0; i < this.queue.length; i++) {
-      const existingMission = this.missions.get(this.queue[i]);
+      const existingMission = this.missions.get(this.queue[i]!);
       if (existingMission) {
         const existingOrder = this.priorityOrder[existingMission.priority];
         if (order < existingOrder) {

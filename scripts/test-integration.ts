@@ -210,7 +210,7 @@ async function testLearningsSystem() {
   // Test validation
   const allLearnings = listLearningsFromDb({ limit: 5 });
   if (allLearnings.length > 0) {
-    const toValidate = allLearnings[0];
+    const toValidate = allLearnings[0]!;
 
     await benchmark('Validate learning', async () => {
       validateLearning(toValidate.id!);
@@ -253,10 +253,10 @@ async function testAutoLinking() {
   success(`Auto-linked: ${autoLinked.length}, Suggested: ${suggested.length}`);
 
   if (autoLinked.length > 0) {
-    info(`Auto-linked to: ${autoLinked[0].id} (${autoLinked[0].similarity.toFixed(3)})`);
+    info(`Auto-linked to: ${autoLinked[0]!.id} (${autoLinked[0]!.similarity.toFixed(3)})`);
   }
   if (suggested.length > 0) {
-    info(`Suggested: ${suggested[0].id} (${suggested[0].similarity.toFixed(3)})`);
+    info(`Suggested: ${suggested[0]!.id} (${suggested[0]!.similarity.toFixed(3)})`);
   }
 }
 
@@ -277,7 +277,7 @@ async function testEmbeddingPerformance() {
   const labels = ['Short (2 words)', 'Medium (15 words)', 'Long (50 words)', 'Very long (150 words)'];
 
   for (let i = 0; i < testTexts.length; i++) {
-    const text = testTexts[i];
+    const text = testTexts[i]!;
     const iterations = 3; // Reduced for speed
     const times: number[] = [];
 
@@ -291,7 +291,7 @@ async function testEmbeddingPerformance() {
     const min = Math.min(...times);
     const max = Math.max(...times);
 
-    metric(labels[i], `${avg.toFixed(1)}ms avg`, `(min: ${min.toFixed(1)}ms, max: ${max.toFixed(1)}ms)`);
+    metric(labels[i]!, `${avg.toFixed(1)}ms avg`, `(min: ${min.toFixed(1)}ms, max: ${max.toFixed(1)}ms)`);
     perfResults.push({ name: `Embedding: ${labels[i]}`, duration: avg });
   }
 

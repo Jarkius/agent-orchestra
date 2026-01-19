@@ -57,17 +57,17 @@ async function reindexSessions(): Promise<number> {
   console.log(`  Found ${sessions.length} sessions`);
 
   for (let i = 0; i < sessions.length; i++) {
-    const session = sessions[i];
+    const session = sessions[i]!;
     progress(i + 1, sessions.length, "sessions");
 
     // Build enriched content for better semantic search
     const searchParts = [session.summary];
-    if (session.tags) searchParts.push(session.tags);
+    if (session.tags) searchParts.push(Array.isArray(session.tags) ? session.tags.join(' ') : session.tags);
 
     // Parse full_context if available
     if (session.full_context) {
       try {
-        const ctx = JSON.parse(session.full_context);
+        const ctx = JSON.parse(session.full_context as string);
         if (ctx.wins?.length) searchParts.push(`Wins: ${ctx.wins.join(', ')}`);
         if (ctx.challenges?.length) searchParts.push(`Challenges: ${ctx.challenges.join(', ')}`);
         if (ctx.next_steps?.length) searchParts.push(`Next: ${ctx.next_steps.join(', ')}`);
@@ -99,14 +99,14 @@ async function reindexLearnings(): Promise<number> {
   console.log(`  Found ${learnings.length} learnings`);
 
   for (let i = 0; i < learnings.length; i++) {
-    const learning = learnings[i];
+    const learning = learnings[i]!;
     progress(i + 1, learnings.length, "learnings");
 
-    await saveLearning(learning.id, learning.title, learning.description || '', {
+    await saveLearning(learning.id!, learning.title, learning.description || '', {
       category: learning.category,
-      confidence: learning.confidence,
+      confidence: learning.confidence || 'low',
       source_session_id: learning.source_session_id || '',
-      created_at: learning.created_at,
+      created_at: learning.created_at || new Date().toISOString(),
       agent_id: learning.agent_id,
       visibility: learning.visibility || 'public',
     });
@@ -126,15 +126,15 @@ async function reindexSessionTasks(): Promise<number> {
   console.log(`  Found ${tasks.length} session tasks`);
 
   for (let i = 0; i < tasks.length; i++) {
-    const task = tasks[i];
+    const task = tasks[i]!;
     progress(i + 1, tasks.length, "tasks");
 
-    await embedSessionTask(task.id, task.description, {
+    await embedSessionTask(task.id!, task.description, {
       session_id: task.session_id,
       status: task.status,
       priority: task.priority || 'normal',
       notes: task.notes || '',
-      created_at: task.created_at,
+      created_at: task.created_at || new Date().toISOString(),
     });
   }
 

@@ -58,7 +58,7 @@ async function getContext() {
     if (sessionResults.ids[0]?.length) {
       console.log('  Related sessions:');
       for (let i = 0; i < sessionResults.ids[0].length; i++) {
-        const id = sessionResults.ids[0][i];
+        const id = sessionResults.ids[0]![i]!;
         const session = getSessionById(id);
         const distance = sessionResults.distances?.[0]?.[i] || 0;
         console.log(`    [${(1 - distance).toFixed(2)}] ${id}`);

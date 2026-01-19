@@ -312,7 +312,7 @@ async function list() {
       if (!byCategory[l.category]) {
         byCategory[l.category] = [];
       }
-      byCategory[l.category].push(l);
+      byCategory[l.category]!.push(l);
     }
 
     for (const [category, items] of Object.entries(byCategory)) {

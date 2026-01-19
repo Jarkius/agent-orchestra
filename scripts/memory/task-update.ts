@@ -159,7 +159,7 @@ if (args[0] === 'list') {
   listTasks(showAll);
 } else {
   // Update task: <id> <status> or <id> --notes "..."
-  const taskId = parseInt(args[0], 10);
+  const taskId = parseInt(args[0]!, 10);
   if (isNaN(taskId)) {
     console.log(`${RED}Invalid task ID: ${args[0]}${RESET}`);
     printUsage();
@@ -173,7 +173,7 @@ if (args[0] === 'list') {
     if (args[i] === '--notes' && args[i + 1]) {
       notes = args[i + 1];
       i++;
-    } else if (VALID_STATUSES.includes(args[i])) {
+    } else if (VALID_STATUSES.includes(args[i]!)) {
       status = args[i];
     }
   }

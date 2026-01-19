@@ -23,10 +23,10 @@ function parseGlobalFlags(): { agentId?: number; args: string[] } {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--agent' && i + 1 < args.length) {
-      agentId = parseInt(args[i + 1]);
+      agentId = parseInt(args[i + 1]!);
       i++; // Skip the value
     } else {
-      remaining.push(args[i]);
+      remaining.push(args[i]!);
     }
   }
 
@@ -50,20 +50,20 @@ async function main() {
 
     case 'learn':
       // Pass remaining args to learn script
-      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./learn');
       break;
 
     case 'distill':
       // Pass remaining args to distill script
-      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./distill');
       break;
 
     case 'recall':
     case 'search':
       // No arg = resume last session, with arg = search/lookup
-      process.argv = [process.argv[0], process.argv[1], arg || ''];
+      process.argv = [process.argv[0]!, process.argv[1]!, arg || ''];
       await import('./recall');
       break;
 
@@ -80,12 +80,12 @@ async function main() {
       break;
 
     case 'context':
-      process.argv = [process.argv[0], process.argv[1], arg || ''];
+      process.argv = [process.argv[0]!, process.argv[1]!, arg || ''];
       await import('./context');
       break;
 
     case 'purge':
-      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./purge');
       break;
 
@@ -94,12 +94,12 @@ async function main() {
       break;
 
     case 'reindex':
-      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./reindex');
       break;
 
     case 'task':
-      process.argv = [process.argv[0], process.argv[1], ...args.slice(1)];
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./task-update');
       break;
 

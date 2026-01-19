@@ -27,8 +27,8 @@ async function main() {
   const startTime = Date.now();
 
   const model = await FlagEmbedding.init({
-    model: selectedModel,
-    cacheDir: process.env.FASTEMBED_CACHE_DIR,
+    model: selectedModel as EmbeddingModel.BGESmallENV15,
+    cacheDir: process.env.FASTEMBED_CACHE_DIR ?? undefined,
   });
 
   // Test embedding to verify model works
@@ -40,7 +40,7 @@ async function main() {
   const duration = Date.now() - startTime;
 
   console.log(`Model downloaded and verified in ${duration}ms`);
-  console.log(`Embedding dimensions: ${testEmbedding[0].length}`);
+  console.log(`Embedding dimensions: ${testEmbedding[0]!.length}`);
   console.log("\nReady for use!");
 }
 

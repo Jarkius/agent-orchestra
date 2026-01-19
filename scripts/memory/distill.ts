@@ -216,7 +216,7 @@ async function distillSession(session: SessionRecord) {
   let saved = 0;
 
   for (let i = 0; i < extracted.length; i++) {
-    const item = extracted[i];
+    const item = extracted[i]!;
     const icon = CATEGORY_ICONS[item.suggestedCategory];
     const sourceLabel = item.source === 'learnings' ? '💡' : item.source === 'wins' ? '✓' : '⚠️';
 
@@ -317,7 +317,7 @@ and saves them as proper learnings with category and confidence.
   }
 
   if (args[0] === '--last') {
-    const count = parseInt(args[1]) || 5;
+    const count = parseInt(args[1] ?? '5') || 5;
     sessions = listSessionsFromDb({ limit: count });
     console.log(`\nDistilling from last ${sessions.length} session(s)...\n`);
   } else if (args[0]?.startsWith('session_')) {

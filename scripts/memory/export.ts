@@ -39,7 +39,7 @@ async function exportLearnings() {
     if (!byCategory[l.category]) {
       byCategory[l.category] = [];
     }
-    byCategory[l.category].push(l);
+    byCategory[l.category]!.push(l);
   }
 
   // Build markdown
@@ -64,7 +64,7 @@ async function exportLearnings() {
     md += `# ${capitalize(category)}\n\n`;
 
     // Sort by confidence (proven first) then by times_validated
-    items.sort((a, b) => {
+    items!.sort((a, b) => {
       const confOrder = ['proven', 'high', 'medium', 'low'];
       const aConf = confOrder.indexOf(a.confidence || 'medium');
       const bConf = confOrder.indexOf(b.confidence || 'medium');
@@ -72,7 +72,7 @@ async function exportLearnings() {
       return (b.times_validated || 1) - (a.times_validated || 1);
     });
 
-    for (const item of items) {
+    for (const item of items!) {
       const badge = confidenceBadge(item.confidence || 'medium');
       const validated = item.times_validated && item.times_validated > 1
         ? ` (${item.times_validated}x)`
@@ -132,7 +132,7 @@ async function exportLearnings() {
   console.log('');
   console.log('Categories:');
   for (const category of sortedCategories) {
-    console.log(`  - ${category}: ${byCategory[category].length} learnings`);
+    console.log(`  - ${category}: ${byCategory[category]!.length} learnings`);
   }
   console.log('');
   console.log('Confidence distribution:');

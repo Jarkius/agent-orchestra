@@ -85,8 +85,8 @@ describe('PTYManager', () => {
         new Promise(r => setTimeout(() => r({ done: true }), 100)),
       ]);
 
-      if (!result.done) {
-        events.push(result.value);
+      if (!(result as IteratorResult<AgentEvent>).done) {
+        events.push((result as IteratorResult<AgentEvent>).value);
       }
 
       expect(events.length).toBeGreaterThanOrEqual(0);

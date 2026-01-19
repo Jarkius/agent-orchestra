@@ -235,7 +235,7 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  const agentId = parseInt(args[0]);
+  const agentId = parseInt(args[0] ?? '0');
   const prompt = args.slice(1).join(" ");
   const taskId = `cli_${Date.now()}`;
 

@@ -479,18 +479,19 @@ export async function searchSessions(
   // Build where clause for agent filtering
   let where: Where | undefined;
   if (agentId !== undefined) {
+    const agentIdValue = agentId ?? -1;
     if (includeShared) {
       // ChromaDB doesn't have OR conditions, so we use $or operator
       where = {
         $or: [
-          { agent_id: agentId },
+          { agent_id: agentIdValue },
           { agent_id: -1 }, // orchestrator
           { visibility: 'shared' },
           { visibility: 'public' },
         ],
-      };
+      } as Where;
     } else {
-      where = { agent_id: agentId };
+      where = { agent_id: agentIdValue } as Where;
     }
   }
 
@@ -579,31 +580,32 @@ export async function searchLearnings(
 
   // Build where clause
   let where: Where | undefined;
-  const conditions: Record<string, unknown>[] = [];
+  const conditions: Where[] = [];
 
   if (cat) {
-    conditions.push({ category: cat });
+    conditions.push({ category: cat } as Where);
   }
 
   if (agentId !== undefined) {
+    const agentIdValue = agentId ?? -1;
     if (includeShared) {
       conditions.push({
         $or: [
-          { agent_id: agentId },
+          { agent_id: agentIdValue },
           { agent_id: -1 }, // orchestrator
           { visibility: 'shared' },
           { visibility: 'public' },
         ],
-      });
+      } as Where);
     } else {
-      conditions.push({ agent_id: agentId });
+      conditions.push({ agent_id: agentIdValue } as Where);
     }
   }
 
   if (conditions.length === 1) {
     where = conditions[0];
   } else if (conditions.length > 1) {
-    where = { $and: conditions };
+    where = { $and: conditions } as Where;
   }
 
   return await cols.learnings.query({
@@ -758,15 +760,16 @@ export async function findSimilarSessions(
   // Build where clause for agent filtering
   let where: Where | undefined;
   if (agentId !== undefined && !crossAgentLinking) {
+    const agentIdValue = agentId ?? -1;
     // Only search within same agent's sessions (or orchestrator + public/shared)
     where = {
       $or: [
-        { agent_id: agentId },
+        { agent_id: agentIdValue },
         { agent_id: -1 }, // orchestrator
         { visibility: 'shared' },
         { visibility: 'public' },
       ],
-    };
+    } as Where;
   }
 
   const results = await cols.sessions.query({
@@ -783,16 +786,16 @@ export async function findSimilarSessions(
   const documents = results.documents[0] || [];
 
   for (let i = 0; i < ids.length; i++) {
-    const id = ids[i];
+    const id = ids[i]!;
     if (id === excludeId) continue;
 
-    const distance = distances[i];
+    const distance = distances[i] ?? 1;
     const similarity = 1 - distance; // ChromaDB returns distance, not similarity
 
     if (similarity > 0.85) {
       autoLinked.push({ id, similarity });
     } else if (similarity > 0.70) {
-      suggested.push({ id, similarity, summary: documents[i]?.substring(0, 100) });
+      suggested.push({ id, similarity, summary: (documents[i] ?? '').substring(0, 100) });
     }
   }
 
@@ -827,15 +830,16 @@ export async function findSimilarLearnings(
   // Build where clause for agent filtering
   let where: Where | undefined;
   if (agentId !== undefined && !crossAgentLinking) {
+    const agentIdValue = agentId ?? -1;
     // Only search within same agent's learnings (or orchestrator + public/shared)
     where = {
       $or: [
-        { agent_id: agentId },
+        { agent_id: agentIdValue },
         { agent_id: -1 }, // orchestrator
         { visibility: 'shared' },
         { visibility: 'public' },
       ],
-    };
+    } as Where;
   }
 
   const results = await cols.learnings.query({
@@ -852,16 +856,16 @@ export async function findSimilarLearnings(
   const documents = results.documents[0] || [];
 
   for (let i = 0; i < ids.length; i++) {
-    const id = ids[i];
+    const id = ids[i]!;
     if (excludeId && id === String(excludeId)) continue;
 
-    const distance = distances[i];
+    const distance = distances[i] ?? 1;
     const similarity = 1 - distance;
 
     if (similarity > 0.85) {
       autoLinked.push({ id, similarity });
     } else if (similarity > 0.70) {
-      suggested.push({ id, similarity, summary: documents[i]?.substring(0, 100) });
+      suggested.push({ id, similarity, summary: (documents[i] ?? '').substring(0, 100) });
     }
   }
 
@@ -923,7 +927,7 @@ export async function preloadEmbeddingModel(): Promise<void> {
 export function getEmbeddingProviderInfo(): { provider: string; model?: string } {
   const config = getEmbeddingConfig();
   return {
-    provider: config.provider,
+    provider: config.provider || 'transformers',
     model: config.model,
   };
 }
@@ -1053,7 +1057,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   // Check embedding
   let embeddingStatus: HealthStatus["embedding"] = {
     status: "not_initialized",
-    provider: embeddingConfig.provider,
+    provider: embeddingConfig.provider || 'transformers',
     model: embeddingConfig.model,
   };
 

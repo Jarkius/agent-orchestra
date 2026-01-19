@@ -67,12 +67,12 @@ async function main() {
     console.log(`   Query: "${query}"`);
     const results = await searchSimilarTasks(query, 3);
 
-    if (results.ids[0].length > 0) {
+    if (results.ids[0]!.length > 0) {
       console.log("   Top matches:");
-      for (let i = 0; i < results.ids[0].length; i++) {
-        const id = results.ids[0][i];
+      for (let i = 0; i < results.ids[0]!.length; i++) {
+        const id = results.ids[0]![i];
         const distance = results.distances?.[0]?.[i]?.toFixed(4) || "N/A";
-        const doc = results.documents[0][i]?.substring(0, 60) + "...";
+        const doc = (results.documents[0]![i]?.substring(0, 60) ?? '') + "...";
         console.log(`     ${i + 1}. [${id}] (dist: ${distance}) ${doc}`);
       }
     } else {

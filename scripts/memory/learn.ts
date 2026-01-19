@@ -253,7 +253,7 @@ Quick Examples:
       prevention = args[i + 1];
       i++;
     } else if (args[i] === '--confidence' && args[i + 1]) {
-      const level = args[i + 1].toLowerCase();
+      const level = args[i + 1]!.toLowerCase();
       if (validConfidenceLevels.includes(level)) {
         confidence = level as 'low' | 'medium' | 'high' | 'proven';
       } else {
@@ -261,7 +261,7 @@ Quick Examples:
       }
       i++;
     } else if (!title) {
-      title = args[i];
+      title = args[i]!;
     } else if (!context) {
       context = args[i];
     }

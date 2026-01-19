@@ -84,8 +84,8 @@ export class PTYManager implements IPTYManager {
     this.emitEvent({ type: 'spawn', agentId, timestamp: new Date(), data: { paneId, pid, worktreePath, worktreeBranch } });
 
     // Start health check
-    if (cfg.healthCheckIntervalMs > 0) {
-      this.startHealthCheck(agentId, cfg.healthCheckIntervalMs);
+    if ((cfg.healthCheckIntervalMs ?? 0) > 0) {
+      this.startHealthCheck(agentId, cfg.healthCheckIntervalMs!);
     }
 
     // Update status after brief delay
