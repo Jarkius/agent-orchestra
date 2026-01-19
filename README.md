@@ -15,6 +15,8 @@ Expert Multi-Agent Orchestration System for spawning and coordinating real Claud
 - **Mission Queue** - Priority-based task queue with retry logic and dependencies
 - **MCP Integration** - 31 consolidated tools for orchestration, memory, and analytics
 - **Session Memory** - Persistent context across sessions with semantic search
+- **Learning Loop** - Closed-loop learning with auto-distill, confidence tracking, and knowledge harvesting
+- **Dual-Collection Pattern** - Separate knowledge (facts) and lessons (problem→solution→outcome) stores
 
 ## Prerequisites
 
@@ -146,8 +148,8 @@ Tools are consolidated with `action` parameters for efficiency.
 bun memory save "what was accomplished"
 bun memory save                 # full interactive save with prompts
 
-# Recall/search
-bun memory recall               # resume last session
+# Recall/search (with auto-completion detection)
+bun memory recall               # resume last session + detect completed tasks
 bun memory recall "query"       # semantic search
 bun memory recall "#5"          # recall learning by ID
 
@@ -157,6 +159,15 @@ bun memory distill              # extract from last session
 bun memory distill --last 5     # extract from last 5 sessions
 bun memory distill --all        # extract from ALL sessions
 bun memory export               # export to LEARNINGS.md
+
+# Tasks
+bun memory task list            # list pending tasks across sessions
+bun memory task <id> done       # mark task as completed
+bun memory task <id> in_progress # update task status
+
+# Knowledge Graph
+bun memory graph                # explore entities and relationships
+bun memory graph "chromadb"     # find learnings about a topic
 
 # Maintenance
 bun memory stats                # statistics
@@ -232,7 +243,8 @@ agent-orchestra/
 
 ## Documentation
 
-- [Memory System](docs/memory-system.md) - Session persistence and learnings
+- [Memory System](docs/memory-system.md) - Session persistence, learnings, and auto-completion detection
+- [Learning Loop](docs/learning-loop.md) - Closed-loop learning with knowledge/lessons dual-collection
 - [PTY Orchestration](docs/pty-orchestration.md) - Agent spawning and management
 - [Worktree Isolation](docs/worktree-isolation.md) - Git worktree integration
 

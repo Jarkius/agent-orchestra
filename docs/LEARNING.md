@@ -306,14 +306,90 @@ get_all_results(1)
 
 ---
 
+---
+
+## Phase 5: Learning Loop & Memory Evolution (Current)
+
+**The learning upgrade:** Closed-loop learning system that harvests knowledge, analyzes failures, and improves over time.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    MISSION EXECUTION                         │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+       ┌──────────┐   ┌──────────┐   ┌──────────┐
+       │ harvest  │   │ analyze  │   │  detect  │
+       │ (success)│   │ (failure)│   │ patterns │
+       └────┬─────┘   └────┬─────┘   └────┬─────┘
+            │              │              │
+            ▼              ▼              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   DUAL-COLLECTION STORE                      │
+│  KNOWLEDGE (facts) ←──────────────→ LESSONS (solutions)     │
+└─────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+       ┌─────────────────────────────────────────┐
+       │  Agent Recommendations | Relevant Lessons │
+       └─────────────────────────────────────────┘
+```
+
+### New Components
+
+| File | Purpose |
+|------|---------|
+| `src/learning/loop.ts` | LearningLoop class with harvest, analyze, recommend |
+| `src/utils/git-context.ts` | Auto-completion detection from git history |
+| `scripts/memory/recall.ts` | Enhanced recall with completion hints |
+
+### Key Features
+
+1. **Dual-Collection Pattern** - Separate stores for knowledge (raw facts) and lessons (problem→solution→outcome)
+2. **Auto-Distill** - Extract learnings from past sessions automatically
+3. **Failure Analysis** - Categorize failures, find similar past issues
+4. **Agent Recommendation** - Select best agent based on success history
+5. **Auto-Completion Detection** - Detect completed tasks from git commits
+6. **Confidence Tracking** - Learnings gain confidence through validation
+
+### Usage
+
+```bash
+# Recall with auto-completion detection
+bun memory recall
+
+# Output shows:
+# ⚡ LIKELY COMPLETED (detected from git)
+# ✓? Add ChromaDB collections [80% confidence]
+#   └─ abc1234 Implement learning loop...
+
+# Mark tasks as done
+bun memory task 102 done
+
+# Distill learnings from sessions
+bun memory distill --last 5
+```
+
+### Key Learnings
+
+1. **Dual collections work** - Knowledge for facts, lessons for solutions
+2. **Git history is valuable** - Can detect stale tasks automatically
+3. **Confidence matters** - Low-confidence learnings need validation
+4. **Oracle integration** - Learning loop informs agent selection
+
+---
+
 ## Questions to Explore
 
-1. **Scaling:** How many agents can SQLite handle efficiently?
-2. **Real-time:** Should we use SQLite polling or switch to WebSocket/Redis?
-3. **Persistence:** Should agent memory persist across sessions?
+1. ~~**Scaling:** How many agents can SQLite handle efficiently?~~ → Works well with 10+ agents
+2. ~~**Real-time:** Should we use SQLite polling or switch to WebSocket/Redis?~~ → SQLite + file-based works
+3. ~~**Persistence:** Should agent memory persist across sessions?~~ → Yes, via session memory
 4. **Distribution:** Can we run agents on different machines?
-5. **MCP:** Can we add more tools (file editing, shell commands per agent)?
-6. **Specialization:** Can agents have different "roles" (coder, reviewer, tester)?
+5. ~~**MCP:** Can we add more tools?~~ → 31+ tools now
+6. ~~**Specialization:** Can agents have different "roles"?~~ → Yes: coder, tester, oracle, etc.
 
 ---
 

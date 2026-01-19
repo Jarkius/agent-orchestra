@@ -456,10 +456,48 @@ src/
 
 ---
 
+## Auto-Completion Detection
+
+When resuming a session with `/memory-recall`, the system automatically detects tasks that were likely completed by analyzing git commits since the session was created.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. On /memory-recall, get session's pending tasks          │
+│  2. Get git commits since session.created_at                │
+│  3. For each pending task:                                  │
+│     ├─ Extract keywords from task description               │
+│     ├─ Search commit messages for keyword matches           │
+│     ├─ Calculate confidence score based on match quality    │
+│  4. If confidence > 60%:                                    │
+│     └─ Show as "LIKELY COMPLETED" with evidence             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Example Output
+
+```
+⚡ LIKELY COMPLETED (detected from git)
+────────────────────────────────────────
+✓? Add ChromaDB collections for knowledge/lessons [80% confidence]
+  └─ 74d69c2 Wire failure analysis into mission flow...
+✓? Add tests and verify [80% confidence]
+  └─ 74d69c2 Wire failure analysis into mission flow...
+```
+
+### Confirming Completions
+
+```bash
+bun memory task <id> done    # Confirm a detected completion
+```
+
+---
+
 ## Future Considerations
 
-1. **Cross-session learning propagation** - Automatically surface relevant learnings in new sessions
-2. **Learning decay** - Mark learnings as outdated over time
+1. ~~Cross-session learning propagation~~ - **Implemented** via Learning Loop
+2. ~~Learning decay~~ - **Implemented** via `decayStaleConfidence()`
 3. **Contradiction detection** - Flag conflicting learnings
 4. **Team sharing** - Share learnings across team members
 5. **Integration with Claude's memory** - Sync with Anthropic's memory features when available
