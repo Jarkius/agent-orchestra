@@ -16,9 +16,9 @@ import { readdirSync, statSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
-import { type SessionTask, getLearningEntities, getRelatedEntities } from '../../src/db';
+import { type SessionTask, getLearningEntities, getRelatedEntities, updateSessionTaskStatus } from '../../src/db';
 import { formatFullContext, formatFullContextEnhanced, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
-import { getGitStatus, getChangesSinceCommit, getLastCommitHash } from '../../src/utils/git-context';
+import { getGitStatus, getChangesSinceCommit, getLastCommitHash, detectTaskCompletion, type TaskCompletionHint } from '../../src/utils/git-context';
 
 // ============ Enhanced Resume Context ============
 
@@ -219,11 +219,40 @@ function displayResumeContext(result: RecallResult) {
   const pendingTasks = tasks.filter((t: SessionTask) => t.status === 'pending' || t.status === 'in_progress' || t.status === 'blocked');
   const doneTasks = tasks.filter((t: SessionTask) => t.status === 'done');
 
-  if (pendingTasks.length > 0) {
+  // Detect likely completed tasks based on git history
+  let completionHints: TaskCompletionHint[] = [];
+  if (pendingTasks.length > 0 && session.created_at) {
+    completionHints = detectTaskCompletion(
+      pendingTasks.map(t => ({ description: t.description, status: t.status })),
+      session.created_at
+    );
+  }
+
+  // Show completion hints if found
+  const likelyCompleted = completionHints.filter(h => h.likelyCompleted);
+  if (likelyCompleted.length > 0) {
+    console.log('\n' + '─'.repeat(40));
+    console.log('  ⚡ LIKELY COMPLETED (detected from git)');
+    console.log('─'.repeat(40));
+    for (const hint of likelyCompleted) {
+      const pct = Math.round(hint.confidence * 100);
+      console.log(`  ✓? ${truncate(hint.taskDescription, 50)} [${pct}% confidence]`);
+      if (hint.evidence.length > 0) {
+        console.log(`    └─ ${hint.evidence[0]}`);
+      }
+    }
+    console.log('  \x1b[2mUse: bun memory task done <id> to confirm\x1b[0m');
+  }
+
+  // Filter out likely completed from pending display
+  const likelyCompletedDescs = new Set(likelyCompleted.map(h => h.taskDescription));
+  const stillPending = pendingTasks.filter(t => !likelyCompletedDescs.has(t.description));
+
+  if (stillPending.length > 0) {
     console.log('\n' + '─'.repeat(40));
     console.log('  PENDING TASKS (continue from here)');
     console.log('─'.repeat(40));
-    for (const task of pendingTasks) {
+    for (const task of stillPending) {
       console.log(`  ${getStatusIcon(task.status)} ${task.description}`);
       if (task.notes) {
         console.log(`    Notes: ${task.notes}`);

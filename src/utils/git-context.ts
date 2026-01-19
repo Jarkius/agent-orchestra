@@ -159,3 +159,152 @@ export function getLastCommitHash(gitCommits?: string[]): string | null {
   const match = gitCommits[0]!.match(/^([a-f0-9]+)/i);
   return match ? (match[1] ?? null) : null;
 }
+
+/**
+ * Get commits since a specific ISO date
+ */
+export function getCommitsSinceDate(isoDate: string): string[] {
+  try {
+    const cmd = `git log --oneline --since="${isoDate}" 2>/dev/null || echo ""`;
+    const raw = execSync(cmd, { encoding: 'utf-8' }).trim();
+    return raw ? raw.split('\n').filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Task completion detection result
+ */
+export interface TaskCompletionHint {
+  taskDescription: string;
+  likelyCompleted: boolean;
+  confidence: number;  // 0-1
+  evidence: string[];  // Matching commit messages
+}
+
+/**
+ * Detect if pending tasks were likely completed based on git history
+ */
+export function detectTaskCompletion(
+  tasks: { description: string; status: string }[],
+  sinceDate: string
+): TaskCompletionHint[] {
+  const commits = getCommitsSinceDate(sinceDate);
+  if (commits.length === 0) return [];
+
+  const hints: TaskCompletionHint[] = [];
+
+  for (const task of tasks) {
+    if (task.status === 'done') continue;
+
+    // Extract keywords from task description
+    const keywords = extractKeywords(task.description);
+    if (keywords.length === 0) continue;
+
+    // Find matching commits using fuzzy matching
+    const evidence: string[] = [];
+    for (const commit of commits) {
+      const matchCount = matchesTask(commit, keywords);
+      // Require at least 1 exact keyword match or 30% of keywords (lowered threshold for better recall)
+      if (matchCount >= 1 || matchCount >= keywords.length * 0.3) {
+        evidence.push(commit);
+      }
+    }
+
+    if (evidence.length > 0) {
+      // Calculate confidence based on match quality
+      const avgMatchRatio = evidence.length / Math.max(commits.length, 1);
+      const confidence = Math.min(0.5 + avgMatchRatio * 0.5, 0.95);
+
+      hints.push({
+        taskDescription: task.description,
+        likelyCompleted: confidence > 0.6,
+        confidence,
+        evidence: evidence.slice(0, 3),  // Top 3 matches
+      });
+    }
+  }
+
+  return hints;
+}
+
+/**
+ * Extract meaningful keywords from text
+ * Keeps technical terms and significant words
+ */
+function extractKeywords(text: string): string[] {
+  const stopwords = new Set([
+    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'must', 'shall', 'can', 'to', 'of', 'in',
+    'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'and', 'but',
+    'or', 'not', 'this', 'that', 'these', 'those',
+  ]);
+
+  // Keep technical terms that are often part of method/class names
+  const technicalTerms = new Set([
+    'chromadb', 'chroma', 'vector', 'oracle', 'learning', 'lesson', 'knowledge',
+    'session', 'agent', 'mission', 'task', 'harvest', 'cluster', 'recommend',
+    'search', 'relevant', 'integrate', 'wire', 'loop', 'collection', 'dual',
+    'pattern', 'failure', 'analysis', 'sqlite', 'database', 'table', 'index',
+  ]);
+
+  const words = text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(word => word.length > 2 && !stopwords.has(word));
+
+  // Also extract camelCase/PascalCase parts
+  const camelParts: string[] = [];
+  for (const word of words) {
+    // Split on capital letters: addKnowledge -> add, knowledge
+    const parts = word.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(' ');
+    camelParts.push(...parts.filter(p => p.length > 2));
+  }
+
+  // Combine and dedupe
+  const allWords = [...new Set([...words, ...camelParts])];
+
+  // Prioritize technical terms but include others
+  return allWords;
+}
+
+/**
+ * Check if commit message matches task keywords
+ * Uses fuzzy matching for partial word matches
+ */
+function matchesTask(commitMsg: string, keywords: string[]): number {
+  // Normalize commit: lowercase, remove hyphens to join compound words
+  const commitLower = commitMsg.toLowerCase();
+  const commitNormalized = commitLower.replace(/-/g, '');  // dual-collection -> dualcollection
+
+  let matches = 0;
+
+  for (const kw of keywords) {
+    // Exact match in normalized form
+    if (commitNormalized.includes(kw)) {
+      matches++;
+      continue;
+    }
+    // Also check original (for hyphenated matches)
+    if (commitLower.includes(kw)) {
+      matches++;
+      continue;
+    }
+    // Partial match (for compound words)
+    if (kw.length >= 4) {
+      // Check each word and hyphenated segment
+      const commitParts = commitLower.split(/[\s-]+/);
+      for (const commitWord of commitParts) {
+        if (commitWord.includes(kw) || kw.includes(commitWord)) {
+          matches += 0.5;
+          break;
+        }
+      }
+    }
+  }
+
+  return matches;
+}
