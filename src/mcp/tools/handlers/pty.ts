@@ -261,15 +261,33 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
 
         // Suggest relevant learnings for context enrichment
         let suggestedLearnings: string[] = [];
+        let suggestedLearningIds: number[] = [];
         try {
           const loop = getLearningLoop();
           const learnings = await loop.suggestLearnings({ prompt: parsed.prompt });
           suggestedLearnings = learnings.map(l => l.title);
+          suggestedLearningIds = learnings.map(l => l.id);
         } catch { /* Learning suggestions are best-effort */ }
+
+        // Enrich context with suggested learning IDs for auto-validation on complete
+        let enrichedContext = parsed.context || '';
+        if (suggestedLearningIds.length > 0) {
+          try {
+            const contextObj = enrichedContext ? JSON.parse(enrichedContext) : {};
+            contextObj.suggested_learning_ids = suggestedLearningIds;
+            enrichedContext = JSON.stringify(contextObj);
+          } catch {
+            // If context isn't JSON, wrap it
+            enrichedContext = JSON.stringify({
+              original_context: enrichedContext,
+              suggested_learning_ids: suggestedLearningIds,
+            });
+          }
+        }
 
         const missionId = queue.enqueue({
           prompt: parsed.prompt,
-          context: parsed.context,
+          context: enrichedContext,
           priority: (parsed.priority || 'normal') as Priority,
           type: parsed.type,
           timeoutMs: parsed.timeout_ms || 120000,
@@ -345,6 +363,7 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
 
         // Harvest learnings from completed mission
         let harvestedLearnings: number = 0;
+        let validatedLearnings: number = 0;
         try {
           const loop = getLearningLoop();
           const completedMission = {
@@ -355,6 +374,20 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           };
           const learnings = await loop.harvestFromMission(completedMission);
           harvestedLearnings = learnings.length;
+
+          // Auto-validate: If mission had suggested learnings and completed successfully,
+          // boost confidence of those learnings (they proved useful)
+          if (mission.context && typeof mission.context === 'string') {
+            try {
+              const contextData = JSON.parse(mission.context);
+              if (contextData.suggested_learning_ids?.length > 0) {
+                for (const learningId of contextData.suggested_learning_ids) {
+                  loop.boostConfidence(learningId, `Helped complete mission ${mission.id}`);
+                  validatedLearnings++;
+                }
+              }
+            } catch { /* Context parsing is best-effort */ }
+          }
         } catch { /* Learning harvest is best-effort */ }
 
         return jsonResponse({
@@ -362,6 +395,7 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           mission_id: parsed.mission_id,
           agent_id: mission.assignedTo,
           harvested_learnings: harvestedLearnings > 0 ? harvestedLearnings : undefined,
+          validated_learnings: validatedLearnings > 0 ? validatedLearnings : undefined,
         });
       }
 

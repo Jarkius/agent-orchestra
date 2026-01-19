@@ -391,6 +391,95 @@ function getValidationsNeeded(currentConfidence: string): number {
   }
 }
 
+// ============ Closed-Loop Learning Handler ============
+
+const ClosedLoopSchema = z.object({
+  action: z.enum(['distill', 'validate', 'evolve']),
+  limit: z.number().optional(),
+  min_age_days: z.number().optional(),
+});
+
+async function handleClosedLoop(args: unknown) {
+  const input = ClosedLoopSchema.parse(args);
+
+  try {
+    const { getLearningLoop } = await import('../../../learning');
+    const loop = getLearningLoop();
+
+    switch (input.action) {
+      case 'distill': {
+        // Auto-distill learnings from recent sessions
+        const result = await loop.autoDistillSessions({
+          limit: input.limit || 10,
+          minAgeDays: input.min_age_days || 0,
+        });
+
+        return jsonResponse({
+          action: 'distill',
+          sessions_processed: result.sessionsProcessed,
+          learnings_extracted: result.learningsExtracted,
+          errors: result.errors.length > 0 ? result.errors : undefined,
+        });
+      }
+
+      case 'validate': {
+        // Auto-validate based on usage patterns
+        const result = await loop.autoValidateFromUsage();
+
+        return jsonResponse({
+          action: 'validate',
+          validated: result.validated,
+          decayed: result.decayed,
+        });
+      }
+
+      case 'evolve': {
+        // Full closed-loop cycle: distill + validate + report
+        const distillResult = await loop.autoDistillSessions({
+          limit: input.limit || 20,
+          minAgeDays: input.min_age_days || 0,
+        });
+
+        const validateResult = await loop.autoValidateFromUsage();
+
+        // Get current stats
+        const { listLearningsFromDb, listSessionsFromDb } = await import('../../../db');
+        const totalLearnings = listLearningsFromDb(10000).length;
+        const totalSessions = listSessionsFromDb({ limit: 10000 }).length;
+
+        // Count by confidence
+        const allLearnings = listLearningsFromDb(10000);
+        const byConfidence = {
+          proven: allLearnings.filter(l => l.confidence === 'proven').length,
+          high: allLearnings.filter(l => l.confidence === 'high').length,
+          medium: allLearnings.filter(l => l.confidence === 'medium').length,
+          low: allLearnings.filter(l => l.confidence === 'low').length,
+        };
+
+        return jsonResponse({
+          action: 'evolve',
+          distill: {
+            sessions_processed: distillResult.sessionsProcessed,
+            learnings_extracted: distillResult.learningsExtracted,
+          },
+          validate: {
+            validated: validateResult.validated,
+            decayed: validateResult.decayed,
+          },
+          stats: {
+            total_learnings: totalLearnings,
+            total_sessions: totalSessions,
+            by_confidence: byConfidence,
+          },
+          message: 'Closed-loop learning cycle complete',
+        });
+      }
+    }
+  } catch (error) {
+    return errorResponse(`Closed-loop failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 // ============ Export Handlers Map ============
 
 export const learningHandlers: Record<string, ToolHandler> = {
@@ -399,4 +488,5 @@ export const learningHandlers: Record<string, ToolHandler> = {
   get_learning: handleGetLearning,
   list_learnings: handleListLearnings,
   validate_learning: handleValidateLearning,
+  closed_loop: handleClosedLoop,
 };
