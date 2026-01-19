@@ -27,7 +27,7 @@ Confidence: low → medium → high → proven (use validate_learning to increas
 
 ## Key Files
 
-- `src/mcp-server.ts` - MCP server with tools
+- `src/mcp/server.ts` - MCP server with tools
 - `src/db.ts` - SQLite: agents, sessions, learnings
 - `src/vector-db.ts` - ChromaDB for semantic search
 - `scripts/spawn/spawn_claude_agents.sh` - Agent launcher
