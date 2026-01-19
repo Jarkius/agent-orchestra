@@ -23,8 +23,12 @@ let embeddingFunction: EmbeddingFunction | null = null;
 
 function getClient(): ChromaClient {
   if (!client) {
+    const url = process.env.CHROMA_URL || "http://localhost:8100";
+    const parsed = new URL(url);
     client = new ChromaClient({
-      path: process.env.CHROMA_URL || "http://localhost:8100"
+      host: parsed.hostname,
+      port: parseInt(parsed.port) || 8100,
+      ssl: parsed.protocol === 'https:'
     });
   }
   return client;
@@ -57,6 +61,15 @@ let initialized = false;
 
 export async function initVectorDB(): Promise<void> {
   if (initialized) return;
+
+  // Suppress noisy ChromaDB collection deserialization warnings
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const msg = String(args[0] || '');
+    if (!msg.includes('embedding function configuration')) {
+      originalWarn.apply(console, args);
+    }
+  };
 
   try {
     const chromaClient = getClient();
@@ -108,6 +121,8 @@ export async function initVectorDB(): Promise<void> {
   } catch (error) {
     console.error("[VectorDB] Failed to initialize:", error);
     throw error;
+  } finally {
+    console.warn = originalWarn;
   }
 }
 
