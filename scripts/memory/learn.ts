@@ -12,7 +12,7 @@
  */
 
 import { initVectorDB, saveLearning as saveLearningToChroma, findSimilarLearnings } from '../../src/vector-db';
-import { createLearning, createLearningLink } from '../../src/db';
+import { createLearning, createLearningLink, extractAndLinkEntities } from '../../src/db';
 import * as readline from 'readline';
 
 const TECHNICAL_CATEGORIES = ['performance', 'architecture', 'tooling', 'debugging', 'security', 'testing', 'process'] as const;
@@ -143,6 +143,10 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
     createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
   }
 
+  // 4. Extract and link entities (knowledge graph)
+  const entityText = `${input.title} ${input.lesson || ''} ${input.prevention || ''}`;
+  const entities = extractAndLinkEntities(learningId, entityText);
+
   // Output
   console.log(`  ${CATEGORY_ICONS[category]} Learning #${learningId} saved\n`);
   console.log(`  Category:   ${category}`);
@@ -153,6 +157,7 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
   if (input.source_url) console.log(`  Source:     ${input.source_url}`);
   if (input.context) console.log(`  Context:    ${input.context}`);
   console.log(`  Confidence: ${confidence}`);
+  if (entities.length > 0) console.log(`  Entities:   ${entities.slice(0, 10).join(', ')}${entities.length > 10 ? '...' : ''}`);
 
   if (autoLinked.length > 0) {
     console.log(`\n  🔗 Auto-linked to ${autoLinked.length} similar learning(s):`);

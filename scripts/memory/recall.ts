@@ -16,7 +16,7 @@ import { readdirSync, statSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
-import { type SessionTask } from '../../src/db';
+import { type SessionTask, getLearningEntities, getRelatedEntities } from '../../src/db';
 import { formatFullContext, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
 import { getGitStatus, getChangesSinceCommit, getLastCommitHash } from '../../src/utils/git-context';
 
@@ -403,6 +403,14 @@ function displayLearningDetails(ctx: LearningWithContext) {
   }
   if (learning.source_url) {
     console.log(`Source: ${learning.source_url}`);
+  }
+
+  // Show entities from knowledge graph
+  if (learning.id) {
+    const entities = getLearningEntities(learning.id);
+    if (entities.length > 0) {
+      console.log(`Entities: ${entities.map(e => e.name).join(', ')}`);
+    }
   }
 
   // Show agent ownership

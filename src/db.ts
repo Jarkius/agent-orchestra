@@ -145,6 +145,29 @@ db.run(`
   )
 `);
 
+// Entities table for knowledge graph nodes
+db.run(`
+  CREATE TABLE IF NOT EXISTS entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    type TEXT DEFAULT 'concept' CHECK(type IN ('concept', 'tool', 'pattern', 'file', 'category')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// Learning-entity junction table for knowledge graph edges
+db.run(`
+  CREATE TABLE IF NOT EXISTS learning_entities (
+    learning_id INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,
+    relevance REAL DEFAULT 1.0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (learning_id, entity_id),
+    FOREIGN KEY (learning_id) REFERENCES learnings(id) ON DELETE CASCADE,
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+  )
+`);
+
 // Session tasks table for tracking work items per session
 db.run(`
   CREATE TABLE IF NOT EXISTS session_tasks (
@@ -170,6 +193,10 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_session_links_from ON session_links(from_
 db.run(`CREATE INDEX IF NOT EXISTS idx_learning_links_from ON learning_links(from_learning_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_session_tasks_session ON session_tasks(session_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_session_tasks_status ON session_tasks(status)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learning_entities_learning ON learning_entities(learning_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learning_entities_entity ON learning_entities(entity_id)`);
 
 // ============ Schema Migrations (idempotent) ============
 
@@ -830,6 +857,166 @@ export function getLinkedLearnings(learningId: number): Array<{ learning: Learni
     learning: row as LearningRecord,
     link_type: row.link_type,
     similarity: row.similarity_score,
+  }));
+}
+
+// ============ Entity Functions (Knowledge Graph) ============
+
+export interface EntityRecord {
+  id?: number;
+  name: string;
+  type?: 'concept' | 'tool' | 'pattern' | 'file' | 'category';
+  created_at?: string;
+}
+
+// Stopwords for entity extraction
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+  'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used',
+  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into',
+  'through', 'during', 'before', 'after', 'above', 'below', 'between',
+  'and', 'but', 'or', 'nor', 'so', 'yet', 'both', 'either', 'neither',
+  'not', 'only', 'own', 'same', 'than', 'too', 'very', 'just', 'also',
+  'that', 'this', 'these', 'those', 'what', 'which', 'who', 'whom', 'whose',
+  'when', 'where', 'why', 'how', 'all', 'each', 'every', 'any', 'some',
+  'use', 'using', 'used', 'uses', 'get', 'set', 'add', 'new', 'old',
+]);
+
+/**
+ * Extract entities (keywords) from text
+ */
+export function extractEntities(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, ' ')  // Keep hyphens for compound terms
+    .split(/\s+/)
+    .filter(word => word.length > 2 && !STOPWORDS.has(word))
+    .filter((word, index, self) => self.indexOf(word) === index); // Dedupe
+}
+
+/**
+ * Get or create an entity by name
+ */
+export function getOrCreateEntity(name: string, type: EntityRecord['type'] = 'concept'): number {
+  const normalized = name.toLowerCase().trim();
+
+  const existing = db.query(`SELECT id FROM entities WHERE name = ?`).get(normalized) as { id: number } | null;
+  if (existing) return existing.id;
+
+  const result = db.run(
+    `INSERT INTO entities (name, type) VALUES (?, ?)`,
+    [normalized, type]
+  );
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Link a learning to an entity
+ */
+export function linkLearningToEntity(learningId: number, entityId: number, relevance: number = 1.0): void {
+  db.run(
+    `INSERT OR REPLACE INTO learning_entities (learning_id, entity_id, relevance) VALUES (?, ?, ?)`,
+    [learningId, entityId, relevance]
+  );
+}
+
+/**
+ * Extract and link entities for a learning
+ */
+export function extractAndLinkEntities(learningId: number, text: string): string[] {
+  const entities = extractEntities(text);
+
+  for (const entityName of entities) {
+    const entityId = getOrCreateEntity(entityName);
+    linkLearningToEntity(learningId, entityId);
+  }
+
+  return entities;
+}
+
+/**
+ * Get all entities for a learning
+ */
+export function getLearningEntities(learningId: number): EntityRecord[] {
+  return db.query(
+    `SELECT e.* FROM entities e
+     JOIN learning_entities le ON e.id = le.entity_id
+     WHERE le.learning_id = ?
+     ORDER BY le.relevance DESC`
+  ).all(learningId) as EntityRecord[];
+}
+
+/**
+ * Get all learnings for an entity (by name or ID)
+ */
+export function getEntityLearnings(entityNameOrId: string | number): LearningRecord[] {
+  const query = typeof entityNameOrId === 'number'
+    ? `SELECT l.* FROM learnings l
+       JOIN learning_entities le ON l.id = le.learning_id
+       WHERE le.entity_id = ?
+       ORDER BY l.confidence DESC, l.times_validated DESC`
+    : `SELECT l.* FROM learnings l
+       JOIN learning_entities le ON l.id = le.learning_id
+       JOIN entities e ON le.entity_id = e.id
+       WHERE e.name = ?
+       ORDER BY l.confidence DESC, l.times_validated DESC`;
+
+  const param = typeof entityNameOrId === 'number' ? entityNameOrId : entityNameOrId.toLowerCase().trim();
+  return db.query(query).all(param) as LearningRecord[];
+}
+
+/**
+ * Get related entities (entities that co-occur with given entity in learnings)
+ */
+export function getRelatedEntities(entityName: string, limit: number = 10): Array<{ entity: EntityRecord; sharedCount: number }> {
+  const normalized = entityName.toLowerCase().trim();
+
+  const results = db.query(
+    `SELECT e.*, COUNT(DISTINCT le2.learning_id) as shared_count
+     FROM entities e
+     JOIN learning_entities le2 ON e.id = le2.entity_id
+     WHERE le2.learning_id IN (
+       SELECT le1.learning_id FROM learning_entities le1
+       JOIN entities e1 ON le1.entity_id = e1.id
+       WHERE e1.name = ?
+     )
+     AND e.name != ?
+     GROUP BY e.id
+     ORDER BY shared_count DESC
+     LIMIT ?`
+  ).all(normalized, normalized, limit) as any[];
+
+  return results.map(row => ({
+    entity: { id: row.id, name: row.name, type: row.type, created_at: row.created_at },
+    sharedCount: row.shared_count,
+  }));
+}
+
+/**
+ * Get entity by name
+ */
+export function getEntityByName(name: string): EntityRecord | null {
+  const normalized = name.toLowerCase().trim();
+  return db.query(`SELECT * FROM entities WHERE name = ?`).get(normalized) as EntityRecord | null;
+}
+
+/**
+ * List all entities with learning counts
+ */
+export function listEntities(limit: number = 50): Array<{ entity: EntityRecord; learningCount: number }> {
+  const results = db.query(
+    `SELECT e.*, COUNT(le.learning_id) as learning_count
+     FROM entities e
+     LEFT JOIN learning_entities le ON e.id = le.entity_id
+     GROUP BY e.id
+     ORDER BY learning_count DESC
+     LIMIT ?`
+  ).all(limit) as any[];
+
+  return results.map(row => ({
+    entity: { id: row.id, name: row.name, type: row.type, created_at: row.created_at },
+    learningCount: row.learning_count,
   }));
 }
 
