@@ -27,6 +27,9 @@ Selectively purge sessions or learnings from memory.
 # Purge old data before a date
 /memory-purge sessions --before 2025-01-01
 
+# Remove duplicate learnings (keeps oldest of each title)
+/memory-purge learnings --duplicates
+
 # Skip confirmation prompt
 /memory-purge sessions --yes
 /memory-purge learnings -y
@@ -45,6 +48,7 @@ Selectively purge sessions or learnings from memory.
 |--------|-------------|
 | `--keep N` | Keep the last N items, purge the rest |
 | `--before DATE` | Purge items before this date (ISO format) |
+| `--duplicates` | Remove duplicate learnings (keeps oldest of each title) |
 | `--yes`, `-y` | Skip confirmation prompt |
 
 ## Safety

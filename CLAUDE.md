@@ -17,13 +17,18 @@ tmux attach -t claude-agents-<pid>      # View agents
 bun memory save ["summary"]   # Save session + learnings
 bun memory recall ["query"]   # Resume/search sessions
 bun memory learn <cat> "title" [--lesson "..." --prevention "..."]
+bun memory distill [--all]    # Extract learnings from sessions
 bun memory export             # Export to LEARNINGS.md
 bun memory stats              # View statistics
+bun memory purge <target>     # Cleanup (--keep N, --duplicates)
+bun memory reindex            # Re-index vectors
 ```
+
+**Slash commands:** `/memory-save`, `/memory-recall`, `/memory-validate`, `/memory-reindex`, `/memory-distill`, `/memory-purge`
 
 Categories: performance, architecture, tooling, process, debugging, security, testing, philosophy, principle, insight, pattern, retrospective
 
-Confidence: low → medium → high → proven (use validate_learning to increase)
+Confidence: low → medium → high → proven (use `/memory-validate` to increase)
 
 ## Key Files
 

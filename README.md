@@ -144,23 +144,27 @@ Tools are consolidated with `action` parameters for efficiency.
 ```bash
 # Save session
 bun memory save "what was accomplished"
-
-# Full interactive save
-bun memory save  # prompts for wins, challenges, learnings
+bun memory save                 # full interactive save with prompts
 
 # Recall/search
-bun memory recall "query"       # semantic search
 bun memory recall               # resume last session
+bun memory recall "query"       # semantic search
+bun memory recall "#5"          # recall learning by ID
 
 # Learnings
 bun memory learn insight "Title" --lesson "Key insight"
 bun memory distill              # extract from last session
+bun memory distill --last 5     # extract from last 5 sessions
+bun memory distill --all        # extract from ALL sessions
 bun memory export               # export to LEARNINGS.md
 
-# Utilities
+# Maintenance
 bun memory stats                # statistics
 bun memory list sessions        # list sessions
 bun memory list learnings       # list learnings
+bun memory purge sessions --keep 10      # keep last 10 sessions
+bun memory purge learnings --duplicates  # remove duplicates
+bun memory reindex              # re-index vectors after changes
 ```
 
 ## Configuration
