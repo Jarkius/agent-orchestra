@@ -22,9 +22,10 @@ bun memory export             # Export to LEARNINGS.md
 bun memory stats              # View statistics
 bun memory purge <target>     # Cleanup (--keep N, --duplicates)
 bun memory reindex            # Re-index vectors
+bun memory graph ["entity"]   # Explore knowledge graph
 ```
 
-**Slash commands:** `/memory-save`, `/memory-recall`, `/memory-validate`, `/memory-reindex`, `/memory-distill`, `/memory-purge`
+**Slash commands:** `/memory-save`, `/memory-recall`, `/memory-validate`, `/memory-reindex`, `/memory-distill`, `/memory-purge`, `/memory-graph`
 
 Categories: performance, architecture, tooling, process, debugging, security, testing, philosophy, principle, insight, pattern, retrospective
 

@@ -1020,6 +1020,74 @@ export function listEntities(limit: number = 50): Array<{ entity: EntityRecord; 
   }));
 }
 
+/**
+ * Find path between two entities through shared learnings (BFS)
+ * Returns array of steps: [{entity, learning}, ...]
+ */
+export function findEntityPath(
+  fromEntity: string,
+  toEntity: string,
+  maxDepth: number = 4
+): Array<{ entity: EntityRecord; learning: LearningRecord | null }> | null {
+  const fromNorm = fromEntity.toLowerCase().trim();
+  const toNorm = toEntity.toLowerCase().trim();
+
+  // Get starting entity
+  const startEntity = getEntityByName(fromNorm);
+  const endEntity = getEntityByName(toNorm);
+
+  if (!startEntity || !endEntity || !startEntity.id || !endEntity.id) return null;
+  if (startEntity.id === endEntity.id) return [{ entity: startEntity, learning: null }];
+
+  const startId = startEntity.id;
+  const endId = endEntity.id;
+
+  // BFS to find shortest path
+  const visited = new Set<number>([startId]);
+  const queue: Array<{
+    entityId: number;
+    path: Array<{ entityId: number; learningId: number | null }>;
+  }> = [{ entityId: startId, path: [{ entityId: startId, learningId: null }] }];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+
+    if (current.path.length > maxDepth) continue;
+
+    // Get learnings for current entity
+    const learnings = db.query(
+      `SELECT l.id as learning_id, e.id as entity_id
+       FROM learnings l
+       JOIN learning_entities le1 ON l.id = le1.learning_id
+       JOIN learning_entities le2 ON l.id = le2.learning_id
+       JOIN entities e ON le2.entity_id = e.id
+       WHERE le1.entity_id = ? AND e.id != ?`
+    ).all(current.entityId, current.entityId) as Array<{ learning_id: number; entity_id: number }>;
+
+    for (const row of learnings) {
+      if (visited.has(row.entity_id)) continue;
+      visited.add(row.entity_id);
+
+      const newPath = [...current.path, { entityId: row.entity_id, learningId: row.learning_id }];
+
+      // Found target
+      if (row.entity_id === endId) {
+        // Convert to full records
+        return newPath.map(step => ({
+          entity: db.query(`SELECT * FROM entities WHERE id = ?`).get(step.entityId) as EntityRecord,
+          learning: step.learningId
+            ? (db.query(`SELECT * FROM learnings WHERE id = ?`).get(step.learningId) as LearningRecord)
+            : null,
+        }));
+      }
+
+      queue.push({ entityId: row.entity_id, path: newPath });
+    }
+  }
+
+  return null; // No path found
+}
+
 // ============ Analytics Functions ============
 
 export function getSessionStats() {

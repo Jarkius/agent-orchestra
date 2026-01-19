@@ -98,6 +98,11 @@ async function main() {
       await import('./reindex');
       break;
 
+    case 'graph':
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./graph');
+      break;
+
     case 'task':
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./task-update');
@@ -131,6 +136,9 @@ Commands:
   context [query]   Get context bundle for new session
   task list         List pending tasks across sessions
   task <id> <status> Update task status (done/pending/blocked/in_progress)
+  graph             List top entities in knowledge graph
+  graph "entity"    Show related entities and learnings
+  graph "A" "B"     Find path between two entities
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
   reindex [type]    Re-index SQLite data into ChromaDB vectors

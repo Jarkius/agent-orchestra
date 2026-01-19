@@ -1,7 +1,9 @@
 # Plan: Add Knowledge Graph Support for Learnings
 
 **Created**: 2026-01-19 16:35
+**Completed**: 2026-01-19 16:50
 **Branch**: main
+**Status**: ✅ FULLY IMPLEMENTED
 
 ## Context
 
@@ -45,13 +47,13 @@ Add entity extraction and relationship tracking alongside existing vector embedd
 
 ## Implementation Steps
 
-1. [ ] Create `entities` table (id, name, type, learning_id)
-2. [ ] Create `entity_relationships` table (from_entity, relation_type, to_entity)
-3. [ ] Add entity extraction on learning save (simple keyword extraction first)
-4. [ ] Add `getRelatedEntities(entityName)` function
-5. [ ] Add `findPath(entityA, entityB)` for relationship traversal
-6. [ ] Update recall to show entity relationships
-7. [ ] Add `/memory-graph` command to visualize relationships
+1. [x] Create `entities` table (id, name, type, learning_id)
+2. [x] Create `learning_entities` junction table (many-to-many relationship)
+3. [x] Add entity extraction on learning save (keyword extraction)
+4. [x] Add `getRelatedEntities(entityName)` function
+5. [x] Add `findEntityPath(entityA, entityB)` for relationship traversal
+6. [x] Update recall to show entity relationships
+7. [x] Add `/memory-graph` command to visualize relationships
 
 ## Files to Modify
 
@@ -64,10 +66,10 @@ Add entity extraction and relationship tracking alongside existing vector embedd
 
 ## Verification
 
-- [ ] Create learning with entities → entities extracted
-- [ ] Query `getRelatedEntities("memory")` → returns related concepts
-- [ ] Recall shows "Related concepts: X, Y, Z"
-- [ ] `/memory-graph memory` shows relationship visualization
+- [x] Create learning with entities → entities extracted
+- [x] Query `getRelatedEntities("memory")` → returns related concepts
+- [x] Recall shows "Entities: X, Y, Z"
+- [x] `/memory-graph memory` shows relationship visualization
 
 ## Future Enhancements
 
