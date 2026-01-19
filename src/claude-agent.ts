@@ -7,8 +7,101 @@
 import { $ } from "bun";
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { existsSync } from "fs";
+import { join, dirname } from "path";
 import { getAgent, getAgentTasks } from "./db";
 import { searchLearnings, isInitialized as isVectorDBInitialized } from "./vector-db";
+
+// Cache for CLAUDE.md content
+let claudeMdCache: string | null = null;
+
+/**
+ * Load CLAUDE.md from project root for agent context
+ */
+async function loadClaudeMd(): Promise<string> {
+  if (claudeMdCache !== null) {
+    return claudeMdCache;
+  }
+
+  // Try to find CLAUDE.md relative to this file's location
+  const possiblePaths = [
+    join(process.cwd(), "CLAUDE.md"),
+    join(dirname(import.meta.path), "..", "CLAUDE.md"),
+    join(dirname(import.meta.path), "..", "..", "CLAUDE.md"),
+  ];
+
+  for (const path of possiblePaths) {
+    if (existsSync(path)) {
+      claudeMdCache = await readFile(path, "utf-8");
+      return claudeMdCache;
+    }
+  }
+
+  claudeMdCache = "";
+  return claudeMdCache;
+}
+
+/**
+ * Get sub-agent specific instructions - agents are mirrors of the orchestrator
+ */
+function getSubAgentInstructions(agentId: number): string {
+  return `
+## You Are Agent ${agentId} - A Full Claude Instance
+
+You are a **full Claude instance** running as Agent ${agentId} in a multi-agent orchestration system. You have the same capabilities as the main orchestrator Claude - you are a mirror, not a reduced helper.
+
+### Multi-Agent Architecture
+- **Orchestrator**: The main Claude session that coordinates work
+- **You (Agent ${agentId})**: A parallel Claude instance that can work autonomously
+- **Other Agents**: Sibling Claude instances working on other tasks
+- **Shared Memory**: SQLite + ChromaDB for persistent knowledge
+
+### Memory Commands You Can Use
+You have access to the same memory system as the orchestrator:
+
+\`\`\`bash
+# Save your session/learnings
+bun memory save ["summary"]
+
+# Search past sessions
+bun memory recall ["query"]
+
+# Capture a specific learning
+bun memory learn <category> "title" [--lesson "..." --prevention "..."]
+
+# Get context for your task
+bun memory context ["query"]
+
+# View statistics
+bun memory stats
+\`\`\`
+
+**Categories**: performance, architecture, tooling, process, debugging, security, testing, philosophy, principle, insight, pattern, retrospective
+
+**Confidence levels**: low → medium → high → proven
+
+### How You Work
+1. You receive tasks via your inbox (/tmp/agent_inbox/${agentId}/)
+2. You execute them autonomously with full Claude capabilities
+3. Your results go to your outbox (/tmp/agent_outbox/${agentId}/)
+4. You can read/write files, run commands, and access the codebase
+5. You share memory with the orchestrator and other agents
+
+### When to Save Learnings
+If you discover something valuable during your task:
+- A pattern that could help future tasks
+- A bug fix approach worth remembering
+- An architectural insight
+- A debugging technique
+
+Flag it clearly: **"LEARNING: [category] title - description"**
+
+### Communication with Orchestrator
+Your output is returned to the orchestrator. Be:
+- **Clear**: State results directly
+- **Actionable**: Provide code/commands that work
+- **Insightful**: Share observations that could help
+`;
+}
 
 const SHARED_DIR = "/tmp/agent_shared";
 
@@ -112,8 +205,14 @@ export async function runClaudeTask(
     fullPrompt = `## Shared Project Context\n${sharedContext}\n\n${fullPrompt}`;
   }
 
+  // Load CLAUDE.md for project context
+  const claudeMd = await loadClaudeMd();
+
+  // Get sub-agent instructions (mirrors orchestrator capabilities)
+  const subAgentInstructions = getSubAgentInstructions(agentId);
+
   // Add agent identity with self-awareness (Phase 3)
-  let agentContext = `You are Agent ${agentId}, a sub-agent working on a task assigned by the orchestrator.`;
+  let agentContext = subAgentInstructions;
 
   // Inject agent self-status
   try {
@@ -145,8 +244,9 @@ export async function runClaudeTask(
   // Inject relevant learnings from ChromaDB (agent-scoped)
   const relevantLearnings = await getRelevantLearnings(prompt, agentId);
 
-  // Build full prompt: Shared Context → Relevant Learnings → Agent Identity → Task Context → Task
-  fullPrompt = `${agentContext}\n\n${relevantLearnings}${fullPrompt}`;
+  // Build full prompt: CLAUDE.md → Agent Instructions → Agent Status → Relevant Learnings → Shared Context → Task
+  const claudeMdSection = claudeMd ? `## Project Instructions (CLAUDE.md)\n${claudeMd}\n\n` : '';
+  fullPrompt = `${claudeMdSection}${agentContext}\n\n${relevantLearnings}${fullPrompt}`;
 
   try {
     // Run claude CLI with --print flag for non-interactive output

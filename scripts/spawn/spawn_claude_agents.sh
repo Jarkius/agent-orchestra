@@ -7,6 +7,7 @@
 NUM_AGENTS=${1:-3}
 SESSION="claude-agents-$$"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Check dependencies
 if ! command -v tmux &> /dev/null; then
@@ -111,7 +112,7 @@ EOF
 # Start agent watchers in each pane
 for i in $(seq 1 $NUM_AGENTS); do
     pane=$i
-    tmux send-keys -t "$SESSION:0.$pane" "cd '$SCRIPT_DIR' && bun run src/agent-watcher.ts $i" Enter
+    tmux send-keys -t "$SESSION:0.$pane" "cd '$PROJECT_ROOT' && bun run src/agent-watcher.ts $i" Enter
 done
 
 echo ""
