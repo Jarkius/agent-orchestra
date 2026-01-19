@@ -411,7 +411,7 @@ export async function getRelatedMemory(
 export async function getCollectionStats(): Promise<Record<string, number>> {
   const cols = ensureInitialized();
 
-  const [tasks, results, messagesIn, messagesOut, context, sessions, learnings, sessionTasks] = await Promise.all([
+  const [tasks, results, messagesIn, messagesOut, context, sessions, learnings, sessionTasks, knowledge, lessons] = await Promise.all([
     cols.tasks.count(),
     cols.results.count(),
     cols.messagesIn.count(),
@@ -420,6 +420,8 @@ export async function getCollectionStats(): Promise<Record<string, number>> {
     cols.sessions.count(),
     cols.learnings.count(),
     cols.sessionTasks.count(),
+    cols.knowledge.count(),
+    cols.lessons.count(),
   ]);
 
   return {
@@ -431,6 +433,8 @@ export async function getCollectionStats(): Promise<Record<string, number>> {
     orchestrator_sessions: sessions,
     orchestrator_learnings: learnings,
     session_tasks: sessionTasks,
+    knowledge_entries: knowledge,
+    lesson_entries: lessons,
   };
 }
 

@@ -391,6 +391,27 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           spawner.completeTask(parsed.mission_id, false);
         }
 
+        // Analyze failure and extract lessons
+        let failureAnalysis: { rootCause: string; category: string; suggestion: string; similarFailures: string[] } | null = null;
+        try {
+          const loop = getLearningLoop();
+          const failedMission = {
+            id: mission.id,
+            prompt: mission.prompt,
+            type: mission.type,
+            assignedTo: mission.assignedTo,
+            status: 'failed' as const,
+            error: {
+              code: parsed.error_code!,
+              message: parsed.message!,
+              recoverable,
+              timestamp: new Date(),
+            },
+            createdAt: mission.createdAt,
+          };
+          failureAnalysis = await loop.analyzeFailure(failedMission);
+        } catch { /* Analysis is best-effort */ }
+
         const updatedMission = queue.getMission(parsed.mission_id);
 
         return jsonResponse({
@@ -399,6 +420,12 @@ async function handleMission(args: unknown): Promise<MCPResponse> {
           mission_id: parsed.mission_id,
           retry_count: updatedMission?.retryCount || 0,
           max_retries: mission.maxRetries,
+          failure_analysis: failureAnalysis ? {
+            root_cause: failureAnalysis.rootCause,
+            category: failureAnalysis.category,
+            suggestion: failureAnalysis.suggestion,
+            similar_failures: failureAnalysis.similarFailures?.length || 0,
+          } : undefined,
         });
       }
 
