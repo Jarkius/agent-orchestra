@@ -14,77 +14,62 @@ Save the current session with full context that can be distilled into learnings 
 
 ## What This Does
 
-1. **Asks you** for session context (via questions below)
+1. **Auto-analyzes** your conversation context to extract:
+   - Summary of accomplishments
+   - Wins (what worked well)
+   - Challenges (what was difficult)
+   - Learnings (insights worth remembering)
+   - Next steps (if any)
 2. **Auto-captures** git context, Claude Code files
 3. **Saves** with full context for distill to extract later
 
 ## Instructions
 
-**Step 1**: Ask the user these questions using AskUserQuestion tool:
+**IMPORTANT**: You (Claude) have full context of the session. DO NOT ask the user questions - derive everything from the conversation.
 
-Question 1 - Summary:
-- question: "What did you accomplish this session?"
-- header: "Summary"
-- options: (let user type - use "Other" option)
+**Step 1**: Analyze the conversation and identify:
 
-Question 2 - Wins:
-- question: "What worked well? (things worth repeating)"
-- header: "Wins"
-- multiSelect: true
-- options: based on recent work, or let user type
+1. **Summary**: What was accomplished? (1-2 sentences)
+2. **Wins**: What worked well? What's worth repeating? (list)
+3. **Challenges**: What was difficult? What didn't work initially? (list)
+4. **Learnings**: What insights emerged? What patterns were discovered? (list)
+5. **Next Steps**: What's left to do? What should happen next? (list, optional)
 
-Question 3 - Challenges:
-- question: "What was difficult or didn't work?"
-- header: "Challenges"
-- multiSelect: true
-- options: based on recent work, or let user type
-
-Question 4 - Learnings:
-- question: "What insights or learnings from this session?"
-- header: "Learnings"
-- multiSelect: true
-- options: based on conversation, or let user type
-
-**Step 2**: After getting answers, run:
+**Step 2**: Run the save command with auto-generated context:
 
 ```bash
-bun memory save --auto "SUMMARY" --wins "WIN1, WIN2" --challenges "CHALLENGE1" --learnings "LEARNING1, LEARNING2" --next-steps "NEXT1"
+bun memory save --auto "SUMMARY" \
+  --wins "WIN1" --wins "WIN2" \
+  --challenges "CHALLENGE1" --challenges "CHALLENGE2" \
+  --learnings "LEARNING1" --learnings "LEARNING2" \
+  --next-steps "NEXT1"
 ```
 
-Replace placeholders with actual user answers. Omit flags if user didn't provide that type of input.
+Use multiple `--wins`, `--challenges`, `--learnings` flags for multiple items.
+Omit flags if nothing applies (e.g., no challenges = no --challenges flag).
 
-**Step 3**: Confirm to user:
-- Session ID created
-- What was captured (wins count, challenges count, learnings count)
-- Remind them they can run `/memory-distill` later to extract learnings
+**Step 3**: Show the user what was captured:
+- Session ID
+- Summary
+- Wins count
+- Challenges count
+- Learnings count
+- Remind them `/memory-distill` can extract more learnings later
 
-## Example Flow
+## Example
 
-Claude asks:
-> What did you accomplish this session?
+For a session where you helped implement a feature:
 
-User answers:
-> Built the memory distill workflow
-
-Claude asks:
-> What worked well?
-
-User answers:
-> The knowledge lifecycle diagram, slash command pattern
-
-Claude asks:
-> What was difficult?
-
-User answers:
-> Understanding when to use distill vs learn
-
-Claude asks:
-> What insights or learnings?
-
-User answers:
-> Sessions need full_context for distill to work, Interactive mode captures more than auto mode
-
-Claude runs:
 ```bash
-bun memory save --auto "Built the memory distill workflow" --wins "The knowledge lifecycle diagram, slash command pattern" --challenges "Understanding when to use distill vs learn" --learnings "Sessions need full_context for distill to work, Interactive mode captures more than auto mode"
+bun memory save --auto "Implemented user authentication with JWT tokens" \
+  --wins "Clean separation of auth middleware" \
+  --wins "Reusable token validation pattern" \
+  --challenges "Initial confusion about refresh token flow" \
+  --learnings "JWT refresh tokens should be stored in httpOnly cookies" \
+  --learnings "Auth middleware should fail closed (deny by default)" \
+  --next-steps "Add rate limiting to auth endpoints"
 ```
+
+## Key Principle
+
+You have the full conversation context. Use it! Don't burden the user with questions you can answer yourself. Only ask if something is genuinely ambiguous.
