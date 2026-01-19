@@ -23,7 +23,7 @@ export class PTYManager implements IPTYManager {
   private sessionName: string;
   private healthCheckTimers: Map<number, Timer> = new Map();
   private eventListeners: Set<(event: AgentEvent) => void> = new Set();
-  private config: Required<PTYConfig>;
+  private config: PTYConfig;
 
   constructor(sessionName?: string, config?: Partial<PTYConfig>) {
     this.sessionName = sessionName || `agents-${process.pid}`;
@@ -155,8 +155,8 @@ export class PTYManager implements IPTYManager {
       try {
         const ps = await $`ps -o rss=,pcpu= -p ${handle.pid}`.text();
         const [rss, cpu] = ps.trim().split(/\s+/);
-        memoryUsage = parseInt(rss) * 1024; // Convert KB to bytes
-        cpuUsage = parseFloat(cpu);
+        memoryUsage = parseInt(rss ?? "0") * 1024; // Convert KB to bytes
+        cpuUsage = parseFloat(cpu ?? "0");
       } catch {
         // Ignore
       }
@@ -177,7 +177,7 @@ export class PTYManager implements IPTYManager {
     }
 
     // Emit health event
-    this.emitEvent({ type: 'health', agentId, timestamp: new Date(), data: status });
+    this.emitEvent({ type: 'health', agentId, timestamp: new Date(), data: status as unknown as Record<string, unknown> });
 
     // Auto-restart if crashed
     if (!alive && this.config.autoRestart && handle.status !== 'stopping') {
@@ -244,7 +244,7 @@ export class PTYManager implements IPTYManager {
   private async getPanePid(paneId: string): Promise<number> {
     try {
       const result = await $`tmux list-panes -t ${this.sessionName} -F '#{pane_id} #{pane_pid}' | grep ${paneId}`.text();
-      const pid = parseInt(result.split(' ')[1]);
+      const pid = parseInt(result.split(' ')[1] ?? "0");
       return isNaN(pid) ? 0 : pid;
     } catch {
       return 0;

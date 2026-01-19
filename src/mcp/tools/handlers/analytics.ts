@@ -283,7 +283,7 @@ async function handleExportLearnings(args: unknown) {
       if (!byCategory[l.category]) {
         byCategory[l.category] = [];
       }
-      byCategory[l.category].push(l);
+      byCategory[l.category]!.push(l);
     }
 
     const confidenceBadge = (c: string) => {
@@ -307,7 +307,7 @@ async function handleExportLearnings(args: unknown) {
     });
 
     for (const category of sortedCategories) {
-      const items = byCategory[category];
+      const items = byCategory[category]!;
       md += `## ${capitalize(category)}\n\n`;
 
       items.sort((a, b) => {
