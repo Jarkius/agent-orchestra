@@ -401,6 +401,9 @@ function displayLearningDetails(ctx: LearningWithContext) {
   if (learning.prevention) {
     console.log(`How to prevent/apply: ${learning.prevention}`);
   }
+  if (learning.source_url) {
+    console.log(`Source: ${learning.source_url}`);
+  }
 
   // Show agent ownership
   const ownerLabel = learning.agent_id === null ? 'orchestrator' : `Agent ${learning.agent_id}`;

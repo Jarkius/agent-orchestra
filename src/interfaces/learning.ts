@@ -20,6 +20,7 @@ export interface Learning {
   what_happened?: string;
   lesson?: string;
   prevention?: string;
+  sourceUrl?: string;  // External reference URL(s)
   confidence: Confidence;
   timesValidated: number;
   agentId?: number | null;

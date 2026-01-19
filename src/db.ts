@@ -229,6 +229,11 @@ try {
   db.run(`ALTER TABLE learnings ADD COLUMN prevention TEXT`);
 } catch { /* Column already exists */ }
 
+// Add source_url column for external reference links
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN source_url TEXT`);
+} catch { /* Column already exists */ }
+
 // Create indexes for agent-scoped queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_agent ON learnings(agent_id)`);
@@ -650,6 +655,7 @@ export interface LearningRecord {
   description?: string;
   context?: string;
   source_session_id?: string;
+  source_url?: string;  // External reference URL(s)
   confidence?: 'low' | 'medium' | 'high' | 'proven';
   times_validated?: number;
   last_validated_at?: string;
@@ -664,14 +670,15 @@ export interface LearningRecord {
 
 export function createLearning(learning: LearningRecord): number {
   const result = db.run(
-    `INSERT INTO learnings (category, title, description, context, source_session_id, confidence, agent_id, visibility, what_happened, lesson, prevention)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO learnings (category, title, description, context, source_session_id, source_url, confidence, agent_id, visibility, what_happened, lesson, prevention)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.category,
       learning.title,
       learning.description || null,
       learning.context || null,
       learning.source_session_id || null,
+      learning.source_url || null,
       learning.confidence || 'medium',
       learning.agent_id ?? null,
       learning.visibility || 'public',

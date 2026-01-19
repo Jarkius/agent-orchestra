@@ -89,6 +89,7 @@ interface StructuredLearningInput {
   what_happened?: string;
   lesson?: string;
   prevention?: string;
+  source_url?: string;
   confidence?: 'low' | 'medium' | 'high' | 'proven';
 }
 
@@ -115,6 +116,7 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
     what_happened: input.what_happened,
     lesson: input.lesson,
     prevention: input.prevention,
+    source_url: input.source_url,
   });
 
   // 2. Save to ChromaDB
@@ -148,6 +150,7 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
   if (input.what_happened) console.log(`  What happened: ${input.what_happened}`);
   if (input.lesson) console.log(`  Lesson:     ${input.lesson}`);
   if (input.prevention) console.log(`  Prevention: ${input.prevention}`);
+  if (input.source_url) console.log(`  Source:     ${input.source_url}`);
   if (input.context) console.log(`  Context:    ${input.context}`);
   console.log(`  Confidence: ${confidence}`);
 
@@ -223,13 +226,14 @@ Options:
   --interactive, -i   Interactive mode with structured prompts
   --lesson "..."      What you learned (key insight)
   --prevention "..."  How to prevent/apply in future
+  --source "URL"      External reference URL (article, paper, etc.)
   --confidence <lvl>  Confidence level: low, medium, high, proven (default: low)
   --help, -h          Show this help
 
 Quick Examples:
   bun memory learn tooling "jq parses JSON in shell"
   bun memory learn philosophy "Simplicity over cleverness" --lesson "Readable code beats clever code"
-  bun memory learn insight "Tests document behavior" --lesson "Tests are documentation" --prevention "Write tests before code"
+  bun memory learn architecture "MemGPT pattern" --source "https://example.com/article"
 `);
     printCategories();
     return;
@@ -241,6 +245,7 @@ Quick Examples:
   let context: string | undefined;
   let lesson: string | undefined;
   let prevention: string | undefined;
+  let source_url: string | undefined;
   let confidence: 'low' | 'medium' | 'high' | 'proven' | undefined;
 
   const validConfidenceLevels = ['low', 'medium', 'high', 'proven'];
@@ -251,6 +256,9 @@ Quick Examples:
       i++;
     } else if (args[i] === '--prevention' && args[i + 1]) {
       prevention = args[i + 1];
+      i++;
+    } else if (args[i] === '--source' && args[i + 1]) {
+      source_url = args[i + 1];
       i++;
     } else if (args[i] === '--confidence' && args[i + 1]) {
       const level = args[i + 1]!.toLowerCase();
@@ -284,6 +292,7 @@ Quick Examples:
     context,
     lesson,
     prevention,
+    source_url,
     confidence,
     what_happened: context, // Use context as what_happened for backward compatibility
   });
