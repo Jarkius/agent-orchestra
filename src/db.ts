@@ -1231,6 +1231,46 @@ export function purgeSessions(options?: { before?: string; keep?: number }): Pur
 /**
  * Purge all learnings (and related links)
  */
+export function purgeDuplicateLearnings(): PurgeResult {
+  // Find duplicate learnings by title (keeping the one with highest confidence or oldest)
+  const duplicates = db.query(`
+    SELECT l1.id
+    FROM learnings l1
+    WHERE EXISTS (
+      SELECT 1 FROM learnings l2
+      WHERE l2.title = l1.title
+      AND l2.id < l1.id
+    )
+  `).all() as { id: number }[];
+
+  if (duplicates.length === 0) {
+    return { sessions: 0, learnings: 0, sessionLinks: 0, learningLinks: 0, tasks: 0 };
+  }
+
+  const learningIds = duplicates.map(r => r.id);
+  const placeholders = learningIds.map(() => '?').join(',');
+
+  // Delete related links
+  const linksDeleted = db.run(
+    `DELETE FROM learning_links WHERE from_learning_id IN (${placeholders}) OR to_learning_id IN (${placeholders})`,
+    [...learningIds, ...learningIds]
+  ).changes;
+
+  // Delete duplicate learnings
+  const learningsDeleted = db.run(
+    `DELETE FROM learnings WHERE id IN (${placeholders})`,
+    learningIds
+  ).changes;
+
+  return {
+    sessions: 0,
+    learnings: learningsDeleted,
+    sessionLinks: 0,
+    learningLinks: linksDeleted,
+    tasks: 0,
+  };
+}
+
 export function purgeLearnings(options?: { before?: string; keep?: number }): PurgeResult {
   const { before, keep } = options || {};
 

@@ -13,6 +13,7 @@
 import {
   purgeSessions,
   purgeLearnings,
+  purgeDuplicateLearnings,
   getSessionStats,
   type PurgeResult,
 } from '../../src/db';
@@ -40,6 +41,7 @@ function parseArgs() {
   let before: string | undefined;
   let keep: number | undefined;
   let force = false;
+  let duplicates = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -55,13 +57,15 @@ function parseArgs() {
       i++;
     } else if (arg === '--yes' || arg === '-y') {
       force = true;
+    } else if (arg === '--duplicates' || arg === '-d') {
+      duplicates = true;
     } else if (arg === '--help' || arg === '-h') {
       showHelp();
       process.exit(0);
     }
   }
 
-  return { target, before, keep, force };
+  return { target, before, keep, force, duplicates };
 }
 
 function showHelp() {
@@ -75,6 +79,7 @@ Targets:
 Options:
   --before DATE   Purge items created before this date (ISO format)
   --keep N        Keep the last N items, purge the rest
+  --duplicates    Remove duplicate learnings (keeps oldest of each title)
   --yes, -y       Skip confirmation prompt
 
 Examples:
@@ -82,6 +87,7 @@ Examples:
   bun memory purge learnings --yes             # Purge all learnings without prompt
   bun memory purge sessions --keep 10          # Keep last 10 sessions
   bun memory purge sessions --before 2025-01-01  # Purge sessions before 2025
+  bun memory purge learnings --duplicates      # Remove duplicate learnings
 `);
 }
 
@@ -96,7 +102,35 @@ function formatResult(result: PurgeResult): string {
 }
 
 async function main() {
-  const { target, before, keep, force } = parseArgs();
+  const { target, before, keep, force, duplicates } = parseArgs();
+
+  // Handle duplicates flag specially
+  if (duplicates) {
+    // Show current stats
+    const stats = getSessionStats();
+    console.log(`\nCurrent memory state:`);
+    console.log(`  Sessions: ${stats.total_sessions}`);
+    console.log(`  Learnings: ${(stats as any).total_learnings ?? 'N/A'}`);
+
+    if (!force) {
+      const confirmed = await promptConfirm(`\n⚠️  Remove duplicate learnings? [y/N] `);
+      if (!confirmed) {
+        console.log('Aborted.');
+        return;
+      }
+    }
+
+    console.log(`\nRemoving duplicate learnings...`);
+    await initVectorDB();
+    const result = purgeDuplicateLearnings();
+    console.log(`\n✓ Purged: ${formatResult(result)}`);
+
+    const newStats = getSessionStats();
+    console.log(`\nNew memory state:`);
+    console.log(`  Sessions: ${newStats.total_sessions}`);
+    console.log(`  Learnings: ${(newStats as any).total_learnings ?? 'N/A'}\n`);
+    return;
+  }
 
   if (!target) {
     console.log('Error: Please specify a target (sessions or learnings)');
