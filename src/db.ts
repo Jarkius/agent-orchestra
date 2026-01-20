@@ -144,6 +144,20 @@ try {
   // Column already exists
 }
 
+// Add project_path column to sessions for project/matrix scoping
+try {
+  db.run(`ALTER TABLE sessions ADD COLUMN project_path TEXT`);
+} catch {
+  // Column already exists
+}
+
+// Add project_path column to learnings for project/matrix scoping
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN project_path TEXT`);
+} catch {
+  // Column already exists
+}
+
 db.run(`
   CREATE TABLE IF NOT EXISTS session_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,6 +307,10 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_agent ON learnings(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_visibility ON sessions(visibility)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_visibility ON learnings(visibility)`);
+
+// Create indexes for project-scoped queries
+db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_project ON learnings(project_path)`);
 
 // ============ Dual-Collection Pattern Schema (Knowledge + Lessons) ============
 
@@ -732,12 +750,13 @@ export interface SessionRecord {
   created_at?: string;
   next_steps?: string[];
   challenges?: string[];
+  project_path?: string;  // Git root path for project/matrix scoping
 }
 
 export function createSession(session: SessionRecord): void {
   db.run(
-    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, agent_id, visibility, started_at, ended_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, agent_id, visibility, started_at, ended_at, project_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session.id,
       session.previous_session_id || null,
@@ -750,6 +769,7 @@ export function createSession(session: SessionRecord): void {
       session.visibility || 'public',
       session.started_at || null,
       session.ended_at || null,
+      session.project_path || null,
     ]
   );
 }
@@ -766,6 +786,7 @@ export function getSessionById(sessionId: string): SessionRecord | null {
     tags: row.tags ? row.tags.split(',') : [],
     agent_id: row.agent_id ?? null,
     visibility: row.visibility || 'public',
+    project_path: row.project_path || null,
   };
 }
 
@@ -775,12 +796,19 @@ export interface ListSessionsOptions {
   limit?: number;
   agentId?: number | null;
   includeShared?: boolean;
+  projectPath?: string;  // Filter by project/git root path
 }
 
 export function listSessionsFromDb(options?: ListSessionsOptions): SessionRecord[] {
-  const { tag, since, limit = 20, agentId, includeShared = true } = options || {};
+  const { tag, since, limit = 20, agentId, includeShared = true, projectPath } = options || {};
   let query = `SELECT * FROM sessions WHERE 1=1`;
   const params: any[] = [];
+
+  // Project scoping - filter by git root path
+  if (projectPath) {
+    query += ` AND project_path = ?`;
+    params.push(projectPath);
+  }
 
   // Agent scoping
   if (agentId !== undefined) {
@@ -813,6 +841,7 @@ export function listSessionsFromDb(options?: ListSessionsOptions): SessionRecord
     tags: row.tags ? row.tags.split(',') : [],
     agent_id: row.agent_id ?? null,
     visibility: row.visibility || 'public',
+    project_path: row.project_path || null,
   }));
 }
 
@@ -857,12 +886,13 @@ export interface LearningRecord {
   what_happened?: string;
   lesson?: string;
   prevention?: string;
+  project_path?: string;  // Git root path for project/matrix scoping
 }
 
 export function createLearning(learning: LearningRecord): number {
   const result = db.run(
-    `INSERT INTO learnings (category, title, description, context, source_session_id, source_url, confidence, agent_id, visibility, what_happened, lesson, prevention)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO learnings (category, title, description, context, source_session_id, source_url, confidence, agent_id, visibility, what_happened, lesson, prevention, project_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.category,
       learning.title,
@@ -876,6 +906,7 @@ export function createLearning(learning: LearningRecord): number {
       learning.what_happened || null,
       learning.lesson || null,
       learning.prevention || null,
+      learning.project_path || null,
     ]
   );
   return Number(result.lastInsertRowid);
@@ -888,6 +919,7 @@ export function getLearningById(learningId: number): LearningRecord | null {
     ...row,
     agent_id: row.agent_id ?? null,
     visibility: row.visibility || 'public',
+    project_path: row.project_path || null,
   };
 }
 
@@ -917,12 +949,19 @@ export interface ListLearningsOptions {
   limit?: number;
   agentId?: number | null;
   includeShared?: boolean;
+  projectPath?: string;  // Filter by project/git root path
 }
 
 export function listLearningsFromDb(options?: ListLearningsOptions): LearningRecord[] {
-  const { category, confidence, limit = 50, agentId, includeShared = true } = options || {};
+  const { category, confidence, limit = 50, agentId, includeShared = true, projectPath } = options || {};
   let query = `SELECT * FROM learnings WHERE 1=1`;
   const params: any[] = [];
+
+  // Project scoping - filter by git root path
+  if (projectPath) {
+    query += ` AND project_path = ?`;
+    params.push(projectPath);
+  }
 
   // Agent scoping
   if (agentId !== undefined) {
@@ -953,6 +992,7 @@ export function listLearningsFromDb(options?: ListLearningsOptions): LearningRec
     ...row,
     agent_id: row.agent_id ?? null,
     visibility: row.visibility || 'public',
+    project_path: row.project_path || null,
   }));
 }
 

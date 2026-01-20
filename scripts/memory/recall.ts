@@ -10,11 +10,13 @@
  *
  * Environment:
  *   MEMORY_AGENT_ID                      # Filter by agent ID (set by --agent flag)
+ *   MEMORY_PROJECT_PATH                  # Override project path (auto-detected from git root)
  */
 
 import { readdirSync, statSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
+import { execSync } from 'child_process';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
 import { type SessionTask, getLearningEntities, getRelatedEntities, updateSessionTaskStatus } from '../../src/db';
 import { formatFullContext, formatFullContextEnhanced, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
@@ -101,18 +103,49 @@ function toLocalTime(utcString?: string): string {
 const query = process.argv[2];
 const agentId = process.env.MEMORY_AGENT_ID ? parseInt(process.env.MEMORY_AGENT_ID) : undefined;
 
+/**
+ * Get the git root path for the current directory
+ * Returns undefined if not in a git repository
+ */
+function getGitRootPath(): string | undefined {
+  // Allow override via environment variable
+  if (process.env.MEMORY_PROJECT_PATH) {
+    return process.env.MEMORY_PROJECT_PATH;
+  }
+
+  try {
+    const root = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return root || undefined;
+  } catch {
+    // Not in a git repository
+    return undefined;
+  }
+}
+
 async function main() {
+  const projectPath = getGitRootPath();
+
   const result = await recall(query, {
     limit: 5,
     includeLinks: true,
     includeTasks: true,
     agentId,
     includeShared: true,
+    projectPath,  // Filter by current project
   });
 
-  // Show agent filter if active
-  if (agentId !== undefined) {
-    console.log(`\n🔒 Filtering by Agent ID: ${agentId}`);
+  // Show active filters
+  if (agentId !== undefined || projectPath) {
+    console.log('');
+    if (projectPath) {
+      console.log(`📁 Project: ${basename(projectPath)}`);
+    }
+    if (agentId !== undefined) {
+      console.log(`🔒 Agent ID: ${agentId}`);
+    }
   }
 
   switch (result.type) {

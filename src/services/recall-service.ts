@@ -107,6 +107,7 @@ export interface RecallOptions {
   agentId?: number | null;
   includeShared?: boolean;
   useSmartRetrieval?: boolean;  // Use context-aware retrieval with category boosting
+  projectPath?: string;  // Filter by project/git root path for matrix scoping
 }
 
 // ============ Main Recall Function ============
@@ -115,22 +116,22 @@ export interface RecallOptions {
  * Smart recall - detects query type and handles appropriately
  */
 export async function recall(query: string | undefined, options: RecallOptions = {}): Promise<RecallResult> {
-  const { limit = 5, includeLinks = true, includeTasks = true, agentId, includeShared = true, useSmartRetrieval = true } = options;
+  const { limit = 5, includeLinks = true, includeTasks = true, agentId, includeShared = true, useSmartRetrieval = true, projectPath } = options;
   const queryType = detectQueryType(query);
   const normalizedQuery = query?.trim() || '';
 
   switch (queryType) {
     case 'recent':
-      return recallRecent(limit, includeLinks, includeTasks, agentId, includeShared);
+      return recallRecent(limit, includeLinks, includeTasks, agentId, includeShared, projectPath);
 
     case 'session_id':
-      return recallSessionById(normalizedQuery, includeLinks, includeTasks, agentId);
+      return recallSessionById(normalizedQuery, includeLinks, includeTasks, agentId, projectPath);
 
     case 'learning_id':
-      return recallLearningById(normalizedQuery, includeLinks, agentId);
+      return recallLearningById(normalizedQuery, includeLinks, agentId, projectPath);
 
     case 'search':
-      return recallBySearch(normalizedQuery, limit, includeLinks, includeTasks, agentId, includeShared, useSmartRetrieval);
+      return recallBySearch(normalizedQuery, limit, includeLinks, includeTasks, agentId, includeShared, useSmartRetrieval, projectPath);
   }
 }
 
@@ -145,13 +146,15 @@ async function recallRecent(
   includeLinks: boolean,
   includeTasks: boolean,
   agentId?: number | null,
-  includeShared: boolean = true
+  includeShared: boolean = true,
+  projectPath?: string
 ): Promise<RecallResult> {
-  // Get the most recent session for resuming (with agent scoping)
+  // Get the most recent session for resuming (with agent and project scoping)
   const sessions = listSessionsFromDb({
     limit: 1,
     agentId,
     includeShared,
+    projectPath,
   });
 
   if (sessions.length === 0) {
@@ -173,12 +176,13 @@ async function recallRecent(
     linkedSessions: includeLinks ? getLinkedSessions(latestSession.id) : [],
   }];
 
-  // Also get high-confidence learnings that might be relevant (with agent scoping)
+  // Also get high-confidence learnings that might be relevant (with agent and project scoping)
   const relevantLearnings = listLearningsFromDb({
     confidence: 'high',
     limit: 5,
     agentId,
     includeShared,
+    projectPath,
   });
   const learningsWithContext: LearningWithContext[] = relevantLearnings.map(learning => ({
     learning,
@@ -196,12 +200,14 @@ async function recallRecent(
 
 /**
  * Recall by exact session ID
+ * Note: For exact ID lookup, we allow access regardless of project to enable cross-project session viewing
  */
 async function recallSessionById(
   sessionId: string,
   includeLinks: boolean,
   includeTasks: boolean,
-  agentId?: number | null
+  agentId?: number | null,
+  _projectPath?: string  // Not used for exact ID lookup - allows cross-project access
 ): Promise<RecallResult> {
   const session = getSessionById(sessionId);
 
@@ -269,11 +275,13 @@ function canAccessLearning(agentId: number | null, learning: LearningRecord): bo
 
 /**
  * Recall by exact learning ID
+ * Note: For exact ID lookup, we allow access regardless of project to enable cross-project learning viewing
  */
 async function recallLearningById(
   query: string,
   includeLinks: boolean,
-  agentId?: number | null
+  agentId?: number | null,
+  _projectPath?: string  // Not used for exact ID lookup - allows cross-project access
 ): Promise<RecallResult> {
   const learningId = extractLearningId(query);
 
@@ -332,7 +340,8 @@ async function recallBySearch(
   includeTasks: boolean,
   agentId?: number | null,
   includeShared: boolean = true,
-  useSmartRetrieval: boolean = true
+  useSmartRetrieval: boolean = true,
+  projectPath?: string
 ): Promise<RecallResult> {
   // Initialize vector DB if needed
   if (!isInitialized()) {
@@ -343,8 +352,8 @@ async function recallBySearch(
   const taskContext = detectTaskType(query);
   console.log(`[Recall] Detected task type: ${taskContext.type} (confidence: ${(taskContext.confidence * 100).toFixed(0)}%)`);
 
-  // Build search options with agent scoping
-  const searchOptions = { limit, agentId, includeShared };
+  // Build search options with agent and project scoping
+  const searchOptions = { limit, agentId, includeShared, projectPath };
 
   // Run parallel searches (including hybrid memory)
   // Learnings handled separately for smart retrieval with category boosting

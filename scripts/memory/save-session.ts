@@ -103,6 +103,23 @@ function buildSearchContent(summary: string, tags: string[], context: FullContex
   return parts.join(' ');
 }
 
+/**
+ * Get the git root path for the current directory
+ * Returns undefined if not in a git repository
+ */
+function getGitRootPath(): string | undefined {
+  try {
+    const root = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return root || undefined;
+  } catch {
+    // Not in a git repository
+    return undefined;
+  }
+}
+
 function captureGitContext(): GitContext | null {
   try {
     const branch = execSync('git branch --show-current', { encoding: 'utf-8' }).trim();
@@ -564,7 +581,7 @@ async function autoCaptureMode() {
  * Auto-distill learnings from session context
  * Extracts learnings from wins, challenges, and explicit learnings
  */
-async function autoDistillFromContext(sessionId: string, context: FullContext, timestamp: string): Promise<number> {
+async function autoDistillFromContext(sessionId: string, context: FullContext, timestamp: string, projectPath?: string): Promise<number> {
   let count = 0;
   const loop = getLearningLoop();
 
@@ -578,12 +595,14 @@ async function autoDistillFromContext(sessionId: string, context: FullContext, t
         lesson: learning,
         confidence: 'medium',
         source_session_id: sessionId,
+        project_path: projectPath,
       });
       await saveLearningToChroma(learningId, learning.slice(0, 100), learning, {
         category,
         confidence: 'medium',
         source_session_id: sessionId,
         created_at: timestamp,
+        project_path: projectPath,
       });
       count++;
     }
@@ -601,12 +620,14 @@ async function autoDistillFromContext(sessionId: string, context: FullContext, t
           what_happened: win,
           confidence: 'low',
           source_session_id: sessionId,
+          project_path: projectPath,
         });
         await saveLearningToChroma(learningId, `Win: ${win.slice(0, 80)}`, win, {
           category,
           confidence: 'low',
           source_session_id: sessionId,
           created_at: timestamp,
+          project_path: projectPath,
         });
         count++;
       }
@@ -625,12 +646,14 @@ async function autoDistillFromContext(sessionId: string, context: FullContext, t
           what_happened: challenge,
           confidence: 'low',
           source_session_id: sessionId,
+          project_path: projectPath,
         });
         await saveLearningToChroma(learningId, `Challenge: ${challenge.slice(0, 80)}`, challenge, {
           category: category === 'insight' ? 'debugging' : category,
           confidence: 'low',
           source_session_id: sessionId,
           created_at: timestamp,
+          project_path: projectPath,
         });
         count++;
       }
@@ -671,6 +694,7 @@ async function saveCurrentSession() {
 
   const sessionId = `session_${Date.now()}`;
   const now = new Date().toISOString();
+  const projectPath = getGitRootPath();
 
   const session: SessionRecord = {
     id: sessionId,
@@ -681,6 +705,7 @@ async function saveCurrentSession() {
     tags: data.tags.length > 0 ? data.tags : undefined,
     started_at: data.startedAt,
     ended_at: data.endedAt || now,
+    project_path: projectPath,  // Scope session to current project
   };
 
   // SAVE TO SQLITE FIRST - this is fast and doesn't block
@@ -710,6 +735,7 @@ async function saveCurrentSession() {
       await saveSessionToChroma(sessionId, searchContent, {
         tags: data.tags,
         created_at: now,
+        project_path: projectPath,  // Include project path for filtering
       });
       console.log('   ✓ Session indexed in ChromaDB');
 
@@ -753,6 +779,7 @@ async function saveCurrentSession() {
         what_happened: learning.what_happened,
         lesson: learning.lesson,
         prevention: learning.prevention,
+        project_path: projectPath,  // Scope learning to current project
       });
 
       const icon = CATEGORY_ICONS[learning.category];
@@ -766,6 +793,7 @@ async function saveCurrentSession() {
             confidence: 'medium',
             source_session_id: sessionId,
             created_at: now,
+            project_path: projectPath,  // Include project path for filtering
           });
 
           const searchText = `${learning.title} ${learning.context || ''}`;
@@ -822,7 +850,7 @@ async function saveCurrentSession() {
   let autoDistilledCount = 0;
   if (vectorInitialized) {
     try {
-      autoDistilledCount = await autoDistillFromContext(sessionId, data.fullContext, now);
+      autoDistilledCount = await autoDistillFromContext(sessionId, data.fullContext, now, projectPath);
       if (autoDistilledCount > 0) {
         console.log(`\n8. Auto-distilled ${autoDistilledCount} learnings from session context`);
       }

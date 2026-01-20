@@ -581,6 +581,7 @@ export interface SessionMetadata {
   created_at: string;
   agent_id?: number | null;
   visibility?: string;
+  project_path?: string;  // Git root path for project/matrix scoping
   [key: string]: unknown;
 }
 
@@ -596,6 +597,7 @@ export async function saveSession(
     tags: metadata.tags?.join(',') || '',
     agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
     visibility: metadata.visibility || 'public',
+    project_path: metadata.project_path || '',  // Empty string for unset (ChromaDB doesn't support null)
   };
 
   // Best-effort write with retry, queued to prevent concurrent access
@@ -615,6 +617,7 @@ export interface SessionSearchOptions {
   limit?: number;
   agentId?: number | null;
   includeShared?: boolean;
+  projectPath?: string;  // Filter by project/git root path
 }
 
 export async function searchSessions(
@@ -627,25 +630,40 @@ export async function searchSessions(
   const options = typeof limitOrOptions === 'number'
     ? { limit: limitOrOptions }
     : limitOrOptions;
-  const { limit = 3, agentId, includeShared = true } = options;
+  const { limit = 3, agentId, includeShared = true, projectPath } = options;
 
-  // Build where clause for agent filtering
-  let where: Where | undefined;
+  // Build where clause with multiple conditions
+  const conditions: Where[] = [];
+
+  // Project scoping - filter by git root path
+  if (projectPath) {
+    conditions.push({ project_path: projectPath } as Where);
+  }
+
+  // Agent filtering
   if (agentId !== undefined) {
     const agentIdValue = agentId ?? -1;
     if (includeShared) {
       // ChromaDB doesn't have OR conditions, so we use $or operator
-      where = {
+      conditions.push({
         $or: [
           { agent_id: agentIdValue },
           { agent_id: -1 }, // orchestrator
           { visibility: 'shared' },
           { visibility: 'public' },
         ],
-      } as Where;
+      } as Where);
     } else {
-      where = { agent_id: agentIdValue } as Where;
+      conditions.push({ agent_id: agentIdValue } as Where);
     }
+  }
+
+  // Combine conditions with $and if multiple
+  let where: Where | undefined;
+  if (conditions.length === 1) {
+    where = conditions[0];
+  } else if (conditions.length > 1) {
+    where = { $and: conditions } as Where;
   }
 
   return await cols.sessions.query({
@@ -680,6 +698,7 @@ export interface LearningMetadata {
   created_at: string;
   agent_id?: number | null;
   visibility?: string;
+  project_path?: string;  // Git root path for project/matrix scoping
 }
 
 export async function saveLearning(
@@ -697,6 +716,7 @@ export async function saveLearning(
     created_at: metadata.created_at,
     agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
     visibility: metadata.visibility || 'public',
+    project_path: metadata.project_path || '',  // Empty string for unset (ChromaDB doesn't support null)
   };
 
   // Best-effort write with retry, queued to prevent concurrent access
@@ -717,6 +737,7 @@ export interface LearningSearchOptions {
   category?: string;
   agentId?: number | null;
   includeShared?: boolean;
+  projectPath?: string;  // Filter by project/git root path
 }
 
 export async function searchLearnings(
@@ -730,11 +751,16 @@ export async function searchLearnings(
   const options = typeof limitOrOptions === 'number'
     ? { limit: limitOrOptions, category }
     : limitOrOptions;
-  const { limit = 5, agentId, includeShared = true, category: cat } = options;
+  const { limit = 5, agentId, includeShared = true, category: cat, projectPath } = options;
 
   // Build where clause
   let where: Where | undefined;
   const conditions: Where[] = [];
+
+  // Project scoping - filter by git root path
+  if (projectPath) {
+    conditions.push({ project_path: projectPath } as Where);
+  }
 
   if (cat) {
     conditions.push({ category: cat } as Where);
