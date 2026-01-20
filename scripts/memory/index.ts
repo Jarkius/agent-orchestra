@@ -118,6 +118,12 @@ async function main() {
       await import('./issue');
       break;
 
+    case 'message':
+    case 'msg':
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./message');
+      break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -151,6 +157,9 @@ Commands:
   graph "A" "B"     Find path between two entities
   absorb <path>     Auto-capture knowledge from codebase exploration
   issue "title"     Report an issue for awareness and tracking
+  message "text"    Broadcast to all matrices
+  message --to path Direct message to specific matrix
+  message --inbox   Check incoming messages
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
   reindex [type]    Re-index SQLite data into ChromaDB vectors
