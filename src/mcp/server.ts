@@ -20,6 +20,7 @@ import { allTools, allHandlers } from './tools';
 import { errorResponse } from './utils/response';
 import { initVectorDBWithAutoStart, getHealthStatus } from '../vector-db';
 import { startServer as startWsServer, isServerRunning, getConnectionStats } from '../ws-server';
+import { connectToHub, onMessage, isConnected as isHubConnected, getStatus as getHubStatus } from '../matrix-client';
 
 // Create MCP server
 const server = new Server(
@@ -90,6 +91,27 @@ async function main() {
     } catch (error) {
       console.error(`[MCP] Warning: WebSocket server failed: ${error}`);
       console.error("[MCP] Continuing without real-time delivery...");
+    }
+  }
+
+  // Connect to matrix hub for cross-matrix messaging (Phase 3)
+  if (process.env.SKIP_MATRIX_HUB !== "true") {
+    try {
+      const hubUrl = process.env.MATRIX_HUB_URL || 'ws://localhost:8081';
+      console.error(`[MCP] Connecting to matrix hub at ${hubUrl}...`);
+      const connected = await connectToHub(hubUrl);
+      if (connected) {
+        console.error(`[MCP] Matrix hub: connected`);
+        // Register message handler for real-time notifications
+        onMessage((msg) => {
+          console.error(`[MCP] 📬 Message from ${msg.from}: ${msg.content.substring(0, 100)}`);
+        });
+      } else {
+        console.error(`[MCP] Matrix hub: not available, using SQLite fallback`);
+      }
+    } catch (error) {
+      console.error(`[MCP] Warning: Matrix hub connection failed: ${error}`);
+      console.error("[MCP] Cross-matrix messaging will use SQLite fallback...");
     }
   }
 

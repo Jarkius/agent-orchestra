@@ -1,6 +1,8 @@
 /**
  * Context Tool Handlers
  * update_shared_context, get_shared_context, get_inbox
+ *
+ * Phase 3: get_inbox now shows hub connection status for real-time notifications
  */
 
 import { mkdir, writeFile, readFile } from "fs/promises";
@@ -14,6 +16,7 @@ import {
 import type { ToolDefinition, ToolHandler } from '../../types';
 import { embedContext, isInitialized } from '../../../vector-db';
 import { db } from '../../../db';
+import { isConnected as isHubConnected, getStatus as getHubStatus } from '../../../matrix-client';
 
 // ============ Tool Definitions ============
 
@@ -131,11 +134,23 @@ async function getInbox(args: unknown) {
     return null;
   }).filter(Boolean);
 
+  // Check hub connection status
+  const hubConnected = isHubConnected();
+  const hubStatus = getHubStatus();
+
   return successResponse({
     this_matrix: thisMatrix,
     since_hours: sinceHours,
     message_count: parsed.length,
     messages: parsed,
+    hub_status: {
+      connected: hubConnected,
+      url: hubStatus.hubUrl,
+      pending_messages: hubStatus.pendingMessages,
+      note: hubConnected
+        ? "Real-time notifications active - new messages appear instantly"
+        : "Hub offline - polling SQLite for messages",
+    },
     hint: parsed.length > 0 ? "Use 'bun memory message --inbox' for full details" : "No messages",
   });
 }

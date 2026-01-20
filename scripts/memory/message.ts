@@ -6,9 +6,12 @@
  *   bun memory message "Hello all"                    # Broadcast to all
  *   bun memory message "Hello" --to /path/to/clone   # Direct to specific matrix
  *   bun memory message --inbox                        # Check messages for this matrix
+ *
+ * Phase 3: Now supports WebSocket real-time delivery via matrix hub
  */
 
 import { createLearning, db } from '../../src/db';
+import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConnected, disconnect } from '../../src/matrix-client';
 
 const THIS_MATRIX = process.cwd();
 
@@ -153,7 +156,28 @@ async function main() {
     title = `[msg:broadcast] [from:${THIS_MATRIX}] ${content}`;
   }
 
-  // Save as learning
+  // Try WebSocket delivery first (Phase 3)
+  let delivered = false;
+  const hubUrl = process.env.MATRIX_HUB_URL || 'ws://localhost:8081';
+
+  try {
+    const connected = await connectToHub(hubUrl);
+    if (connected) {
+      if (to) {
+        delivered = sendDirect(to, content);
+      } else {
+        delivered = broadcast(content);
+      }
+
+      // Give it a moment for the message to be sent
+      await new Promise(resolve => setTimeout(resolve, 100));
+      disconnect();
+    }
+  } catch (error) {
+    // Hub not available, fall back to SQLite
+  }
+
+  // Always persist to SQLite (source of truth + fallback)
   const msgId = createLearning({
     category: 'insight',
     title,
@@ -167,7 +191,13 @@ async function main() {
   console.log(`  Type: ${type}`);
   console.log(`  From: ${THIS_MATRIX}`);
   if (to) console.log(`  To:   ${to}`);
-  console.log(`  Content: ${content}\n`);
+  console.log(`  Content: ${content}`);
+  if (delivered) {
+    console.log(`  ✨ Delivered in real-time via hub`);
+  } else {
+    console.log(`  📦 Saved to SQLite (recipient will see on next poll)`);
+  }
+  console.log();
 }
 
 main().catch(console.error);
