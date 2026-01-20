@@ -341,6 +341,20 @@ learning_links (from_learning_id, to_learning_id, link_type, similarity)
 session_tasks (session_id, description, status, notes)
 ```
 
+#### SQLite Configuration for Concurrent Access
+
+```sql
+-- Configured in db.ts for multi-project access
+PRAGMA journal_mode=WAL;      -- Allow concurrent reads during writes
+PRAGMA busy_timeout=5000;     -- Wait up to 5 seconds if database is locked
+PRAGMA synchronous=NORMAL;    -- Balance between safety and performance
+```
+
+**Why this matters:**
+- Multiple projects (e.g., agent-orchestra + PERLA05) can share the same database
+- WAL mode prevents lock contention during parallel access
+- busy_timeout prevents immediate SQLITE_BUSY errors
+
 #### ChromaDB (Semantic Search)
 | Collection | Purpose |
 |------------|---------|
@@ -349,6 +363,27 @@ session_tasks (session_id, description, status, notes)
 | `task_search` | Task-based search |
 
 Embedding model: `bge-small-en-v1.5` via Transformers.js (~3ms per query)
+
+### SQLite-First Save Pattern
+
+**Problem:** Embedding model initialization takes 30+ seconds on cold start, blocking all database access.
+
+**Solution:** Save to SQLite first, vector operations are secondary.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. Collect session data (no vector DB needed)              │
+│  2. Save to SQLite IMMEDIATELY (< 1 second)                 │
+│  3. Try vector operations (can fail gracefully)             │
+│     - If success: Session indexed in ChromaDB               │
+│     - If failure: Session safe in SQLite, reindex later     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Benefits:**
+- Session data is never lost due to ChromaDB issues
+- Multi-project access works without blocking
+- Vector index can be rebuilt anytime: `bun memory reindex`
 
 ### Auto-Capture Features
 

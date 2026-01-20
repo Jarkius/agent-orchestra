@@ -66,9 +66,11 @@ Agent Orchestra provides:
 
 ### Resilient Architecture
 - **SQLite as Source of Truth** - All data persisted in SQLite, always safe
+- **SQLite-First Save Pattern** - Data saves immediately to SQLite, vector ops are secondary
 - **ChromaDB as Search Index** - Rebuildable vector index for semantic search
 - **Best-Effort Writes** - ChromaDB failures don't crash the system
 - **Retry with Backoff** - Automatic retry for transient failures
+- **WAL Mode for Concurrency** - Multi-project access without database locks
 - **Index Status Tracking** - Know when reindex is needed
 
 ---
@@ -286,13 +288,16 @@ The vector database is designed for resilience:
 ```
 ┌─────────────────────────────────────────┐
 │       SQLite (Source of Truth)          │
-│  - All writes go here first             │
+│  - All writes go here FIRST             │
 │  - Data is ALWAYS safe                  │
+│  - WAL mode for concurrent access       │
+│  - busy_timeout prevents lock errors    │
 ├─────────────────────────────────────────┤
 │    ChromaDB (Disposable Search Index)   │
 │  - Best-effort writes with retry        │
-│  - Failures → mark stale, continue      │
+│  - Failures → continue without crash    │
 │  - Corruption → rebuild from SQLite     │
+│  - Embedding init doesn't block saves   │
 └─────────────────────────────────────────┘
 ```
 
@@ -300,6 +305,8 @@ The vector database is designed for resilience:
 
 | Feature | Description |
 |---------|-------------|
+| **SQLite-First Save** | Data saves to SQLite immediately, vector ops are async/optional |
+| **WAL Mode** | Multi-project concurrent access without database locks |
 | **Retry with Backoff** | 3 retries with 100ms → 200ms → 400ms delays |
 | **Best-Effort Writes** | Failures don't crash - just mark index stale |
 | **Staleness Tracking** | Know when reindex is needed |
