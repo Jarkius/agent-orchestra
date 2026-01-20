@@ -75,4 +75,4 @@ playwright-report/
 credentials.json
 secrets.json
 export
-archive/LEARNINGS.md
+archive/LEARNINGS*.md
