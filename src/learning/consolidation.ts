@@ -207,28 +207,34 @@ export async function consolidateLearnings(
 
     // 2. Redirect all learning_links from merged → primary
     for (const mergeId of strategy.mergeIds) {
-      // Update links pointing TO the merged learning
+      // Update links pointing TO the merged learning (ignore if creates duplicate)
       const updateTo = db.run(
-        `UPDATE learning_links
+        `UPDATE OR IGNORE learning_links
          SET to_learning_id = ?
          WHERE to_learning_id = ? AND from_learning_id != ?`,
         [strategy.keepId, mergeId, strategy.keepId]
       );
       linksUpdated += updateTo.changes;
 
-      // Update links pointing FROM the merged learning
+      // Update links pointing FROM the merged learning (ignore if creates duplicate)
       const updateFrom = db.run(
-        `UPDATE learning_links
+        `UPDATE OR IGNORE learning_links
          SET from_learning_id = ?
          WHERE from_learning_id = ? AND to_learning_id != ?`,
         [strategy.keepId, mergeId, strategy.keepId]
       );
       linksUpdated += updateFrom.changes;
 
-      // Remove duplicate links (where both from and to are now keepId)
+      // Remove self-links (where both from and to are now keepId)
       db.run(
         `DELETE FROM learning_links WHERE from_learning_id = ? AND to_learning_id = ?`,
         [strategy.keepId, strategy.keepId]
+      );
+
+      // Remove orphaned links that couldn't be updated (still point to merged learning)
+      db.run(
+        `DELETE FROM learning_links WHERE from_learning_id = ? OR to_learning_id = ?`,
+        [mergeId, mergeId]
       );
     }
 
