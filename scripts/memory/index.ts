@@ -113,6 +113,11 @@ async function main() {
       await import('./task-update');
       break;
 
+    case 'issue':
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./issue');
+      break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -145,6 +150,7 @@ Commands:
   graph "entity"    Show related entities and learnings
   graph "A" "B"     Find path between two entities
   absorb <path>     Auto-capture knowledge from codebase exploration
+  issue "title"     Report an issue for awareness and tracking
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
   reindex [type]    Re-index SQLite data into ChromaDB vectors
