@@ -168,41 +168,94 @@ async function learnFromFile(path: string): Promise<void> {
 }
 
 async function learnFromUrl(url: string): Promise<void> {
-  console.log(`\n🌐 Learning from URL: ${url}\n`);
+  // Auto-convert GitHub blob URLs to raw URLs
+  let fetchUrl = url;
+  if (url.includes('github.com') && url.includes('/blob/')) {
+    fetchUrl = url
+      .replace('github.com', 'raw.githubusercontent.com')
+      .replace('/blob/', '/');
+    console.log(`\n🌐 Learning from URL: ${url}`);
+    console.log(`  📎 Converted to raw: ${fetchUrl}\n`);
+  } else {
+    console.log(`\n🌐 Learning from URL: ${url}\n`);
+  }
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(fetchUrl);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const html = await response.text();
+    const content = await response.text();
+    const contentType = response.headers.get('content-type') || '';
+    const isRawText = contentType.includes('text/plain') ||
+                      fetchUrl.includes('raw.githubusercontent.com') ||
+                      !content.includes('<html');
 
-    // Simple extraction: get title and meta description
-    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
-      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
+    // For raw text/markdown, use file-like extraction
+    if (isRawText) {
+      const lines = content.split('\n').filter(l => l.trim());
+      const keyPoints: string[] = [];
 
-    const title = titleMatch?.[1]?.trim() || new URL(url).hostname;
-    const description = descMatch?.[1]?.trim() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // Headers
+        if (trimmed.startsWith('#')) {
+          keyPoints.push(trimmed.replace(/^#+\s*/, ''));
+        }
+        // Bullet points with substance
+        else if (/^[-*]\s+.{20,}/.test(trimmed)) {
+          keyPoints.push(trimmed.replace(/^[-*]\s+/, ''));
+        }
+        // Lines with key insight words
+        else if (/\b(key|important|note|learn|insight|tip|remember|must|should|always|never)\b/i.test(trimmed) && trimmed.length > 30) {
+          keyPoints.push(trimmed);
+        }
+      }
 
-    // Extract text content (simple approach - strip tags)
-    const textContent = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .substring(0, 2000);
+      if (keyPoints.length === 0) {
+        keyPoints.push(...lines.slice(0, 10));
+      }
 
-    await saveLearning('insight', {
-      title: `Web: ${title}`,
-      what_happened: `Extracted insights from: ${url}`,
-      lesson: description || textContent.substring(0, 200) + '...',
-      source_url: url,
-    });
+      const filename = new URL(fetchUrl).pathname.split('/').pop() || 'document';
+      const title = filename.replace(/\.[^.]+$/, '');
 
-    console.log(`  ✅ Saved learning from: ${title}\n`);
+      await saveLearning('pattern', {
+        title: `Learnings from: ${title}`,
+        what_happened: `Extracted insights from URL: ${url}`,
+        lesson: keyPoints.slice(0, 10).join(' | '),
+        context: `Source URL: ${url}\nExtracted ${keyPoints.length} key points`,
+        source_url: url,
+      });
+
+      console.log(`  📝 Extracted ${keyPoints.length} key points\n`);
+    } else {
+      // HTML page - extract title and description
+      const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const descMatch = content.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
+        || content.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
+
+      const title = titleMatch?.[1]?.trim() || new URL(url).hostname;
+      const description = descMatch?.[1]?.trim() || '';
+
+      // Extract text content (strip tags)
+      const textContent = content
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 2000);
+
+      await saveLearning('insight', {
+        title: `Web: ${title}`,
+        what_happened: `Extracted insights from: ${url}`,
+        lesson: description || textContent.substring(0, 500) + '...',
+        source_url: url,
+      });
+
+      console.log(`  ✅ Saved learning from: ${title}\n`);
+    }
   } catch (error) {
     console.error(`  ❌ Failed to fetch URL: ${error}\n`);
     console.log('  💡 Tip: Make sure the URL is accessible and try again.\n');
