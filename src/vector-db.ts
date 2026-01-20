@@ -15,6 +15,10 @@
 
 import { ChromaClient, type Collection, type EmbeddingFunction, type Where } from 'chromadb';
 import { createEmbeddingFunction, getEmbeddingConfig } from './embeddings';
+import PQueue from 'p-queue';
+
+// Write queue - serializes all ChromaDB writes to prevent concurrent access corruption
+const writeQueue = new PQueue({ concurrency: 1 });
 
 // ChromaDB client - connects to server at localhost:8100
 // Start server with: chroma run --path ./chroma_data --port 8100
@@ -28,15 +32,38 @@ let consecutiveFailures = 0;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 100;
 
+// Circuit breaker - fast-fail after too many consecutive failures
+let circuitBroken = false;
+let circuitBrokenAt = 0;
+const CIRCUIT_TIMEOUT_MS = 60000; // 1 minute recovery window
+const CIRCUIT_BREAK_THRESHOLD = 3;
+
+// Default operation timeout
+const DEFAULT_OPERATION_TIMEOUT_MS = 5000;
+
 /**
  * Get staleness status - useful for deciding when to reindex
  */
-export function getIndexStatus(): { stale: boolean; consecutiveFailures: number; lastSuccessfulWrite: Date } {
-  return {
+export function getIndexStatus(): {
+  stale: boolean;
+  consecutiveFailures: number;
+  lastSuccessfulWrite: Date;
+  circuitBroken: boolean;
+  circuitRecoveryIn?: number;
+} {
+  const status: ReturnType<typeof getIndexStatus> = {
     stale: indexStale,
     consecutiveFailures,
     lastSuccessfulWrite: new Date(lastSuccessfulWrite),
+    circuitBroken,
   };
+
+  if (circuitBroken) {
+    const recoveryIn = Math.max(0, CIRCUIT_TIMEOUT_MS - (Date.now() - circuitBrokenAt));
+    status.circuitRecoveryIn = recoveryIn;
+  }
+
+  return status;
 }
 
 /**
@@ -46,20 +73,42 @@ export function markIndexFresh(): void {
   indexStale = false;
   consecutiveFailures = 0;
   lastSuccessfulWrite = Date.now();
+  circuitBroken = false;
+  circuitBrokenAt = 0;
 }
 
 /**
- * Retry wrapper with exponential backoff
+ * Retry wrapper with exponential backoff, circuit breaker, and operation timeout
  * Returns result on success, null on failure (best-effort)
  */
 async function withRetry<T>(
   operation: () => Promise<T>,
   operationName: string,
-  throwOnFailure = false
+  throwOnFailure = false,
+  operationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS
 ): Promise<T | null> {
+  // Circuit breaker check - fast fail if circuit is broken
+  if (circuitBroken) {
+    if (Date.now() - circuitBrokenAt < CIRCUIT_TIMEOUT_MS) {
+      console.error(`[VectorDB] ${operationName} skipped - circuit breaker open (recovery in ${Math.ceil((CIRCUIT_TIMEOUT_MS - (Date.now() - circuitBrokenAt)) / 1000)}s)`);
+      return null;
+    }
+    // Reset circuit after timeout
+    console.error(`[VectorDB] Circuit breaker reset - attempting recovery`);
+    circuitBroken = false;
+    consecutiveFailures = 0;
+  }
+
+  const operationStartTime = Date.now();
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    // Check operation-level timeout
+    if (Date.now() - operationStartTime > operationTimeoutMs) {
+      console.error(`[VectorDB] ${operationName} exceeded operation timeout (${operationTimeoutMs}ms)`);
+      break;
+    }
+
     try {
       const result = await operation();
       // Success - reset failure tracking
@@ -89,8 +138,11 @@ async function withRetry<T>(
 
   // All retries failed
   consecutiveFailures++;
-  if (consecutiveFailures >= 3) {
+  if (consecutiveFailures >= CIRCUIT_BREAK_THRESHOLD) {
     indexStale = true;
+    circuitBroken = true;
+    circuitBrokenAt = Date.now();
+    console.error(`[VectorDB] Circuit breaker OPEN after ${consecutiveFailures} consecutive failures`);
   }
 
   console.error(`[VectorDB] ${operationName} failed after ${MAX_RETRIES} attempts: ${lastError?.message}`);
@@ -255,15 +307,16 @@ export async function embedTask(
   }
 ): Promise<void> {
   const cols = ensureInitialized();
-  try {
-    await cols.tasks.add({
-      ids: [taskId],
-      documents: [prompt],
-      metadatas: [{ ...metadata, type: 'task_prompt' }]
-    });
-  } catch (error) {
-    console.error(`[VectorDB] Failed to embed task ${taskId}:`, error);
-  }
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.tasks.add({
+        ids: [taskId],
+        documents: [prompt],
+        metadatas: [{ ...metadata, type: 'task_prompt' }]
+      }),
+      `embed task ${taskId}`
+    );
+  });
 }
 
 export async function embedResult(
@@ -277,15 +330,16 @@ export async function embedResult(
   }
 ): Promise<void> {
   const cols = ensureInitialized();
-  try {
-    await cols.results.add({
-      ids: [taskId],
-      documents: [result],
-      metadatas: [{ ...metadata, type: 'task_result' }]
-    });
-  } catch (error) {
-    console.error(`[VectorDB] Failed to embed result ${taskId}:`, error);
-  }
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.results.add({
+        ids: [taskId],
+        documents: [result],
+        metadatas: [{ ...metadata, type: 'task_result' }]
+      }),
+      `embed result ${taskId}`
+    );
+  });
 }
 
 // ============ MESSAGE EMBEDDINGS ============
@@ -304,15 +358,16 @@ export async function embedMessage(
   const cols = ensureInitialized();
   const collection = direction === 'inbound' ? cols.messagesIn : cols.messagesOut;
 
-  try {
-    await collection.add({
-      ids: [messageId],
-      documents: [content],
-      metadatas: [{ ...metadata, direction }]
-    });
-  } catch (error) {
-    console.error(`[VectorDB] Failed to embed message ${messageId}:`, error);
-  }
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => collection.add({
+        ids: [messageId],
+        documents: [content],
+        metadatas: [{ ...metadata, direction }]
+      }),
+      `embed message ${messageId}`
+    );
+  });
 }
 
 // ============ CONTEXT EMBEDDINGS ============
@@ -326,15 +381,16 @@ export async function embedContext(
   }
 ): Promise<void> {
   const cols = ensureInitialized();
-  try {
-    await cols.context.add({
-      ids: [versionId],
-      documents: [content],
-      metadatas: [{ ...metadata, type: 'shared_context' }]
-    });
-  } catch (error) {
-    console.error(`[VectorDB] Failed to embed context ${versionId}:`, error);
-  }
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.context.add({
+        ids: [versionId],
+        documents: [content],
+        metadatas: [{ ...metadata, type: 'shared_context' }]
+      }),
+      `embed context ${versionId}`
+    );
+  });
 }
 
 // ============ SEARCH FUNCTIONS ============
@@ -542,15 +598,17 @@ export async function saveSession(
     visibility: metadata.visibility || 'public',
   };
 
-  // Best-effort write with retry
-  await withRetry(
-    () => cols.sessions.add({
-      ids: [sessionId],
-      documents: [summary],
-      metadatas: [chromaMetadata],
-    }),
-    `save session ${sessionId}`
-  );
+  // Best-effort write with retry, queued to prevent concurrent access
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.sessions.add({
+        ids: [sessionId],
+        documents: [summary],
+        metadatas: [chromaMetadata],
+      }),
+      `save session ${sessionId}`
+    );
+  });
 }
 
 export interface SessionSearchOptions {
@@ -641,15 +699,17 @@ export async function saveLearning(
     visibility: metadata.visibility || 'public',
   };
 
-  // Best-effort write with retry - failures don't crash, just mark index stale
-  await withRetry(
-    () => cols.learnings.add({
-      ids: [String(learningId)],
-      documents: [content],
-      metadatas: [chromaMetadata],
-    }),
-    `save learning ${learningId}`
-  );
+  // Best-effort write with retry, queued to prevent concurrent access
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.learnings.add({
+        ids: [String(learningId)],
+        documents: [content],
+        metadatas: [chromaMetadata],
+      }),
+      `save learning ${learningId}`
+    );
+  });
 }
 
 export interface LearningSearchOptions {
@@ -749,24 +809,25 @@ export async function embedSessionTask(
   }
 ): Promise<void> {
   const cols = ensureInitialized();
-  try {
-    const chromaMetadata: Record<string, string | number | boolean> = {
-      session_id: metadata.session_id,
-      status: metadata.status,
-      priority: metadata.priority || 'normal',
-      notes: metadata.notes || '',
-      created_at: metadata.created_at,
-    };
+  const chromaMetadata: Record<string, string | number | boolean> = {
+    session_id: metadata.session_id,
+    status: metadata.status,
+    priority: metadata.priority || 'normal',
+    notes: metadata.notes || '',
+    created_at: metadata.created_at,
+  };
 
-    await cols.sessionTasks.add({
-      ids: [String(taskId)],
-      documents: [description],
-      metadatas: [chromaMetadata],
-    });
-  } catch (error) {
-    console.error(`[VectorDB] Failed to embed session task ${taskId}:`, error);
-    throw error;
-  }
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.sessionTasks.add({
+        ids: [String(taskId)],
+        documents: [description],
+        metadatas: [chromaMetadata],
+      }),
+      `embed session task ${taskId}`,
+      true // throw on failure for session tasks
+    );
+  });
 }
 
 /**
@@ -1214,15 +1275,20 @@ export async function embedKnowledge(
   }
 ): Promise<void> {
   const cols = ensureInitialized();
-  await cols.knowledge.add({
-    ids: [knowledgeId],
-    documents: [content],
-    metadatas: [{
-      category: metadata.category || "",
-      mission_id: metadata.mission_id || "",
-      agent_id: metadata.agent_id ?? -1,
-      created_at: metadata.created_at || new Date().toISOString(),
-    }],
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.knowledge.add({
+        ids: [knowledgeId],
+        documents: [content],
+        metadatas: [{
+          category: metadata.category || "",
+          mission_id: metadata.mission_id || "",
+          agent_id: metadata.agent_id ?? -1,
+          created_at: metadata.created_at || new Date().toISOString(),
+        }],
+      }),
+      `embed knowledge ${knowledgeId}`
+    );
   });
 }
 
@@ -1277,19 +1343,24 @@ export async function embedLesson(
   }
 ): Promise<void> {
   const cols = ensureInitialized();
-  await cols.lessons.add({
-    ids: [lessonId],
-    documents: [content],
-    metadatas: [{
-      problem: metadata.problem,
-      solution: metadata.solution,
-      outcome: metadata.outcome,
-      category: metadata.category || "",
-      confidence: metadata.confidence ?? 0.5,
-      frequency: metadata.frequency ?? 1,
-      agent_id: metadata.agent_id ?? -1,
-      created_at: metadata.created_at || new Date().toISOString(),
-    }],
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.lessons.add({
+        ids: [lessonId],
+        documents: [content],
+        metadatas: [{
+          problem: metadata.problem,
+          solution: metadata.solution,
+          outcome: metadata.outcome,
+          category: metadata.category || "",
+          confidence: metadata.confidence ?? 0.5,
+          frequency: metadata.frequency ?? 1,
+          agent_id: metadata.agent_id ?? -1,
+          created_at: metadata.created_at || new Date().toISOString(),
+        }],
+      }),
+      `embed lesson ${lessonId}`
+    );
   });
 }
 
@@ -1369,20 +1440,25 @@ export async function updateLessonEmbedding(
 ): Promise<void> {
   const cols = ensureInitialized();
 
-  // Get existing
+  // Get existing (read operation, doesn't need queue)
   const existing = await cols.lessons.get({ ids: [lessonId] });
   if (!existing.metadatas?.[0]) return;
 
   const currentMeta = existing.metadatas[0];
   if (!currentMeta) return;
 
-  await cols.lessons.update({
-    ids: [lessonId],
-    metadatas: [{
-      ...currentMeta,
-      confidence: metadata.confidence !== undefined ? metadata.confidence : (currentMeta.confidence ?? 0.5),
-      frequency: metadata.frequency !== undefined ? metadata.frequency : (currentMeta.frequency ?? 1),
-    }],
+  await writeQueue.add(async () => {
+    await withRetry(
+      () => cols.lessons.update({
+        ids: [lessonId],
+        metadatas: [{
+          ...currentMeta,
+          confidence: metadata.confidence !== undefined ? metadata.confidence : (currentMeta.confidence ?? 0.5),
+          frequency: metadata.frequency !== undefined ? metadata.frequency : (currentMeta.frequency ?? 1),
+        }],
+      }),
+      `update lesson ${lessonId}`
+    );
   });
 }
 

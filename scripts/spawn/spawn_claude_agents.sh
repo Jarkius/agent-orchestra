@@ -25,6 +25,72 @@ if ! command -v claude &> /dev/null; then
     exit 1
 fi
 
+# ============================================
+# ChromaDB Server Management
+# ============================================
+CHROMA_PORT=${CHROMA_PORT:-8100}
+CHROMA_CONTAINER=${CHROMA_CONTAINER:-chromadb}
+export CHROMA_URL="http://localhost:$CHROMA_PORT"
+
+echo "Checking ChromaDB server..."
+
+# Check if ChromaDB is already running
+if curl -s "http://localhost:$CHROMA_PORT/api/v2/heartbeat" > /dev/null 2>&1; then
+    echo "  ✓ ChromaDB already running on port $CHROMA_PORT"
+else
+    echo "  Starting ChromaDB server..."
+
+    # Check if Docker is available
+    if ! command -v docker &> /dev/null; then
+        echo "  ⚠ Docker not found. ChromaDB server mode requires Docker."
+        echo "  Install Docker or run ChromaDB manually: chroma run --path ./chroma_data --port $CHROMA_PORT"
+        echo "  Continuing without server mode (embedded mode will be used)..."
+        unset CHROMA_URL
+    else
+        # Try to start existing container first
+        if docker start "$CHROMA_CONTAINER" > /dev/null 2>&1; then
+            echo "  ✓ Started existing ChromaDB container"
+        else
+            # Create new container with auto-restart
+            echo "  Creating new ChromaDB container..."
+            docker run -d \
+                --name "$CHROMA_CONTAINER" \
+                --restart unless-stopped \
+                -p "$CHROMA_PORT:8000" \
+                -v "$PROJECT_ROOT/chroma_data:/data" \
+                chromadb/chroma > /dev/null 2>&1
+
+            if [ $? -eq 0 ]; then
+                echo "  ✓ ChromaDB container created"
+            else
+                echo "  ⚠ Failed to create ChromaDB container"
+                echo "  Continuing without server mode..."
+                unset CHROMA_URL
+            fi
+        fi
+
+        # Wait for ChromaDB to become healthy
+        if [ -n "$CHROMA_URL" ]; then
+            echo "  Waiting for ChromaDB to be ready..."
+            for i in {1..30}; do
+                if curl -s "http://localhost:$CHROMA_PORT/api/v2/heartbeat" > /dev/null 2>&1; then
+                    echo "  ✓ ChromaDB ready on port $CHROMA_PORT"
+                    break
+                fi
+                sleep 1
+            done
+
+            # Final check
+            if ! curl -s "http://localhost:$CHROMA_PORT/api/v2/heartbeat" > /dev/null 2>&1; then
+                echo "  ⚠ ChromaDB failed to start within timeout"
+                unset CHROMA_URL
+            fi
+        fi
+    fi
+fi
+
+echo ""
+
 # Clear previous session data
 rm -f "$SCRIPT_DIR/agents.db"
 rm -rf /tmp/agent_inbox
@@ -104,15 +170,20 @@ tmux send-keys -t "$SESSION:0.0" "clear && cat << 'EOF'
 
 Session: $SESSION
 Agents: $NUM_AGENTS
+ChromaDB: ${CHROMA_URL:-embedded mode}
 
 Press Ctrl+C to exit this info panel.
 EOF
 " Enter
 
-# Start agent watchers in each pane
+# Start agent watchers in each pane (with CHROMA_URL if set)
 for i in $(seq 1 $NUM_AGENTS); do
     pane=$i
-    tmux send-keys -t "$SESSION:0.$pane" "cd '$PROJECT_ROOT' && bun run src/agent-watcher.ts $i" Enter
+    if [ -n "$CHROMA_URL" ]; then
+        tmux send-keys -t "$SESSION:0.$pane" "cd '$PROJECT_ROOT' && CHROMA_URL='$CHROMA_URL' bun run src/agent-watcher.ts $i" Enter
+    else
+        tmux send-keys -t "$SESSION:0.$pane" "cd '$PROJECT_ROOT' && bun run src/agent-watcher.ts $i" Enter
+    fi
 done
 
 echo ""
