@@ -2,9 +2,13 @@
 /**
  * /learn - Capture learnings, insights, and wisdom
  *
- * Usage:
- *   bun memory learn <category> "title" ["context"]
- *   bun memory learn --interactive
+ * Smart Learn - Auto-detects input type:
+ *   bun memory learn ./docs/file.md              # → reads file content
+ *   bun memory learn https://example.com/article # → fetches URL
+ *   bun memory learn https://youtube.com/watch?v=x # → extracts from YouTube
+ *   bun memory learn HEAD~3                       # → extracts from git commits
+ *   bun memory learn architecture "Manual title"  # → existing category behavior
+ *   bun memory learn --interactive               # → interactive mode
  *
  * Categories:
  *   Technical: performance, architecture, tooling, debugging, security, testing
@@ -14,6 +18,9 @@
 import { initVectorDB, saveLearning as saveLearningToChroma, findSimilarLearnings } from '../../src/vector-db';
 import { createLearning, createLearningLink, extractAndLinkEntities } from '../../src/db';
 import * as readline from 'readline';
+import { existsSync, readFileSync } from 'fs';
+import { basename } from 'path';
+import { execSync } from 'child_process';
 
 const TECHNICAL_CATEGORIES = ['performance', 'architecture', 'tooling', 'debugging', 'security', 'testing', 'process'] as const;
 const WISDOM_CATEGORIES = ['philosophy', 'principle', 'insight', 'pattern', 'retrospective'] as const;
@@ -91,6 +98,211 @@ interface StructuredLearningInput {
   prevention?: string;
   source_url?: string;
   confidence?: 'low' | 'medium' | 'high' | 'proven';
+}
+
+// ============ Smart Input Detection ============
+
+type InputType = 'file' | 'url' | 'youtube' | 'git' | 'category';
+
+function detectInputType(input: string): InputType {
+  // File: exists on disk
+  if (existsSync(input)) return 'file';
+
+  // YouTube: youtube.com or youtu.be
+  if (/youtube\.com|youtu\.be/i.test(input)) return 'youtube';
+
+  // URL: starts with http
+  if (/^https?:\/\//i.test(input)) return 'url';
+
+  // Git: HEAD, commit hash (7-40 hex chars), or ref~N patterns
+  if (/^(HEAD|[a-f0-9]{7,40}|[\w\-\/]+~\d+|[\w\-\/]+\^+)$/i.test(input)) return 'git';
+
+  // Default: category (existing behavior)
+  return 'category';
+}
+
+// ============ Smart Learn Handlers ============
+
+async function learnFromFile(path: string): Promise<void> {
+  console.log(`\n📄 Learning from file: ${path}\n`);
+
+  const content = readFileSync(path, 'utf-8');
+  const title = basename(path).replace(/\.[^.]+$/, ''); // Remove extension
+
+  // Extract key points from the file
+  const lines = content.split('\n').filter(l => l.trim());
+  const keyPoints: string[] = [];
+
+  // Look for markdown headers, bullet points, or key sentences
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Headers
+    if (trimmed.startsWith('#')) {
+      keyPoints.push(trimmed.replace(/^#+\s*/, ''));
+    }
+    // Bullet points that look like insights
+    else if (/^[-*]\s+.{20,}/.test(trimmed)) {
+      keyPoints.push(trimmed.replace(/^[-*]\s+/, ''));
+    }
+    // Lines with "key", "important", "note", "learn"
+    else if (/\b(key|important|note|learn|insight|tip|remember)\b/i.test(trimmed)) {
+      keyPoints.push(trimmed);
+    }
+  }
+
+  if (keyPoints.length === 0) {
+    // Fall back to first few non-empty lines
+    keyPoints.push(...lines.slice(0, 5));
+  }
+
+  // Save as a pattern learning with file context
+  await saveLearning('pattern', {
+    title: `Learnings from: ${title}`,
+    what_happened: `Read and extracted insights from file: ${path}`,
+    lesson: keyPoints.slice(0, 5).join(' | '),
+    context: `Source file: ${path}\nExtracted ${keyPoints.length} key points`,
+    source_url: `file://${path}`,
+  });
+
+  console.log(`  📝 Extracted ${keyPoints.length} key points\n`);
+}
+
+async function learnFromUrl(url: string): Promise<void> {
+  console.log(`\n🌐 Learning from URL: ${url}\n`);
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const html = await response.text();
+
+    // Simple extraction: get title and meta description
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
+
+    const title = titleMatch?.[1]?.trim() || new URL(url).hostname;
+    const description = descMatch?.[1]?.trim() || '';
+
+    // Extract text content (simple approach - strip tags)
+    const textContent = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 2000);
+
+    await saveLearning('insight', {
+      title: `Web: ${title}`,
+      what_happened: `Extracted insights from: ${url}`,
+      lesson: description || textContent.substring(0, 200) + '...',
+      source_url: url,
+    });
+
+    console.log(`  ✅ Saved learning from: ${title}\n`);
+  } catch (error) {
+    console.error(`  ❌ Failed to fetch URL: ${error}\n`);
+    console.log('  💡 Tip: Make sure the URL is accessible and try again.\n');
+    process.exit(1);
+  }
+}
+
+async function learnFromYoutube(url: string): Promise<void> {
+  console.log(`\n📺 Learning from YouTube: ${url}\n`);
+
+  // Extract video ID
+  const videoIdMatch = url.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if (!videoIdMatch) {
+    console.error('  ❌ Could not extract YouTube video ID\n');
+    process.exit(1);
+  }
+
+  const videoId = videoIdMatch[1];
+  console.log(`  🎬 Video ID: ${videoId}`);
+
+  // Try to get video info from oEmbed (no API key required)
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const response = await fetch(oembedUrl);
+    const data = await response.json() as { title: string; author_name: string };
+
+    await saveLearning('insight', {
+      title: `YouTube: ${data.title}`,
+      what_happened: `Watched YouTube video by ${data.author_name}`,
+      lesson: 'Video content - add your key takeaways manually',
+      source_url: url,
+      context: `Video: ${data.title} by ${data.author_name}`,
+    });
+
+    console.log(`\n  ✅ Created placeholder learning for: ${data.title}`);
+    console.log(`  📝 Edit the learning to add your key takeaways\n`);
+  } catch (error) {
+    // Fallback: save with URL only
+    await saveLearning('insight', {
+      title: `YouTube: ${videoId}`,
+      what_happened: `Watched YouTube video`,
+      lesson: 'Video content - add your key takeaways manually',
+      source_url: url,
+    });
+
+    console.log(`\n  ✅ Created placeholder learning for video: ${videoId}`);
+    console.log(`  📝 Edit the learning to add your key takeaways\n`);
+  }
+}
+
+async function learnFromGit(ref: string): Promise<void> {
+  console.log(`\n📜 Learning from git: ${ref}\n`);
+
+  try {
+    // Get commit log
+    const logOutput = execSync(`git log ${ref} --oneline -n 10`, { encoding: 'utf-8' });
+    const commits = logOutput.trim().split('\n');
+
+    console.log(`  Found ${commits.length} commit(s):\n`);
+    for (const commit of commits) {
+      console.log(`    ${commit}`);
+    }
+
+    // Extract learnings from commit messages
+    const learnings: string[] = [];
+    for (const commit of commits) {
+      const match = commit.match(/^[a-f0-9]+\s+(.+)$/);
+      if (match) {
+        const msg = match[1]!;
+        // Skip merge commits and trivial commits
+        if (!msg.toLowerCase().startsWith('merge') && msg.length > 10) {
+          learnings.push(msg);
+        }
+      }
+    }
+
+    if (learnings.length === 0) {
+      console.log('\n  ⚠️  No significant commits found\n');
+      return;
+    }
+
+    // Get diff stats for context
+    let diffStats = '';
+    try {
+      diffStats = execSync(`git diff ${ref} --stat | tail -1`, { encoding: 'utf-8' }).trim();
+    } catch { /* ignore */ }
+
+    await saveLearning('retrospective', {
+      title: `Git learnings from: ${ref}`,
+      what_happened: `Analyzed ${commits.length} commit(s) from ${ref}`,
+      lesson: learnings.slice(0, 5).join(' | '),
+      context: diffStats ? `Changes: ${diffStats}` : undefined,
+    });
+
+    console.log(`\n  ✅ Extracted ${learnings.length} learning(s) from git history\n`);
+  } catch (error) {
+    console.error(`  ❌ Git command failed: ${error}\n`);
+    console.log('  💡 Tip: Make sure you\'re in a git repository and the ref is valid.\n');
+    process.exit(1);
+  }
 }
 
 async function saveLearning(category: Category, input: StructuredLearningInput) {
@@ -226,9 +438,15 @@ async function main() {
 
   if (args[0] === '--help' || args[0] === '-h') {
     console.log(`
-🧠 Memory Learn - Capture knowledge and wisdom
+🧠 Memory Learn - Smart Knowledge Capture
 
-Usage:
+Smart Mode (auto-detects input type):
+  bun memory learn ./docs/file.md              # Learn from file
+  bun memory learn https://example.com/article # Learn from URL
+  bun memory learn https://youtube.com/watch?v=x # Learn from YouTube
+  bun memory learn HEAD~3                       # Learn from git commits
+
+Traditional Mode:
   bun memory learn <category> "title" ["context"]
   bun memory learn <category> "title" --lesson "..." --prevention "..."
   bun memory learn --interactive
@@ -242,15 +460,37 @@ Options:
   --help, -h          Show this help
 
 Quick Examples:
-  bun memory learn tooling "jq parses JSON in shell"
-  bun memory learn philosophy "Simplicity over cleverness" --lesson "Readable code beats clever code"
-  bun memory learn architecture "MemGPT pattern" --source "https://example.com/article"
+  bun memory learn ./README.md                  # Auto-detect file
+  bun memory learn HEAD~5                       # Last 5 commits
+  bun memory learn tooling "jq parses JSON"    # Traditional category mode
 `);
     printCategories();
     return;
   }
 
-  // Parse args: category, title, and optional flags
+  // Smart detection: check if first arg is file/url/youtube/git
+  const firstArg = args[0]!;
+  const inputType = detectInputType(firstArg);
+
+  if (inputType !== 'category') {
+    // Smart mode: auto-detect and process
+    switch (inputType) {
+      case 'file':
+        await learnFromFile(firstArg);
+        return;
+      case 'url':
+        await learnFromUrl(firstArg);
+        return;
+      case 'youtube':
+        await learnFromYoutube(firstArg);
+        return;
+      case 'git':
+        await learnFromGit(firstArg);
+        return;
+    }
+  }
+
+  // Traditional mode: category + title
   const category = args[0]?.toLowerCase() as Category;
   let title = '';
   let context: string | undefined;

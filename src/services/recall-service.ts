@@ -29,7 +29,6 @@ import {
   isInitialized,
 } from '../vector-db';
 
-import { semanticSearch, type SemanticSearchResult } from './hybrid-memory-bridge';
 import {
   detectTaskType,
   executeSmartRetrieval,
@@ -97,7 +96,6 @@ export interface RecallResult {
   sessions: SessionWithContext[];
   learnings: LearningWithContext[];
   tasks: TaskSearchResult[];
-  hybridContext?: SemanticSearchResult[];  // Results from Python ChromaDB
 }
 
 export interface RecallOptions {
@@ -355,12 +353,11 @@ async function recallBySearch(
   // Build search options with agent and project scoping
   const searchOptions = { limit, agentId, includeShared, projectPath };
 
-  // Run parallel searches (including hybrid memory)
+  // Run parallel searches
   // Learnings handled separately for smart retrieval with category boosting
-  const [sessionResults, taskResults, hybridResults] = await Promise.all([
+  const [sessionResults, taskResults] = await Promise.all([
     searchSessions(query, searchOptions),
     searchSessionTasks(query, limit),
-    semanticSearch(query, { nResults: limit, project: 'agent-orchestra' }).catch(() => [] as SemanticSearchResult[]),
   ]);
 
   // For learnings, use smart retrieval if enabled
@@ -437,7 +434,6 @@ async function recallBySearch(
     sessions: sessionsWithContext,
     learnings: learningsWithContext,
     tasks,
-    hybridContext: hybridResults,
   };
 }
 

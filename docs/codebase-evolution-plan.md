@@ -1,15 +1,24 @@
 # Agent Orchestra: Comprehensive Evolution Plan
 
-> **Version:** 5.0 — Final Consolidated Plan  
-> **Date:** January 20, 2026  
-> **Status:** Ready for Implementation
+> **Version:** 6.0 — Post-WebSocket Implementation
+> **Date:** January 20, 2026
+> **Status:** Core Infrastructure Complete
+
+## ✅ Completed Items
+
+| Item | Status | Commit/PR |
+|------|--------|-----------|
+| **ChromaDB Corruption Fix** | ✅ Done | Write queue + circuit breaker (c54e4b5) |
+| **WebSocket Server (Phase 1)** | ✅ Done | `src/ws-server.ts` |
+| **Replace Polling (Phase 2)** | ✅ Done | `src/mcp/tools/handlers/task.ts` |
+| **Cross-Matrix Hub (Phase 3)** | ✅ Done | `src/matrix-hub.ts`, `src/matrix-client.ts` |
+| **Python Memory Removal** | ✅ Done | Deleted `hybrid-memory-bridge.ts`, cleaned `recall-service.ts` |
 
 ## ⚠️ Known Issues
 
-| Issue | Status | Root Cause | Resolution |
-|-------|--------|------------|------------|
-| **ChromaDB Corrupted** | 🔴 Active | Concurrent access from multiple agents | Run ChromaDB as server (port 8100) instead of embedded, or add write locks |
-| Python Memory removed | ✅ Done | — | Cleaned from `recall-service.ts` |
+| Issue | Status | Notes |
+|-------|--------|-------|
+| None critical | — | System stable |
 
 ---
 
@@ -53,80 +62,44 @@ After analysis, we're **removing** `scripts/python_memory/` and `hybrid-memory-b
 
 ---
 
-## ✅ Implementation Phases
+## ✅ Completed Phases
 
-### Phase 1: Communication Layer (Week 1) — HIGH PRIORITY
+### Phase 1: Communication Layer ✅
 
-**Goal:** Replace file polling with WebSocket push.
+**Implemented:** WebSocket server for real-time task delivery
 
-#### 1.1 Add Events to MissionQueue
-```typescript
-// src/pty/mission-queue.ts
-import { EventEmitter } from 'events';
+| Component | File | Status |
+|-----------|------|--------|
+| WebSocket Server | `src/ws-server.ts` | ✅ |
+| Task Handler Integration | `src/mcp/tools/handlers/task.ts` | ✅ |
 
-export class MissionQueue extends EventEmitter implements IMissionQueue {
-  enqueue(...) {
-    // existing...
-    this.emit('mission:queued', fullMission);
-  }
-  complete(...) {
-    // existing...
-    this.emit('mission:completed', missionId, result);
-  }
-}
-```
+### Phase 2: Cleanup & Simplification ✅
 
-#### 1.2 Add HTTP/WS Server to Orchestrator
-```typescript
-// src/orchestrator.ts
-Bun.serve({
-  port: 3000,
-  fetch(req) {
-    const url = new URL(req.url);
-    if (url.pathname === '/api/agents') return Response.json(getAllAgents());
-    if (url.pathname === '/api/missions') return Response.json(queue.getAllMissions());
-    if (url.pathname === '/api/oracle/insights') return Response.json(oracle.getEfficiencyInsights());
-  },
-  websocket: {
-    open(ws) { queue.on('mission:*', (e, d) => ws.send(JSON.stringify({ event: e, data: d }))); },
-  }
-});
-```
+| Task | Status |
+|------|--------|
+| Remove Python Memory import | ✅ Removed from `recall-service.ts` |
+| Delete `hybrid-memory-bridge.ts` | ✅ Deleted |
+| Archive Python scripts | ✅ `scripts/python_memory/` removed |
 
-#### 1.3 Upgrade Agent Watcher
-```typescript
-// src/agent-watcher.ts
-const ws = new WebSocket(`ws://localhost:3000/agents/${AGENT_ID}`);
-ws.on('message', async (data) => {
-  const task = JSON.parse(data);
-  await processTask(task.id);
-});
-// Keep file polling as fallback for 2 weeks
-```
+### Phase 3: Cross-Matrix Communication ✅
+
+**Implemented:** WebSocket hub for multi-instance communication
+
+| Component | File | Status |
+|-----------|------|--------|
+| Matrix Hub Server | `src/matrix-hub.ts` | ✅ |
+| Matrix Client | `src/matrix-client.ts` | ✅ |
+| Hub Launcher | `scripts/start-hub.sh` | ✅ |
+| Message Integration | `scripts/memory/message.ts` | ✅ |
+| MCP Integration | `src/mcp/server.ts` | ✅ |
 
 ---
 
-### Phase 2: Cleanup & Simplification (Week 1)
+## 🔜 Remaining Phases
 
-**Goal:** Remove complexity, single memory system.
-
-| Task | File |
-|------|------|
-| Remove Python Memory import | `src/services/recall-service.ts` (line 32) |
-| Remove semanticSearch call | `src/services/recall-service.ts` (line 343) |
-| Remove hybridContext from RecallResult | `src/services/recall-service.ts` |
-| Delete bridge file | `src/services/hybrid-memory-bridge.ts` |
-| Archive Python scripts | Move `scripts/python_memory/` to `_archive/` |
-
----
-
-### Phase 3: Web Dashboard (Week 2)
+### Phase 4: Web Dashboard (Future)
 
 **Goal:** Visual monitoring and control.
-
-```bash
-cd src && npx -y create-vite@latest dashboard --template react-ts
-```
 
 | Component | Data Source |
 |-----------|-------------|
@@ -135,28 +108,21 @@ cd src && npx -y create-vite@latest dashboard --template react-ts
 | `OracleInsights` | `GET /api/oracle/insights` |
 | `LearningExplorer` | `GET /api/learnings` |
 
+**GitHub Issue:** #14
+
 ---
 
-### Phase 4: Telemetry (Week 2-3)
+### Phase 5: Telemetry (Future)
 
 **Goal:** Structured event logging for debugging.
 
-```sql
--- telemetry.db (separate from agents.db)
-CREATE TABLE events (
-  id INTEGER PRIMARY KEY,
-  ts INTEGER NOT NULL,
-  source TEXT,
-  event_type TEXT,
-  payload TEXT
-);
-```
+**GitHub Issue:** #15
 
 ---
 
-## 🚀 Future Enhancements (Phase 5+)
+## 🚀 Future Enhancements (Phase 6+)
 
-### 5.1 Advanced Memory Features
+### 6.1 Advanced Memory Features
 | Feature | Description | When to Add |
 |---------|-------------|-------------|
 | **Cross-Encoder Re-ranking** | Use a small model to re-score top-K results for relevance | When retrieval quality becomes a problem |
@@ -164,7 +130,7 @@ CREATE TABLE events (
 | **Memory Compression** | Summarize old sessions to save tokens | When context window fills up |
 | **Forgetting Curve** | Auto-decay unused learnings over time | Already exists (`decayStaleConfidence`) |
 
-### 5.2 Agent Intelligence
+### 6.2 Agent Intelligence
 | Feature | Description |
 |---------|-------------|
 | **Self-Critique Loop** | Agent reviews own output before submitting |
@@ -172,7 +138,7 @@ CREATE TABLE events (
 | **Collaborative Memory** | Agents share learnings automatically via `visibility: shared` |
 | **Task Decomposition** | OracleOrchestrator auto-splits complex tasks into subtasks |
 
-### 5.3 Observability & DevEx
+### 6.3 Observability & DevEx
 | Feature | Description |
 |---------|-------------|
 | **Time-Travel Debugging** | Replay any task execution from telemetry |
@@ -180,14 +146,14 @@ CREATE TABLE events (
 | **Performance Profiling** | Identify slow agents, optimize prompts |
 | **Diff Viewer** | See what an agent changed in the codebase |
 
-### 5.4 Multi-Project Support
+### 6.4 Multi-Project Support
 | Feature | Description |
 |---------|-------------|
 | **Project Isolation** | Separate ChromaDB collections per project |
 | **Context Switching** | Agent can switch projects without restart |
 | **Cross-Project Search** | Search learnings across all projects |
 
-### 5.5 External Integrations
+### 6.5 External Integrations
 | Feature | Description |
 |---------|-------------|
 | **GitHub Integration** | Auto-create PRs from agent work |
@@ -197,39 +163,35 @@ CREATE TABLE events (
 
 ---
 
-## � Implementation Checklist
+## Implementation Checklist
 
-### Week 1
-- [ ] **FIX: ChromaDB concurrent access** — Run as server (port 8100) or add write mutex
-- [ ] Add EventEmitter to `MissionQueue`
-- [ ] Add `Bun.serve` to `orchestrator.ts`
-- [ ] Refactor `agent-watcher.ts` (WebSocket + file fallback)
+### Completed
+- [x] **FIX: ChromaDB concurrent access** — Write queue + circuit breaker (c54e4b5)
+- [x] WebSocket Server for real-time task delivery
+- [x] Cross-Matrix Hub for multi-instance communication
 - [x] Remove Python Memory from `recall-service.ts`
-- [ ] Delete/archive `hybrid-memory-bridge.ts` and `scripts/python_memory/`
+- [x] Delete `hybrid-memory-bridge.ts`
+- [x] Archive `scripts/python_memory/`
 
-### Week 2
-- [ ] Scaffold React dashboard
+### Future Work
+- [ ] Scaffold React dashboard (Phase 4, Issue #14)
 - [ ] Implement AgentGrid + MissionQueue views
-- [ ] Create telemetry middleware
-
-### Week 3
+- [ ] Create telemetry middleware (Phase 5, Issue #15)
 - [ ] Implement OracleInsights + LearningExplorer
-- [ ] Deprecate ANSI console dashboard
-- [ ] Write integration tests
+- [ ] Smart Learn command with auto-detect (Issue #12)
 
 ---
 
-## 📁 Files to Modify
+## Key Files
 
-| File | Action |
-|------|--------|
-| `src/pty/mission-queue.ts` | Add EventEmitter |
-| `src/orchestrator.ts` | Add Bun.serve HTTP/WS |
-| `src/agent-watcher.ts` | WebSocket client |
-| `src/services/recall-service.ts` | Remove Python imports |
-| `src/services/hybrid-memory-bridge.ts` | **DELETE** |
-| `scripts/python_memory/` | **ARCHIVE** |
-| `src/dashboard/` | **NEW** |
+| File | Purpose |
+|------|---------|
+| `src/ws-server.ts` | WebSocket server for agent task delivery |
+| `src/matrix-hub.ts` | Cross-matrix communication hub |
+| `src/matrix-client.ts` | Hub client for matrices |
+| `src/vector-db.ts` | ChromaDB semantic search |
+| `src/db.ts` | SQLite storage |
+| `src/mcp/server.ts` | MCP server entry point |
 
 ---
 
