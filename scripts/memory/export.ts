@@ -10,7 +10,8 @@ import { listLearningsFromDb, getImprovementReport } from '../../src/db';
 // When called via index.ts router, argv is: [bun, index.ts, "export", path]
 // When called directly, argv is: [bun, export.ts, path]
 const args = process.argv.slice(2);
-const outputPath = args.find(a => a !== 'export' && !a.startsWith('-')) || 'archive/LEARNINGS.md';
+const dateSuffix = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+const outputPath = args.find(a => a !== 'export' && !a.startsWith('-')) || `archive/LEARNINGS_${dateSuffix}.md`;
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
