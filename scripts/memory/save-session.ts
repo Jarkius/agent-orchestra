@@ -764,8 +764,8 @@ async function saveCurrentSession() {
     }
   }
 
-  // Prompt for learnings (always, even in quick mode)
-  const learnings = await collectLearnings(sessionId);
+  // Prompt for learnings (skip in auto mode - learnings are auto-distilled from context)
+  const learnings = autoMode ? [] : await collectLearnings(sessionId);
   if (learnings.length > 0) {
     console.log('\n6. Saving learnings...');
     for (const learning of learnings) {
