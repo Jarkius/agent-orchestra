@@ -149,15 +149,13 @@ async function saveLearningFromDistill(
   sourceSessionId: string,
   context?: string
 ): Promise<number> {
-  await initVectorDB();
-
   const agentIdStr = process.env.MEMORY_AGENT_ID;
   const agentId = agentIdStr ? parseInt(agentIdStr) : null;
 
   // Distilled learnings start at 'low' - validate to increase confidence
   const defaultConfidence = 'low';
 
-  // 1. Save to SQLite with structured fields
+  // 1. Save to SQLite FIRST (fast, always works)
   const learningId = createLearning({
     category,
     title: learning.title,
@@ -171,29 +169,36 @@ async function saveLearningFromDistill(
     prevention: learning.prevention,
   });
 
-  // 2. Save to ChromaDB
-  const searchContent = `${learning.title} ${learning.lesson || ''} ${learning.what_happened || ''} ${context || ''}`;
-  await saveLearningToChroma(learningId, learning.title, learning.lesson || context || '', {
-    category,
-    confidence: defaultConfidence,
-    source_session_id: sourceSessionId,
-    created_at: new Date().toISOString(),
-    agent_id: agentId,
-    visibility: agentId === null ? 'public' : 'private',
-  });
+  // 2. Try vector operations (may fail/timeout, that's OK)
+  try {
+    await initVectorDB();
 
-  // 3. Auto-link to similar learnings
-  const autoLinkOptions: { excludeId: number; agentId?: number; crossAgentLinking: boolean } = {
-    excludeId: learningId,
-    crossAgentLinking: false,
-  };
-  if (agentId !== null) {
-    autoLinkOptions.agentId = agentId;
-  }
-  const { autoLinked } = await findSimilarLearnings(searchContent, autoLinkOptions);
+    const searchContent = `${learning.title} ${learning.lesson || ''} ${learning.what_happened || ''} ${context || ''}`;
+    await saveLearningToChroma(learningId, learning.title, learning.lesson || context || '', {
+      category,
+      confidence: defaultConfidence,
+      source_session_id: sourceSessionId,
+      created_at: new Date().toISOString(),
+      agent_id: agentId,
+      visibility: agentId === null ? 'public' : 'private',
+    });
 
-  for (const link of autoLinked) {
-    createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
+    // 3. Auto-link to similar learnings
+    const autoLinkOptions: { excludeId: number; agentId?: number; crossAgentLinking: boolean } = {
+      excludeId: learningId,
+      crossAgentLinking: false,
+    };
+    if (agentId !== null) {
+      autoLinkOptions.agentId = agentId;
+    }
+    const { autoLinked } = await findSimilarLearnings(searchContent, autoLinkOptions);
+
+    for (const link of autoLinked) {
+      createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
+    }
+  } catch (error) {
+    // Vector ops are best-effort - learning is already saved to SQLite
+    console.log('      ⚠ Vector indexing skipped (can rebuild later with: bun memory reindex)');
   }
 
   return learningId;
@@ -294,7 +299,7 @@ async function main() {
   console.log('\n🧪 Distill Learnings from Sessions\n');
   console.log('═'.repeat(60));
 
-  await initVectorDB();
+  // Note: Vector DB init moved to saveLearningFromDistill (SQLite-first pattern)
 
   let sessions: SessionRecord[] = [];
 
