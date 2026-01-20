@@ -381,6 +381,8 @@ async function interactiveMode() {
     duration,
     commits,
     tasks,
+    startedAt: undefined, // Not available in interactive mode
+    endedAt: new Date().toISOString(),
     fullContext: {
       wins: wins.length > 0 ? wins : undefined,
       issues: issues.length > 0 ? issues : undefined,
@@ -433,6 +435,8 @@ async function quickMode() {
     duration: undefined,
     commits: gitContext?.recentCommits.length || undefined,
     tasks: [] as TaskInput[],
+    startedAt: undefined, // Not available in quick mode
+    endedAt: new Date().toISOString(),
     fullContext: {
       git_branch: gitContext?.branch,
       git_commits: gitContext?.recentCommits.length ? gitContext.recentCommits : undefined,
@@ -514,6 +518,8 @@ async function autoCaptureMode() {
     duration: captured.duration.minutes,
     commits: gitContext?.recentCommits.length || undefined,
     tasks: captured.tasks,
+    startedAt: captured.duration.start.toISOString(),
+    endedAt: captured.duration.end.toISOString(),
     fullContext: {
       // From Claude Code capture
       user_messages: captured.userMessages.slice(-10), // Last 10 messages
@@ -673,6 +679,8 @@ async function saveCurrentSession() {
     duration_mins: data.duration,
     commits_count: data.commits,
     tags: data.tags.length > 0 ? data.tags : undefined,
+    started_at: data.startedAt,
+    ended_at: data.endedAt || now,
   };
 
   // SAVE TO SQLITE FIRST - this is fast and doesn't block

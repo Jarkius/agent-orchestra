@@ -101,6 +101,8 @@ db.run(`
     duration_mins INTEGER,
     commits_count INTEGER,
     tags TEXT,
+    started_at TEXT,
+    ended_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (previous_session_id) REFERENCES sessions(id)
   )
@@ -126,6 +128,18 @@ db.run(`
 // Add maturity_stage column if it doesn't exist (migration for existing DBs)
 try {
   db.run(`ALTER TABLE learnings ADD COLUMN maturity_stage TEXT DEFAULT 'observation' CHECK(maturity_stage IN ('observation', 'learning', 'pattern', 'principle', 'wisdom'))`);
+} catch {
+  // Column already exists
+}
+
+// Add started_at and ended_at columns to sessions (migration for existing DBs)
+try {
+  db.run(`ALTER TABLE sessions ADD COLUMN started_at TEXT`);
+} catch {
+  // Column already exists
+}
+try {
+  db.run(`ALTER TABLE sessions ADD COLUMN ended_at TEXT`);
 } catch {
   // Column already exists
 }
@@ -713,6 +727,8 @@ export interface SessionRecord {
   tags?: string[];
   agent_id?: number | null;
   visibility?: Visibility;
+  started_at?: string;
+  ended_at?: string;
   created_at?: string;
   next_steps?: string[];
   challenges?: string[];
@@ -720,8 +736,8 @@ export interface SessionRecord {
 
 export function createSession(session: SessionRecord): void {
   db.run(
-    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, agent_id, visibility)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id, previous_session_id, summary, full_context, duration_mins, commits_count, tags, agent_id, visibility, started_at, ended_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       session.id,
       session.previous_session_id || null,
@@ -732,6 +748,8 @@ export function createSession(session: SessionRecord): void {
       session.tags?.join(',') || null,
       session.agent_id ?? null,
       session.visibility || 'public',
+      session.started_at || null,
+      session.ended_at || null,
     ]
   );
 }
