@@ -21,6 +21,86 @@ import { createEmbeddingFunction, getEmbeddingConfig } from './embeddings';
 let client: ChromaClient | null = null;
 let embeddingFunction: EmbeddingFunction | null = null;
 
+// Staleness tracking - when writes fail, index becomes stale
+let indexStale = false;
+let lastSuccessfulWrite = Date.now();
+let consecutiveFailures = 0;
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 100;
+
+/**
+ * Get staleness status - useful for deciding when to reindex
+ */
+export function getIndexStatus(): { stale: boolean; consecutiveFailures: number; lastSuccessfulWrite: Date } {
+  return {
+    stale: indexStale,
+    consecutiveFailures,
+    lastSuccessfulWrite: new Date(lastSuccessfulWrite),
+  };
+}
+
+/**
+ * Mark index as fresh (call after successful reindex)
+ */
+export function markIndexFresh(): void {
+  indexStale = false;
+  consecutiveFailures = 0;
+  lastSuccessfulWrite = Date.now();
+}
+
+/**
+ * Retry wrapper with exponential backoff
+ * Returns result on success, null on failure (best-effort)
+ */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  operationName: string,
+  throwOnFailure = false
+): Promise<T | null> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const result = await operation();
+      // Success - reset failure tracking
+      consecutiveFailures = 0;
+      lastSuccessfulWrite = Date.now();
+      return result;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Check if it's a retryable error
+      const errorMsg = lastError.message.toLowerCase();
+      const isRetryable = errorMsg.includes('compaction') ||
+                          errorMsg.includes('timeout') ||
+                          errorMsg.includes('connection') ||
+                          errorMsg.includes('econnrefused');
+
+      if (!isRetryable || attempt === MAX_RETRIES - 1) {
+        break;
+      }
+
+      // Exponential backoff
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+      console.error(`[VectorDB] ${operationName} failed (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  // All retries failed
+  consecutiveFailures++;
+  if (consecutiveFailures >= 3) {
+    indexStale = true;
+  }
+
+  console.error(`[VectorDB] ${operationName} failed after ${MAX_RETRIES} attempts: ${lastError?.message}`);
+
+  if (throwOnFailure) {
+    throw lastError;
+  }
+  return null;
+}
+
 function getClient(): ChromaClient {
   if (!client) {
     const url = process.env.CHROMA_URL || "http://localhost:8100";
@@ -454,24 +534,23 @@ export async function saveSession(
   metadata: SessionMetadata
 ): Promise<void> {
   const cols = ensureInitialized();
-  try {
-    // ChromaDB only supports primitive metadata values - convert arrays to CSV
-    const chromaMetadata: Record<string, string | number | boolean> = {
-      created_at: metadata.created_at,
-      tags: metadata.tags?.join(',') || '',
-      agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
-      visibility: metadata.visibility || 'public',
-    };
+  // ChromaDB only supports primitive metadata values - convert arrays to CSV
+  const chromaMetadata: Record<string, string | number | boolean> = {
+    created_at: metadata.created_at,
+    tags: metadata.tags?.join(',') || '',
+    agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
+    visibility: metadata.visibility || 'public',
+  };
 
-    await cols.sessions.add({
+  // Best-effort write with retry
+  await withRetry(
+    () => cols.sessions.add({
       ids: [sessionId],
       documents: [summary],
       metadatas: [chromaMetadata],
-    });
-  } catch (error) {
-    console.error(`[VectorDB] Failed to save session ${sessionId}:`, error);
-    throw error;
-  }
+    }),
+    `save session ${sessionId}`
+  );
 }
 
 export interface SessionSearchOptions {
@@ -552,26 +631,25 @@ export async function saveLearning(
   metadata: LearningMetadata
 ): Promise<void> {
   const cols = ensureInitialized();
-  try {
-    const content = `${title}. ${description}`;
-    const chromaMetadata: Record<string, string | number | boolean> = {
-      category: metadata.category,
-      confidence: metadata.confidence,
-      source_session_id: metadata.source_session_id || '',
-      created_at: metadata.created_at,
-      agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
-      visibility: metadata.visibility || 'public',
-    };
+  const content = `${title}. ${description}`;
+  const chromaMetadata: Record<string, string | number | boolean> = {
+    category: metadata.category,
+    confidence: metadata.confidence,
+    source_session_id: metadata.source_session_id || '',
+    created_at: metadata.created_at,
+    agent_id: metadata.agent_id ?? -1, // ChromaDB doesn't support null, use -1 for orchestrator
+    visibility: metadata.visibility || 'public',
+  };
 
-    await cols.learnings.add({
+  // Best-effort write with retry - failures don't crash, just mark index stale
+  await withRetry(
+    () => cols.learnings.add({
       ids: [String(learningId)],
       documents: [content],
       metadatas: [chromaMetadata],
-    });
-  } catch (error) {
-    console.error(`[VectorDB] Failed to save learning ${learningId}:`, error);
-    throw error;
-  }
+    }),
+    `save learning ${learningId}`
+  );
 }
 
 export interface LearningSearchOptions {
@@ -1306,4 +1384,207 @@ export async function updateLessonEmbedding(
       frequency: metadata.frequency !== undefined ? metadata.frequency : (currentMeta.frequency ?? 1),
     }],
   });
+}
+
+// ============ REBUILD FROM SQLITE ============
+
+export interface RebuildProgress {
+  sessions: { total: number; indexed: number; errors: number };
+  learnings: { total: number; indexed: number; errors: number };
+  knowledge: { total: number; indexed: number; errors: number };
+  lessons: { total: number; indexed: number; errors: number };
+}
+
+/**
+ * Rebuild ChromaDB index from SQLite (source of truth)
+ * Use after corruption, restart, or when index becomes stale
+ */
+export async function rebuildFromSqlite(options?: {
+  collections?: ('sessions' | 'learnings' | 'knowledge' | 'lessons')[];
+  batchSize?: number;
+  onProgress?: (progress: RebuildProgress) => void;
+}): Promise<RebuildProgress> {
+  const { collections = ['sessions', 'learnings', 'knowledge', 'lessons'], batchSize = 50, onProgress } = options || {};
+
+  // Import db functions dynamically to avoid circular dependency
+  const { listSessionsFromDb, listLearningsFromDb, listKnowledge, listLessons } = await import('./db');
+
+  const progress: RebuildProgress = {
+    sessions: { total: 0, indexed: 0, errors: 0 },
+    learnings: { total: 0, indexed: 0, errors: 0 },
+    knowledge: { total: 0, indexed: 0, errors: 0 },
+    lessons: { total: 0, indexed: 0, errors: 0 },
+  };
+
+  // Ensure initialized
+  if (!initialized) {
+    await initVectorDB();
+  }
+  const cols = ensureInitialized();
+
+  console.error('[VectorDB] Starting rebuild from SQLite...');
+
+  // Rebuild sessions
+  if (collections.includes('sessions')) {
+    const sessions = listSessionsFromDb({ limit: 10000 });
+    progress.sessions.total = sessions.length;
+    console.error(`[VectorDB] Indexing ${sessions.length} sessions...`);
+
+    for (let i = 0; i < sessions.length; i += batchSize) {
+      const batch = sessions.slice(i, i + batchSize);
+      const ids: string[] = [];
+      const documents: string[] = [];
+      const metadatas: Record<string, string | number | boolean>[] = [];
+
+      for (const session of batch) {
+        ids.push(session.id);
+        documents.push(session.summary);
+        metadatas.push({
+          created_at: session.created_at,
+          tags: session.tags?.join(',') || '',
+          agent_id: session.agent_id ?? -1,
+          visibility: session.visibility || 'public',
+        });
+      }
+
+      try {
+        // Delete existing then add (upsert pattern)
+        await cols.sessions.delete({ ids });
+        await cols.sessions.add({ ids, documents, metadatas });
+        progress.sessions.indexed += batch.length;
+      } catch (error) {
+        console.error(`[VectorDB] Session batch error:`, error);
+        progress.sessions.errors += batch.length;
+      }
+
+      onProgress?.(progress);
+    }
+  }
+
+  // Rebuild learnings
+  if (collections.includes('learnings')) {
+    const learnings = listLearningsFromDb({ limit: 10000 });
+    progress.learnings.total = learnings.length;
+    console.error(`[VectorDB] Indexing ${learnings.length} learnings...`);
+
+    for (let i = 0; i < learnings.length; i += batchSize) {
+      const batch = learnings.slice(i, i + batchSize);
+      const ids: string[] = [];
+      const documents: string[] = [];
+      const metadatas: Record<string, string | number | boolean>[] = [];
+
+      for (const learning of batch) {
+        if (!learning.id) continue;
+        ids.push(String(learning.id));
+        documents.push(`${learning.title}. ${learning.description || learning.lesson || ''}`);
+        metadatas.push({
+          category: learning.category || '',
+          confidence: learning.confidence || 'low',
+          source_session_id: learning.source_session_id || '',
+          created_at: learning.created_at || '',
+          agent_id: learning.agent_id ?? -1,
+          visibility: learning.visibility || 'public',
+        });
+      }
+
+      if (ids.length === 0) continue;
+
+      try {
+        await cols.learnings.delete({ ids });
+        await cols.learnings.add({ ids, documents, metadatas });
+        progress.learnings.indexed += batch.length;
+      } catch (error) {
+        console.error(`[VectorDB] Learning batch error:`, error);
+        progress.learnings.errors += batch.length;
+      }
+
+      onProgress?.(progress);
+    }
+  }
+
+  // Rebuild knowledge
+  if (collections.includes('knowledge')) {
+    const knowledge = listKnowledge({ limit: 10000 });
+    progress.knowledge.total = knowledge.length;
+    console.error(`[VectorDB] Indexing ${knowledge.length} knowledge entries...`);
+
+    for (let i = 0; i < knowledge.length; i += batchSize) {
+      const batch = knowledge.slice(i, i + batchSize);
+      const ids: string[] = [];
+      const documents: string[] = [];
+      const metadatas: Record<string, string | number | boolean>[] = [];
+
+      for (const k of batch) {
+        if (!k.id) continue;
+        ids.push(`knowledge_${k.id}`);
+        documents.push(k.content);
+        metadatas.push({
+          category: k.category || '',
+          agent_id: k.agent_id ?? -1,
+          created_at: k.created_at || '',
+        });
+      }
+
+      if (ids.length === 0) continue;
+
+      try {
+        await cols.knowledge.delete({ ids });
+        await cols.knowledge.add({ ids, documents, metadatas });
+        progress.knowledge.indexed += batch.length;
+      } catch (error) {
+        console.error(`[VectorDB] Knowledge batch error:`, error);
+        progress.knowledge.errors += batch.length;
+      }
+
+      onProgress?.(progress);
+    }
+  }
+
+  // Rebuild lessons
+  if (collections.includes('lessons')) {
+    const lessons = listLessons({ limit: 10000 });
+    progress.lessons.total = lessons.length;
+    console.error(`[VectorDB] Indexing ${lessons.length} lessons...`);
+
+    for (let i = 0; i < lessons.length; i += batchSize) {
+      const batch = lessons.slice(i, i + batchSize);
+      const ids: string[] = [];
+      const documents: string[] = [];
+      const metadatas: Record<string, string | number | boolean>[] = [];
+
+      for (const lesson of batch) {
+        if (!lesson.id) continue;
+        ids.push(`lesson_${lesson.id}`);
+        documents.push(`Problem: ${lesson.problem}\nSolution: ${lesson.solution}\nOutcome: ${lesson.outcome}`);
+        metadatas.push({
+          problem: lesson.problem,
+          solution: lesson.solution,
+          outcome: lesson.outcome,
+          category: lesson.category || '',
+          confidence: lesson.confidence ?? 0.5,
+          agent_id: lesson.agent_id ?? -1,
+          created_at: lesson.created_at || '',
+        });
+      }
+
+      if (ids.length === 0) continue;
+
+      try {
+        await cols.lessons.delete({ ids });
+        await cols.lessons.add({ ids, documents, metadatas });
+        progress.lessons.indexed += batch.length;
+      } catch (error) {
+        console.error(`[VectorDB] Lesson batch error:`, error);
+        progress.lessons.errors += batch.length;
+      }
+
+      onProgress?.(progress);
+    }
+  }
+
+  // Mark index as fresh
+  markIndexFresh();
+
+  console.error('[VectorDB] Rebuild complete:', progress);
+  return progress;
 }

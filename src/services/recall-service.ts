@@ -30,6 +30,11 @@ import {
 } from '../vector-db';
 
 import { semanticSearch, type SemanticSearchResult } from './hybrid-memory-bridge';
+import {
+  detectTaskType,
+  executeSmartRetrieval,
+  type TaskType,
+} from '../learning/context-router';
 
 // ============ Pattern Detection ============
 
@@ -101,6 +106,7 @@ export interface RecallOptions {
   includeTasks?: boolean;
   agentId?: number | null;
   includeShared?: boolean;
+  useSmartRetrieval?: boolean;  // Use context-aware retrieval with category boosting
 }
 
 // ============ Main Recall Function ============
@@ -109,7 +115,7 @@ export interface RecallOptions {
  * Smart recall - detects query type and handles appropriately
  */
 export async function recall(query: string | undefined, options: RecallOptions = {}): Promise<RecallResult> {
-  const { limit = 5, includeLinks = true, includeTasks = true, agentId, includeShared = true } = options;
+  const { limit = 5, includeLinks = true, includeTasks = true, agentId, includeShared = true, useSmartRetrieval = true } = options;
   const queryType = detectQueryType(query);
   const normalizedQuery = query?.trim() || '';
 
@@ -124,7 +130,7 @@ export async function recall(query: string | undefined, options: RecallOptions =
       return recallLearningById(normalizedQuery, includeLinks, agentId);
 
     case 'search':
-      return recallBySearch(normalizedQuery, limit, includeLinks, includeTasks, agentId, includeShared);
+      return recallBySearch(normalizedQuery, limit, includeLinks, includeTasks, agentId, includeShared, useSmartRetrieval);
   }
 }
 
@@ -317,7 +323,7 @@ async function recallLearningById(
 }
 
 /**
- * Recall by semantic search
+ * Recall by semantic search - with optional context-aware retrieval
  */
 async function recallBySearch(
   query: string,
@@ -325,23 +331,46 @@ async function recallBySearch(
   includeLinks: boolean,
   includeTasks: boolean,
   agentId?: number | null,
-  includeShared: boolean = true
+  includeShared: boolean = true,
+  useSmartRetrieval: boolean = true
 ): Promise<RecallResult> {
   // Initialize vector DB if needed
   if (!isInitialized()) {
     await initVectorDB();
   }
 
+  // Detect task type for context-aware retrieval
+  const taskContext = detectTaskType(query);
+  console.log(`[Recall] Detected task type: ${taskContext.type} (confidence: ${(taskContext.confidence * 100).toFixed(0)}%)`);
+
   // Build search options with agent scoping
   const searchOptions = { limit, agentId, includeShared };
 
   // Run parallel searches (including hybrid memory)
-  const [sessionResults, learningResults, taskResults, hybridResults] = await Promise.all([
+  // Learnings handled separately for smart retrieval with category boosting
+  const [sessionResults, taskResults, hybridResults] = await Promise.all([
     searchSessions(query, searchOptions),
-    searchLearnings(query, { ...searchOptions, limit: limit + 2 }),
     searchSessionTasks(query, limit),
     semanticSearch(query, { nResults: limit, project: 'agent-orchestra' }).catch(() => [] as SemanticSearchResult[]),
   ]);
+
+  // For learnings, use smart retrieval if enabled
+  let learningResults: any;
+  if (useSmartRetrieval) {
+    // Use context-aware retrieval with category boosting
+    const smartResults = await executeSmartRetrieval(query, {
+      limit: limit + 2,
+      taskType: taskContext.type,
+    });
+
+    // Convert to expected format
+    learningResults = {
+      ids: [smartResults.filter(r => r.type === 'learning').map(r => r.id)],
+      distances: [smartResults.filter(r => r.type === 'learning').map(r => 1 - r.boostedScore)],
+    };
+  } else {
+    learningResults = await searchLearnings(query, { ...searchOptions, limit: limit + 2 });
+  }
 
   // Process session results
   const sessionsWithContext: SessionWithContext[] = [];

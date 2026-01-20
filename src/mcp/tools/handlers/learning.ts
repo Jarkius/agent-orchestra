@@ -156,6 +156,19 @@ export const learningTools: ToolDefinition[] = [
       required: ["learning_id"],
     },
   },
+  {
+    name: "consolidate_learnings",
+    description: "Find and merge duplicate learnings to reduce noise",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dry_run: { type: "boolean", description: "Preview without merging (default: true)" },
+        min_similarity: { type: "number", description: "Minimum similarity threshold (default: 0.90)" },
+        category: { type: "string", description: "Only consolidate this category" },
+        limit: { type: "number", description: "Max consolidations to perform (default: 10)" },
+      },
+    },
+  },
 ];
 
 // ============ Tool Handlers ============
@@ -169,6 +182,32 @@ async function handleAddLearning(args: unknown) {
   const confidence = input.confidence || 'low';
 
   try {
+    // Duplicate prevention: Check for near-duplicates before creating
+    const searchContent = `${input.title} ${input.description || ''} ${input.lesson || ''}`;
+    const existingSimilar = await findSimilarLearnings(searchContent, {
+      minSimilarity: 0.92,
+      agentId,
+      crossAgentLinking: false,
+    });
+
+    if (existingSimilar.autoLinked.length > 0) {
+      // Boost existing learning instead of creating duplicate
+      const existing = existingSimilar.autoLinked[0];
+      const existingId = parseInt(existing.id.replace('learning_', ''));
+      validateLearningInDb(existingId);
+      const updated = getLearningById(existingId);
+
+      return jsonResponse({
+        action: 'boosted_existing',
+        learning_id: existingId,
+        title: updated?.title || existing.summary,
+        new_confidence: updated?.confidence,
+        times_validated: updated?.times_validated,
+        similarity: existing.similarity,
+        message: 'Boosted existing learning instead of creating duplicate',
+      });
+    }
+
     const learningId = createLearning({
       category: input.category,
       title: input.title,
@@ -183,8 +222,8 @@ async function handleAddLearning(args: unknown) {
       prevention: input.prevention,
     });
 
-    const searchContent = `${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
-    await saveLearningToChroma(learningId, input.title, searchContent, {
+    const chromaContent = `${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
+    await saveLearningToChroma(learningId, input.title, chromaContent, {
       category: input.category,
       confidence,
       created_at: new Date().toISOString(),
@@ -192,7 +231,7 @@ async function handleAddLearning(args: unknown) {
       visibility,
     });
 
-    const { autoLinked, suggested } = await findSimilarLearnings(searchContent, {
+    const { autoLinked, suggested } = await findSimilarLearnings(chromaContent, {
       excludeId: learningId,
       agentId,
       crossAgentLinking: false,
@@ -480,6 +519,46 @@ async function handleClosedLoop(args: unknown) {
   }
 }
 
+// ============ Consolidation Handler ============
+
+const ConsolidateSchema = z.object({
+  dry_run: z.boolean().default(true),
+  min_similarity: z.number().min(0.5).max(1.0).default(0.90),
+  category: z.string().optional(),
+  limit: z.number().min(1).max(100).default(10),
+});
+
+async function handleConsolidateLearnings(args: unknown) {
+  await ensureVectorDB();
+  const input = ConsolidateSchema.parse(args);
+
+  try {
+    const { runConsolidation } = await import('../../../learning/consolidation');
+
+    const stats = await runConsolidation({
+      dryRun: input.dry_run,
+      minSimilarity: input.min_similarity,
+      category: input.category,
+      limit: input.limit,
+    });
+
+    return jsonResponse({
+      dry_run: input.dry_run,
+      min_similarity: input.min_similarity,
+      category_filter: input.category || null,
+      candidates_found: stats.candidatesFound,
+      total_duplicates: stats.totalDuplicates,
+      merged: stats.merged,
+      errors: stats.errors.length > 0 ? stats.errors : undefined,
+      message: input.dry_run
+        ? `Found ${stats.candidatesFound} consolidation candidates with ${stats.totalDuplicates} duplicates. Run with dry_run=false to merge.`
+        : `Merged ${stats.merged} duplicate learnings.`,
+    });
+  } catch (error) {
+    return errorResponse(`Consolidation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 // ============ Export Handlers Map ============
 
 export const learningHandlers: Record<string, ToolHandler> = {
@@ -489,4 +568,5 @@ export const learningHandlers: Record<string, ToolHandler> = {
   list_learnings: handleListLearnings,
   validate_learning: handleValidateLearning,
   closed_loop: handleClosedLoop,
+  consolidate_learnings: handleConsolidateLearnings,
 };
