@@ -8,7 +8,9 @@ import { listSessionsFromDb, listLearningsFromDb, getSessionTaskStats, getSessio
 import Enquirer from 'enquirer';
 
 // Parse arguments
-const args = process.argv.slice(2);
+// When invoked via index.ts, args includes "list" as first arg, so filter it out
+const rawArgs = process.argv.slice(2);
+const args = rawArgs.filter(a => a !== 'list');
 const interactive = args.includes('-i') || args.includes('--interactive');
 const typeArg = args.find(a => !a.startsWith('-')) || 'sessions';
 const type = typeArg;

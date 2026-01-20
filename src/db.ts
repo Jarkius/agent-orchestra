@@ -17,6 +17,11 @@ async function getVectorDb() {
 
 export const db = new Database(DB_PATH);
 
+// Configure for concurrent access from multiple processes
+db.run("PRAGMA journal_mode=WAL");      // Allow concurrent reads during writes
+db.run("PRAGMA busy_timeout=5000");     // Wait up to 5 seconds if database is locked
+db.run("PRAGMA synchronous=NORMAL");    // Balance between safety and performance
+
 // Initialize schema with comprehensive tracking
 db.run(`
   CREATE TABLE IF NOT EXISTS agents (
