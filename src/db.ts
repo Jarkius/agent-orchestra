@@ -366,6 +366,43 @@ db.run(`
 db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_status ON matrix_registry(status)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_last_seen ON matrix_registry(last_seen)`);
 
+// ============ FTS5 Full-Text Search ============
+
+// Create FTS5 virtual table for learnings (keyword search)
+db.run(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS learnings_fts USING fts5(
+    title,
+    description,
+    lesson,
+    content='learnings',
+    content_rowid='id'
+  )
+`);
+
+// Triggers to keep FTS in sync with learnings table
+db.run(`
+  CREATE TRIGGER IF NOT EXISTS learnings_fts_ai AFTER INSERT ON learnings BEGIN
+    INSERT INTO learnings_fts(rowid, title, description, lesson)
+    VALUES (new.id, new.title, new.description, new.lesson);
+  END
+`);
+
+db.run(`
+  CREATE TRIGGER IF NOT EXISTS learnings_fts_ad AFTER DELETE ON learnings BEGIN
+    INSERT INTO learnings_fts(learnings_fts, rowid, title, description, lesson)
+    VALUES ('delete', old.id, old.title, old.description, old.lesson);
+  END
+`);
+
+db.run(`
+  CREATE TRIGGER IF NOT EXISTS learnings_fts_au AFTER UPDATE ON learnings BEGIN
+    INSERT INTO learnings_fts(learnings_fts, rowid, title, description, lesson)
+    VALUES ('delete', old.id, old.title, old.description, old.lesson);
+    INSERT INTO learnings_fts(rowid, title, description, lesson)
+    VALUES (new.id, new.title, new.description, new.lesson);
+  END
+`);
+
 // ============ Agent Functions ============
 
 export function registerAgent(id: number, paneId: string, pid: number, name?: string) {
@@ -938,6 +975,60 @@ export function getLearningById(learningId: number): LearningRecord | null {
     visibility: row.visibility || 'public',
     project_path: row.project_path || null,
   };
+}
+
+/**
+ * Full-text search for learnings using SQLite FTS5
+ * Returns learnings matching the query keywords, ranked by relevance
+ */
+export function searchLearningsFTS(query: string, limit = 10): Array<LearningRecord & { fts_rank: number }> {
+  // Escape special FTS5 characters and add prefix matching
+  const ftsQuery = query
+    .replace(/['"]/g, '') // Remove quotes
+    .split(/\s+/)
+    .filter(term => term.length > 1)
+    .map(term => `"${term}"*`) // Prefix match each term
+    .join(' OR ');
+
+  if (!ftsQuery) return [];
+
+  try {
+    const rows = db.query(`
+      SELECT l.*, fts.rank as fts_rank
+      FROM learnings l
+      JOIN learnings_fts fts ON l.id = fts.rowid
+      WHERE learnings_fts MATCH ?
+      ORDER BY fts.rank
+      LIMIT ?
+    `).all(ftsQuery, limit) as any[];
+
+    return rows.map(row => ({
+      ...row,
+      agent_id: row.agent_id ?? null,
+      visibility: row.visibility || 'public',
+      project_path: row.project_path || null,
+    }));
+  } catch (error) {
+    // FTS table might not be populated yet
+    console.error('[FTS] Search error:', error);
+    return [];
+  }
+}
+
+/**
+ * Rebuild FTS index from existing learnings data
+ */
+export function rebuildLearningsFTS(): number {
+  // Clear existing FTS data
+  db.run(`DELETE FROM learnings_fts`);
+
+  // Repopulate from learnings table
+  const result = db.run(`
+    INSERT INTO learnings_fts(rowid, title, description, lesson)
+    SELECT id, title, description, lesson FROM learnings
+  `);
+
+  return result.changes;
 }
 
 export function updateLearning(learningId: number, updates: Partial<Pick<LearningRecord, 'title' | 'description' | 'context' | 'confidence' | 'source_url' | 'what_happened' | 'lesson' | 'prevention'>>): boolean {

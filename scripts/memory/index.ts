@@ -124,6 +124,15 @@ async function main() {
       await import('./message');
       break;
 
+    case 'validate':
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./validate-search');
+      break;
+
+    case 'evaluate':
+      await import('./evaluate-search');
+      break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -163,6 +172,8 @@ Commands:
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
   reindex [type]    Re-index SQLite data into ChromaDB vectors
+  validate          Run search validation tests (feedback loop)
+  evaluate          Full search evaluation (vector vs FTS vs hybrid)
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing

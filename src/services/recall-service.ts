@@ -16,6 +16,7 @@ import {
   getSessionTasks,
   listSessionsFromDb,
   listLearningsFromDb,
+  searchLearningsFTS,
   type SessionRecord,
   type LearningRecord,
   type SessionTask,
@@ -106,6 +107,102 @@ export interface RecallOptions {
   includeShared?: boolean;
   useSmartRetrieval?: boolean;  // Use context-aware retrieval with category boosting
   projectPath?: string;  // Filter by project/git root path for matrix scoping
+}
+
+// ============ Hybrid Search ============
+
+/**
+ * Extract parent learning ID from a potentially chunked ID
+ * e.g., "1551_chunk_0" -> 1551, "1551" -> 1551
+ */
+function extractParentLearningId(id: string): number {
+  // Remove "learning_" prefix if present
+  const idStr = id.replace('learning_', '');
+  // Extract parent ID (before "_chunk_" suffix)
+  const parentId = idStr.split('_chunk_')[0];
+  return parseInt(parentId || '0');
+}
+
+/**
+ * Hybrid search combining vector similarity + keyword matching
+ * Returns deduplicated learning IDs with combined scores
+ */
+export async function hybridSearchLearnings(
+  query: string,
+  options: {
+    limit?: number;
+    vectorWeight?: number;
+    keywordWeight?: number;
+    agentId?: number | null;
+    includeShared?: boolean;
+    projectPath?: string;
+  } = {}
+): Promise<Array<{ id: number; score: number; vectorScore: number; keywordScore: number }>> {
+  const {
+    limit = 10,
+    vectorWeight = 0.6,
+    keywordWeight = 0.4,
+    agentId,
+    includeShared = true,
+    projectPath,
+  } = options;
+
+  // Run vector and keyword searches in parallel
+  const [vectorResults, ftsResults] = await Promise.all([
+    searchLearnings(query, { limit: limit * 2, agentId, includeShared, projectPath }),
+    Promise.resolve(searchLearningsFTS(query, limit * 2)),
+  ]);
+
+  // Score map: learningId -> { vector: score, keyword: score }
+  const scoreMap = new Map<number, { vector: number; keyword: number }>();
+
+  // Process vector results (deduplicate chunks to parent IDs)
+  if (vectorResults.ids[0]?.length) {
+    for (let i = 0; i < vectorResults.ids[0].length; i++) {
+      const id = vectorResults.ids[0][i]!;
+      const parentId = extractParentLearningId(id);
+      const distance = vectorResults.distances?.[0]?.[i] ?? 1;
+      const similarity = 1 - distance;
+
+      const existing = scoreMap.get(parentId);
+      if (existing) {
+        // Take the best score for this parent (in case multiple chunks match)
+        existing.vector = Math.max(existing.vector, similarity);
+      } else {
+        scoreMap.set(parentId, { vector: similarity, keyword: 0 });
+      }
+    }
+  }
+
+  // Process FTS results (rank-based scoring)
+  if (ftsResults.length > 0) {
+    for (let i = 0; i < ftsResults.length; i++) {
+      const id = ftsResults[i]!.id!;
+      // FTS rank is negative (more negative = better match), normalize to 0-1
+      // Use position-based scoring: first result gets 1.0, gradually decreasing
+      const score = 1 - (i / Math.max(ftsResults.length, 1));
+
+      const existing = scoreMap.get(id);
+      if (existing) {
+        existing.keyword = Math.max(existing.keyword, score);
+      } else {
+        scoreMap.set(id, { vector: 0, keyword: score });
+      }
+    }
+  }
+
+  // Calculate hybrid scores and sort
+  const results = [...scoreMap.entries()]
+    .map(([id, scores]) => ({
+      id,
+      score: scores.vector * vectorWeight + scores.keyword * keywordWeight,
+      vectorScore: scores.vector,
+      keywordScore: scores.keyword,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+
+  return results;
 }
 
 // ============ Main Recall Function ============
@@ -360,22 +457,28 @@ async function recallBySearch(
     searchSessionTasks(query, limit),
   ]);
 
-  // For learnings, use smart retrieval if enabled
-  let learningResults: any;
-  if (useSmartRetrieval) {
-    // Use context-aware retrieval with category boosting
-    const smartResults = await executeSmartRetrieval(query, {
-      limit: limit + 2,
-      taskType: taskContext.type,
-    });
+  // For learnings, use hybrid search (vector + keyword) for better recall
+  // This combines semantic similarity with exact keyword matching
+  // Weights tuned via validation feedback loop (see scripts/memory/validate-search.ts)
+  const hybridResults = await hybridSearchLearnings(query, {
+    limit: limit + 2,
+    agentId,
+    includeShared,
+    projectPath,
+    // Tuned weights: FTS outperforms vector for keyword queries
+    vectorWeight: 0.36,
+    keywordWeight: 0.64,
+  });
 
-    // Convert to expected format
-    learningResults = {
-      ids: [smartResults.filter(r => r.type === 'learning').map(r => r.id)],
-      distances: [smartResults.filter(r => r.type === 'learning').map(r => 1 - r.boostedScore)],
-    };
-  } else {
-    learningResults = await searchLearnings(query, { ...searchOptions, limit: limit + 2 });
+  // Convert hybrid results to expected format for processing below
+  const learningResults = {
+    ids: [hybridResults.map(r => String(r.id))],
+    distances: [hybridResults.map(r => 1 - r.score)],
+  };
+
+  console.log(`[Recall] Hybrid search: ${hybridResults.length} results (query: "${query}")`);
+  if (hybridResults.length > 0) {
+    console.log(`[Recall] Top result: #${hybridResults[0]!.id} (score: ${hybridResults[0]!.score.toFixed(3)}, vector: ${hybridResults[0]!.vectorScore.toFixed(3)}, keyword: ${hybridResults[0]!.keywordScore.toFixed(3)})`);
   }
 
   // Process session results
@@ -398,12 +501,15 @@ async function recallBySearch(
     }
   }
 
-  // Process learning results
+  // Process learning results (hybrid search already returns parent IDs)
   const learningsWithContext: LearningWithContext[] = [];
   if (learningResults.ids[0]?.length) {
     for (let i = 0; i < learningResults.ids[0].length; i++) {
       const id = learningResults.ids[0]![i]!;
-      const numId = parseInt(id.replace('learning_', ''));
+      // Hybrid search returns numeric IDs as strings (already deduplicated from chunks)
+      const numId = parseInt(id);
+      if (isNaN(numId)) continue;
+
       const distance = learningResults.distances?.[0]?.[i] || 0;
       const learning = getLearningById(numId);
 

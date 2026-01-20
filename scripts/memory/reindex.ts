@@ -24,6 +24,7 @@ import {
   listSessionsFromDb,
   listLearningsFromDb,
   getAllSessionTasks,
+  rebuildLearningsFTS,
 } from "../../src/db";
 
 const args = process.argv.slice(2);
@@ -185,6 +186,11 @@ async function main() {
   if (reindexLearn) {
     header("INDEXING LEARNINGS");
     totalIndexed += await reindexLearnings();
+
+    // Also rebuild FTS index for keyword search
+    console.log(`  Rebuilding FTS index...`);
+    const ftsCount = rebuildLearningsFTS();
+    console.log(green(`  ✓ FTS index: ${ftsCount} entries`));
   }
 
   // Reindex session tasks

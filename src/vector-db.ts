@@ -17,6 +17,53 @@ import { ChromaClient, type Collection, type EmbeddingFunction, type Where } fro
 import { createEmbeddingFunction, getEmbeddingConfig } from './embeddings';
 import PQueue from 'p-queue';
 
+// ============ Content Chunking ============
+
+/**
+ * Split long content into overlapping chunks for better embedding
+ * Each chunk is embedded separately for more precise semantic matching
+ */
+export function chunkContent(content: string, chunkSize = 500, overlap = 100): string[] {
+  if (content.length <= chunkSize) {
+    return [content];
+  }
+
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < content.length) {
+    let end = Math.min(start + chunkSize, content.length);
+
+    // Try to break at sentence/paragraph boundaries for cleaner chunks
+    if (end < content.length) {
+      const breakPoints = ['\n\n', '\n', '. ', '! ', '? ', '; '];
+      for (const bp of breakPoints) {
+        const lastBreak = content.lastIndexOf(bp, end);
+        // Only use break point if it's in the valid range (past halfway)
+        if (lastBreak > start + chunkSize / 2) {
+          end = lastBreak + bp.length;
+          break;
+        }
+      }
+    }
+
+    chunks.push(content.slice(start, end).trim());
+
+    // Calculate next start with overlap, but ensure forward progress
+    const nextStart = end - overlap;
+    // Ensure we always move forward by at least 1 character
+    start = Math.max(nextStart, start + 1);
+
+    // Safety: prevent runaway chunking (max ~200 chunks = 100KB+ content)
+    if (chunks.length >= 200) {
+      console.error(`[chunkContent] Hit max chunk limit (200) for content length ${content.length}`);
+      break;
+    }
+  }
+
+  return chunks.filter(c => c.length > 0);
+}
+
 // Write queue - serializes all ChromaDB writes to prevent concurrent access corruption
 const writeQueue = new PQueue({ concurrency: 1 });
 
@@ -709,7 +756,7 @@ export async function saveLearning(
 ): Promise<void> {
   const cols = ensureInitialized();
   const content = `${title}. ${description}`;
-  const chromaMetadata: Record<string, string | number | boolean> = {
+  const baseMetadata: Record<string, string | number | boolean> = {
     category: metadata.category,
     confidence: metadata.confidence,
     source_session_id: metadata.source_session_id || '',
@@ -719,16 +766,40 @@ export async function saveLearning(
     project_path: metadata.project_path || '',  // Empty string for unset (ChromaDB doesn't support null)
   };
 
+  // Chunk long content for better embedding precision
+  const chunks = chunkContent(content, 500, 100);
+
   // Best-effort write with retry, queued to prevent concurrent access
   await writeQueue.add(async () => {
-    await withRetry(
-      () => cols.learnings.add({
-        ids: [String(learningId)],
-        documents: [content],
-        metadatas: [chromaMetadata],
-      }),
-      `save learning ${learningId}`
-    );
+    if (chunks.length === 1) {
+      // Single chunk - use original ID
+      await withRetry(
+        () => cols.learnings.add({
+          ids: [String(learningId)],
+          documents: [content],
+          metadatas: [baseMetadata],
+        }),
+        `save learning ${learningId}`
+      );
+    } else {
+      // Multiple chunks - save each with chunk index
+      const ids = chunks.map((_, i) => `${learningId}_chunk_${i}`);
+      const metadatas = chunks.map((_, i) => ({
+        ...baseMetadata,
+        parent_id: learningId,
+        chunk_index: i,
+        total_chunks: chunks.length,
+      }));
+
+      await withRetry(
+        () => cols.learnings.add({
+          ids,
+          documents: chunks,
+          metadatas,
+        }),
+        `save learning ${learningId} (${chunks.length} chunks)`
+      );
+    }
   });
 }
 
