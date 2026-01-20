@@ -40,31 +40,62 @@ export class PTYManager implements IPTYManager {
 
   async spawn(agentId: number, config?: PTYConfig): Promise<PTYHandle> {
     const cfg = { ...this.config, ...config };
+    const debug = (msg: string) => console.log(`[PTYManager:spawn:${agentId}] ${msg}`);
 
     // Provision worktree if enabled
     let worktreePath: string | undefined;
     let worktreeBranch: string | undefined;
 
     if (cfg.worktree?.enabled) {
-      const worktreeManager = getWorktreeManager(cfg.cwd || process.cwd(), cfg.worktree);
-      const info = await worktreeManager.provision(agentId);
-      worktreePath = info.path;
-      worktreeBranch = info.branch;
-      // Override cwd to use worktree
-      cfg.cwd = worktreePath;
+      debug('Provisioning worktree...');
+      try {
+        const worktreeManager = getWorktreeManager(cfg.cwd || process.cwd(), cfg.worktree);
+        const info = await worktreeManager.provision(agentId);
+        worktreePath = info.path;
+        worktreeBranch = info.branch;
+        // Override cwd to use worktree
+        cfg.cwd = worktreePath;
+        debug(`Worktree provisioned: ${worktreePath}`);
+      } catch (error) {
+        debug(`Worktree provisioning failed: ${error}`);
+        throw new Error(`Worktree provisioning failed: ${error}`);
+      }
     }
 
     // Ensure tmux session exists
-    await this.ensureSession();
+    debug(`Ensuring tmux session: ${this.sessionName}`);
+    try {
+      await this.ensureSession();
+      debug('Session ensured');
+    } catch (error) {
+      debug(`Session creation failed: ${error}`);
+      throw new Error(`Failed to create tmux session '${this.sessionName}': ${error}`);
+    }
 
     // Create new pane for agent
-    const paneId = await this.createPane(agentId);
+    debug('Creating pane...');
+    let paneId: string;
+    try {
+      paneId = await this.createPane(agentId);
+      debug(`Pane created: ${paneId}`);
+    } catch (error) {
+      debug(`Pane creation failed: ${error}`);
+      throw new Error(`Failed to create pane for agent ${agentId}: ${error}`);
+    }
 
     // Start agent watcher in the pane with worktree cwd
     const cmd = cfg.cwd && cfg.cwd !== process.cwd()
       ? `cd ${cfg.cwd} && bun run src/agent-watcher.ts ${agentId}`
       : `bun run src/agent-watcher.ts ${agentId}`;
-    await $`tmux send-keys -t ${this.sessionName}:${paneId} ${cmd} Enter`.quiet();
+    debug(`Sending command: ${cmd}`);
+    try {
+      // Use pane ID directly (not session:paneId format - pane IDs are global)
+      await $`tmux send-keys -t ${paneId} ${cmd} Enter`.quiet();
+      debug('Command sent');
+    } catch (error) {
+      debug(`Send-keys failed: ${error}`);
+      throw new Error(`Failed to start agent-watcher in pane ${paneId}: ${error}`);
+    }
 
     // Get PID of the process
     const pid = await this.getPanePid(paneId);
@@ -107,8 +138,8 @@ export class PTYManager implements IPTYManager {
         await $`kill -${signal === 'SIGTERM' ? '15' : '9'} ${handle.pid}`.quiet().nothrow();
       }
 
-      // Kill tmux pane
-      await $`tmux kill-pane -t ${this.sessionName}:${handle.paneId}`.quiet().nothrow();
+      // Kill tmux pane (use pane ID directly - it's global)
+      await $`tmux kill-pane -t ${handle.paneId}`.quiet().nothrow();
     } catch {
       // Ignore errors
     }

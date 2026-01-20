@@ -29,6 +29,8 @@ import {
   isInitialized,
 } from '../vector-db';
 
+import { semanticSearch, type SemanticSearchResult } from './hybrid-memory-bridge';
+
 // ============ Pattern Detection ============
 
 const SESSION_ID_PATTERN = /^session_\d+$/;
@@ -90,6 +92,7 @@ export interface RecallResult {
   sessions: SessionWithContext[];
   learnings: LearningWithContext[];
   tasks: TaskSearchResult[];
+  hybridContext?: SemanticSearchResult[];  // Results from Python ChromaDB
 }
 
 export interface RecallOptions {
@@ -332,11 +335,12 @@ async function recallBySearch(
   // Build search options with agent scoping
   const searchOptions = { limit, agentId, includeShared };
 
-  // Run parallel searches
-  const [sessionResults, learningResults, taskResults] = await Promise.all([
+  // Run parallel searches (including hybrid memory)
+  const [sessionResults, learningResults, taskResults, hybridResults] = await Promise.all([
     searchSessions(query, searchOptions),
     searchLearnings(query, { ...searchOptions, limit: limit + 2 }),
     searchSessionTasks(query, limit),
+    semanticSearch(query, { nResults: limit, project: 'agent-orchestra' }).catch(() => [] as SemanticSearchResult[]),
   ]);
 
   // Process session results
@@ -395,6 +399,7 @@ async function recallBySearch(
     sessions: sessionsWithContext,
     learnings: learningsWithContext,
     tasks,
+    hybridContext: hybridResults,
   };
 }
 
