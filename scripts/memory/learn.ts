@@ -96,15 +96,11 @@ interface StructuredLearningInput {
 async function saveLearning(category: Category, input: StructuredLearningInput) {
   console.log('\n💾 Saving learning...\n');
 
-  await initVectorDB();
-
   const agentIdStr = process.env.MEMORY_AGENT_ID;
   const agentId = agentIdStr ? parseInt(agentIdStr) : null;
-
-  // Use provided confidence or default to 'low'
   const confidence = input.confidence || 'low';
 
-  // 1. Save to SQLite with structured fields
+  // 1. Save to SQLite FIRST (fast, always works)
   const learningId = createLearning({
     category,
     title: input.title,
@@ -119,33 +115,43 @@ async function saveLearning(category: Category, input: StructuredLearningInput) 
     source_url: input.source_url,
   });
 
-  // 2. Save to ChromaDB
-  const searchText = `${input.title} ${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
-  await saveLearningToChroma(learningId, input.title, input.lesson || input.description || input.context || '', {
-    category,
-    confidence: confidence,
-    created_at: new Date().toISOString(),
-    agent_id: agentId,
-    visibility: agentId === null ? 'public' : 'private',
-  });
-
-  // 3. Auto-link to similar learnings
-  const autoLinkOptions: { excludeId: number; agentId?: number; crossAgentLinking: boolean } = {
-    excludeId: learningId,
-    crossAgentLinking: false,
-  };
-  if (agentId !== null) {
-    autoLinkOptions.agentId = agentId;
-  }
-  const { autoLinked, suggested } = await findSimilarLearnings(searchText, autoLinkOptions);
-
-  for (const link of autoLinked) {
-    createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
-  }
-
-  // 4. Extract and link entities (knowledge graph)
+  // 2. Extract and link entities (SQLite only, fast)
   const entityText = `${input.title} ${input.lesson || ''} ${input.prevention || ''}`;
   const entities = extractAndLinkEntities(learningId, entityText);
+
+  // 3. Try vector operations (may fail/timeout, that's OK)
+  let autoLinked: Array<{ id: string; similarity: number }> = [];
+  let suggested: Array<{ id: string; similarity: number }> = [];
+
+  try {
+    await initVectorDB();
+
+    const searchText = `${input.title} ${input.lesson || input.description || ''} ${input.what_happened || input.context || ''}`;
+    await saveLearningToChroma(learningId, input.title, input.lesson || input.description || input.context || '', {
+      category,
+      confidence: confidence,
+      created_at: new Date().toISOString(),
+      agent_id: agentId,
+      visibility: agentId === null ? 'public' : 'private',
+    });
+
+    const autoLinkOptions: { excludeId: number; agentId?: number; crossAgentLinking: boolean } = {
+      excludeId: learningId,
+      crossAgentLinking: false,
+    };
+    if (agentId !== null) {
+      autoLinkOptions.agentId = agentId;
+    }
+    const linkResult = await findSimilarLearnings(searchText, autoLinkOptions);
+    autoLinked = linkResult.autoLinked;
+    suggested = linkResult.suggested;
+
+    for (const link of autoLinked) {
+      createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
+    }
+  } catch (error) {
+    console.log('  ⚠ Vector indexing skipped (can rebuild later with: bun memory reindex)');
+  }
 
   // Output
   console.log(`  ${CATEGORY_ICONS[category]} Learning #${learningId} saved\n`);

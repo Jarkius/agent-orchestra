@@ -648,11 +648,7 @@ function detectCategory(text: string): Category {
 }
 
 async function saveCurrentSession() {
-  // Initialize
-  console.log('Initializing vector DB...');
-  await initVectorDB();
-
-  // Get session data based on mode
+  // Get session data based on mode FIRST (no vector DB needed)
   let data;
   if (autoMode) {
     if (!summary) {
@@ -679,30 +675,52 @@ async function saveCurrentSession() {
     tags: data.tags.length > 0 ? data.tags : undefined,
   };
 
+  // SAVE TO SQLITE FIRST - this is fast and doesn't block
   console.log('\n1. Saving to SQLite...');
   createSession(session);
   console.log(`   ✓ Session ${sessionId} saved to SQLite`);
 
-  console.log('\n2. Saving to ChromaDB...');
-  const searchContent = buildSearchContent(data.summary, data.tags, data.fullContext);
-  await saveSessionToChroma(sessionId, searchContent, {
-    tags: data.tags,
-    created_at: now,
-  });
-  console.log('   ✓ Session indexed in ChromaDB');
-  console.log(`   ℹ Search content: ${searchContent.substring(0, 100)}${searchContent.length > 100 ? '...' : ''}`);
+  // Now try vector operations (can fail gracefully)
+  let vectorInitialized = false;
+  let autoLinked: Array<{ id: string; similarity: number }> = [];
+  let suggested: Array<{ id: string; similarity: number; summary?: string }> = [];
 
-  console.log('\n3. Finding similar sessions for auto-linking...');
-  const { autoLinked, suggested } = await findSimilarSessions(searchContent, sessionId);
+  try {
+    console.log('\n2. Initializing vector DB (this may take a moment)...');
+    await initVectorDB();
+    vectorInitialized = true;
+    console.log('   ✓ Vector DB ready');
+  } catch (error) {
+    console.log('   ⚠ Vector DB unavailable, skipping semantic indexing');
+    console.log(`   (Session saved to SQLite - vector index can be rebuilt later with: bun memory reindex)`);
+  }
 
+  if (vectorInitialized) {
+    try {
+      console.log('\n3. Saving to ChromaDB...');
+      const searchContent = buildSearchContent(data.summary, data.tags, data.fullContext);
+      await saveSessionToChroma(sessionId, searchContent, {
+        tags: data.tags,
+        created_at: now,
+      });
+      console.log('   ✓ Session indexed in ChromaDB');
+
+      console.log('\n4. Finding similar sessions for auto-linking...');
+      const linkResult = await findSimilarSessions(searchContent, sessionId);
+      autoLinked = linkResult.autoLinked;
+      suggested = linkResult.suggested;
+    } catch (error) {
+      console.log('   ⚠ ChromaDB indexing failed, session saved to SQLite only');
+    }
+  }
+
+  // Handle auto-linking results (may be empty if vector DB unavailable)
   if (autoLinked.length > 0) {
-    console.log(`   ✓ Auto-linked to ${autoLinked.length} sessions:`);
+    console.log(`\n5. Auto-linked to ${autoLinked.length} sessions:`);
     for (const link of autoLinked) {
       createSessionLink(sessionId, link.id, 'auto_strong', link.similarity);
       console.log(`     - ${link.id} (similarity: ${link.similarity.toFixed(3)})`);
     }
-  } else {
-    console.log('   ℹ No sessions similar enough for auto-linking');
   }
 
   if (suggested.length > 0) {
@@ -715,40 +733,44 @@ async function saveCurrentSession() {
   // Prompt for learnings (always, even in quick mode)
   const learnings = await collectLearnings(sessionId);
   if (learnings.length > 0) {
-    console.log('\n4. Saving learnings...');
+    console.log('\n6. Saving learnings...');
     for (const learning of learnings) {
-      // Save to SQLite
+      // Save to SQLite FIRST (always works)
       const learningId = createLearning({
         category: learning.category,
         title: learning.title,
         context: learning.context,
         source_session_id: sessionId,
-        confidence: 'medium', // User-confirmed during save = medium
+        confidence: 'medium',
         what_happened: learning.what_happened,
         lesson: learning.lesson,
         prevention: learning.prevention,
       });
 
-      // Save to ChromaDB
-      const searchContent = `${learning.title} ${learning.lesson || ''} ${learning.what_happened || learning.context || ''}`;
-      await saveLearningToChroma(learningId, learning.title, learning.lesson || learning.context || '', {
-        category: learning.category,
-        confidence: 'medium',
-        source_session_id: sessionId,
-        created_at: now,
-      });
-
-      // Auto-link to similar learnings
-      const searchText = `${learning.title} ${learning.context || ''}`;
-      const { autoLinked } = await findSimilarLearnings(searchText, { excludeId: learningId });
-      for (const link of autoLinked) {
-        createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
-      }
-
       const icon = CATEGORY_ICONS[learning.category];
       console.log(`   ${icon} Learning #${learningId}: ${learning.title.substring(0, 50)}${learning.title.length > 50 ? '...' : ''}`);
-      if (autoLinked.length > 0) {
-        console.log(`      🔗 Auto-linked to ${autoLinked.length} similar learning(s)`);
+
+      // Vector operations only if available
+      if (vectorInitialized) {
+        try {
+          await saveLearningToChroma(learningId, learning.title, learning.lesson || learning.context || '', {
+            category: learning.category,
+            confidence: 'medium',
+            source_session_id: sessionId,
+            created_at: now,
+          });
+
+          const searchText = `${learning.title} ${learning.context || ''}`;
+          const linkResult = await findSimilarLearnings(searchText, { excludeId: learningId });
+          for (const link of linkResult.autoLinked) {
+            createLearningLink(learningId, parseInt(link.id), 'auto_strong', link.similarity);
+          }
+          if (linkResult.autoLinked.length > 0) {
+            console.log(`      🔗 Auto-linked to ${linkResult.autoLinked.length} similar learning(s)`);
+          }
+        } catch {
+          // Vector indexing failed, but SQLite save succeeded
+        }
       }
     }
   }
@@ -757,8 +779,9 @@ async function saveCurrentSession() {
   const tasks = data.tasks || [];
   const taskStats = { done: 0, pending: 0, blocked: 0, in_progress: 0 };
   if (tasks.length > 0) {
-    console.log('\n5. Saving tasks...');
+    console.log('\n7. Saving tasks...');
     for (const task of tasks) {
+      // Save to SQLite FIRST
       const taskId = createSessionTask({
         session_id: sessionId,
         description: task.description,
@@ -767,24 +790,37 @@ async function saveCurrentSession() {
         completed_at: task.status === 'done' ? now : undefined,
       });
 
-      // Embed task in vector DB for semantic search
-      await embedSessionTask(taskId, task.description, {
-        session_id: sessionId,
-        status: task.status,
-        notes: task.notes,
-        created_at: now,
-      });
-
       taskStats[task.status]++;
       const statusIcon = task.status === 'done' ? '✓' : task.status === 'blocked' ? '!' : '○';
       console.log(`   ${statusIcon} Task #${taskId}: ${task.description.substring(0, 50)}... [${task.status}]`);
+
+      // Vector embedding only if available
+      if (vectorInitialized) {
+        try {
+          await embedSessionTask(taskId, task.description, {
+            session_id: sessionId,
+            status: task.status,
+            notes: task.notes,
+            created_at: now,
+          });
+        } catch {
+          // Vector indexing failed, but SQLite save succeeded
+        }
+      }
     }
   }
 
-  // Auto-distill learnings from context (evolution: automatic learning capture)
-  const autoDistilledCount = await autoDistillFromContext(sessionId, data.fullContext, now);
-  if (autoDistilledCount > 0) {
-    console.log(`\n6. Auto-distilled ${autoDistilledCount} learnings from session context`);
+  // Auto-distill learnings only if vector DB available (uses embeddings)
+  let autoDistilledCount = 0;
+  if (vectorInitialized) {
+    try {
+      autoDistilledCount = await autoDistillFromContext(sessionId, data.fullContext, now);
+      if (autoDistilledCount > 0) {
+        console.log(`\n8. Auto-distilled ${autoDistilledCount} learnings from session context`);
+      }
+    } catch {
+      // Auto-distill failed, not critical
+    }
   }
 
   console.log('\n7. Session stats:');
