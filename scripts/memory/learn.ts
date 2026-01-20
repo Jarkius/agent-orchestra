@@ -129,42 +129,26 @@ async function learnFromFile(path: string): Promise<void> {
   const content = readFileSync(path, 'utf-8');
   const title = basename(path).replace(/\.[^.]+$/, ''); // Remove extension
 
-  // Extract key points from the file
-  const lines = content.split('\n').filter(l => l.trim());
-  const keyPoints: string[] = [];
-
-  // Look for markdown headers, bullet points, or key sentences
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Headers
-    if (trimmed.startsWith('#')) {
-      keyPoints.push(trimmed.replace(/^#+\s*/, ''));
-    }
-    // Bullet points that look like insights
-    else if (/^[-*]\s+.{20,}/.test(trimmed)) {
-      keyPoints.push(trimmed.replace(/^[-*]\s+/, ''));
-    }
-    // Lines with "key", "important", "note", "learn"
-    else if (/\b(key|important|note|learn|insight|tip|remember)\b/i.test(trimmed)) {
-      keyPoints.push(trimmed);
+  // Remove frontmatter if present
+  let cleanContent = content;
+  if (content.startsWith('---')) {
+    const endFrontmatter = content.indexOf('---', 3);
+    if (endFrontmatter > 0) {
+      cleanContent = content.substring(endFrontmatter + 3).trim();
     }
   }
 
-  if (keyPoints.length === 0) {
-    // Fall back to first few non-empty lines
-    keyPoints.push(...lines.slice(0, 5));
-  }
-
-  // Save as a pattern learning with file context
+  // Save full content - don't limit learning opportunities
   await saveLearning('pattern', {
-    title: `Learnings from: ${title}`,
-    what_happened: `Read and extracted insights from file: ${path}`,
-    lesson: keyPoints.slice(0, 5).join(' | '),
-    context: `Source file: ${path}\nExtracted ${keyPoints.length} key points`,
+    title: title,
+    what_happened: `Learned from file: ${path}`,
+    lesson: cleanContent,
+    context: `Source: ${path}`,
     source_url: `file://${path}`,
   });
 
-  console.log(`  📝 Extracted ${keyPoints.length} key points\n`);
+  const lineCount = cleanContent.split('\n').length;
+  console.log(`  📝 Saved full content (${lineCount} lines)\n`);
 }
 
 async function learnFromUrl(url: string): Promise<void> {
@@ -192,43 +176,30 @@ async function learnFromUrl(url: string): Promise<void> {
                       fetchUrl.includes('raw.githubusercontent.com') ||
                       !content.includes('<html');
 
-    // For raw text/markdown, use file-like extraction
+    // For raw text/markdown, save full content
     if (isRawText) {
-      const lines = content.split('\n').filter(l => l.trim());
-      const keyPoints: string[] = [];
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        // Headers
-        if (trimmed.startsWith('#')) {
-          keyPoints.push(trimmed.replace(/^#+\s*/, ''));
-        }
-        // Bullet points with substance
-        else if (/^[-*]\s+.{20,}/.test(trimmed)) {
-          keyPoints.push(trimmed.replace(/^[-*]\s+/, ''));
-        }
-        // Lines with key insight words
-        else if (/\b(key|important|note|learn|insight|tip|remember|must|should|always|never)\b/i.test(trimmed) && trimmed.length > 30) {
-          keyPoints.push(trimmed);
-        }
-      }
-
-      if (keyPoints.length === 0) {
-        keyPoints.push(...lines.slice(0, 10));
-      }
-
       const filename = new URL(fetchUrl).pathname.split('/').pop() || 'document';
       const title = filename.replace(/\.[^.]+$/, '');
 
+      // Remove frontmatter if present
+      let cleanContent = content;
+      if (content.startsWith('---')) {
+        const endFrontmatter = content.indexOf('---', 3);
+        if (endFrontmatter > 0) {
+          cleanContent = content.substring(endFrontmatter + 3).trim();
+        }
+      }
+
       await saveLearning('pattern', {
-        title: `Learnings from: ${title}`,
-        what_happened: `Extracted insights from URL: ${url}`,
-        lesson: keyPoints.slice(0, 10).join(' | '),
-        context: `Source URL: ${url}\nExtracted ${keyPoints.length} key points`,
+        title: `${title}`,
+        what_happened: `Learned from URL: ${url}`,
+        lesson: cleanContent,
+        context: `Source: ${url}`,
         source_url: url,
       });
 
-      console.log(`  📝 Extracted ${keyPoints.length} key points\n`);
+      const lineCount = cleanContent.split('\n').length;
+      console.log(`  📝 Saved full content (${lineCount} lines)\n`);
     } else {
       // HTML page - extract title and description
       const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
