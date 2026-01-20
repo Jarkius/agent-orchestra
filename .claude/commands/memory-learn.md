@@ -1,24 +1,33 @@
 ---
-description: "Capture a learning with structured fields (what happened, lesson, prevention). Quick knowledge capture."
+description: "Capture learnings with smart auto-detect (file, URL, YouTube, git) or structured fields. Quick knowledge capture."
 ---
 
 # Memory Learn
 
-Capture a learning or insight with optional structured fields.
+Smart learning capture with auto-detection or manual structured fields.
 
 ## Usage
 
 ```
+# Smart Mode (auto-detects input type)
+/memory-learn ./docs/file.md              # Learn from file
+/memory-learn https://example.com/article # Learn from URL
+/memory-learn https://youtube.com/watch?v=x # Learn from YouTube
+/memory-learn HEAD~3                       # Learn from git commits
+
+# Traditional Mode
 /memory-learn <category> "title" [--lesson "..."] [--prevention "..."]
 ```
 
 ## Examples
 
 ```bash
-# Simple learning
-/memory-learn insight "Tests document behavior"
+# Smart auto-detect
+/memory-learn ./README.md                  # Extract key points from file
+/memory-learn HEAD~5                       # Learn from last 5 commits
+/memory-learn https://blog.example.com/post # Fetch and extract from URL
 
-# With structured fields
+# Traditional with structured fields
 /memory-learn architecture "Dual-storage pattern" --lesson "SQLite for truth, ChromaDB for search" --prevention "Design dual-storage from start"
 
 # Interactive mode (prompts for all fields)

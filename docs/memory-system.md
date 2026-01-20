@@ -48,6 +48,9 @@ The Memory System enables persistent knowledge capture across Claude Code sessio
 | `bun memory save` | Interactive save (prompts for everything) | Session + Learnings |
 | `bun memory save "summary"` | Quick save with git context | Session |
 | `bun memory learn <cat> "title"` | Quick insight capture | Learning only |
+| `bun memory learn ./file.md` | **Smart Learn** from file | Learning only |
+| `bun memory learn HEAD~3` | **Smart Learn** from git | Learning only |
+| `bun memory learn https://...` | **Smart Learn** from URL | Learning only |
 | `bun memory distill` | Extract from past sessions | Learnings |
 | `bun memory recall [query]` | Search or resume | - |
 
@@ -66,7 +69,13 @@ bun memory recall "query"          # Semantic search
 bun memory recall "#5"             # Specific learning by ID
 bun memory recall "session_123"    # Specific session by ID
 
-# Learning Capture (with structured fields)
+# Learning Capture - Smart Mode (auto-detects input)
+bun memory learn ./docs/file.md              # Extract from file
+bun memory learn https://example.com/article # Extract from URL
+bun memory learn https://youtube.com/watch?v=x # Extract from YouTube
+bun memory learn HEAD~3                       # Extract from git commits
+
+# Learning Capture - Traditional Mode (with structured fields)
 bun memory learn <category> "title" ["context"]
 bun memory learn <category> "title" --lesson "..." --prevention "..."
 bun memory learn insight "Tests document behavior" --lesson "Tests are docs" --prevention "Write tests first"

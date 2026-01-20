@@ -50,6 +50,8 @@ Agent Orchestra provides:
 - **Role-Based Agents** - Specialized roles: coder, tester, analyst, oracle, debugger
 - **Model Tier Selection** - Auto-select haiku/sonnet/opus based on task complexity
 - **Mission Queue** - Priority-based task queue with retry logic and dependencies
+- **WebSocket Communication** - Real-time task delivery (no more polling)
+- **Matrix Hub** - Cross-instance communication for multi-matrix setups
 
 ### Persistent Memory System
 - **Session Persistence** - Save/recall sessions with full context
@@ -157,7 +159,12 @@ bun memory recall "authentication"   # Semantic search
 bun memory recall session_123456     # Exact ID lookup
 bun memory recall "#42"              # Recall learning by ID
 
-# Capture learnings
+# Capture learnings - Smart Mode (auto-detect)
+bun memory learn ./docs/file.md      # Extract from file
+bun memory learn HEAD~3              # Extract from git commits
+bun memory learn https://example.com # Extract from URL
+
+# Capture learnings - Traditional Mode
 bun memory learn debugging "Fixed null pointer" --lesson "Always check for null"
 bun memory distill                   # Extract learnings from last session
 bun memory distill --all             # Extract from all sessions
@@ -197,7 +204,8 @@ tmux attach -t claude-agents-<pid>
 ```
 /memory-save          # Save current session
 /memory-recall        # Resume or search sessions
-/memory-distill       # Extract learnings
+/memory-learn         # Capture learning (smart auto-detect or manual)
+/memory-distill       # Extract learnings from sessions
 /memory-validate      # Increase learning confidence
 /memory-graph         # Explore knowledge graph
 /memory-stats         # View statistics
@@ -475,6 +483,9 @@ agent-orchestra/
 │   │   └── tools/handlers/     # Tool implementations
 │   ├── db.ts                   # SQLite operations
 │   ├── vector-db.ts            # ChromaDB with resilience
+│   ├── ws-server.ts            # WebSocket server for real-time tasks
+│   ├── matrix-hub.ts           # Cross-matrix communication hub
+│   ├── matrix-client.ts        # Hub client for matrices
 │   └── embeddings/             # Vector embeddings
 ├── scripts/
 │   ├── spawn/                  # Agent spawning
