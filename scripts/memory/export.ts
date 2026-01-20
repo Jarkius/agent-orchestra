@@ -7,7 +7,10 @@
 import { writeFileSync } from 'fs';
 import { listLearningsFromDb, getImprovementReport } from '../../src/db';
 
-const outputPath = process.argv[2] || 'LEARNINGS.md';
+// When called via index.ts router, argv is: [bun, index.ts, "export", path]
+// When called directly, argv is: [bun, export.ts, path]
+const args = process.argv.slice(2);
+const outputPath = args.find(a => a !== 'export' && !a.startsWith('-')) || 'LEARNINGS.md';
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
