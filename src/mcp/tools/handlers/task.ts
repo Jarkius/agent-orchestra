@@ -1,6 +1,10 @@
 /**
  * Task Tool Handlers
  * assign_task, broadcast_task
+ *
+ * Delivery priority:
+ * 1. WebSocket (if agent connected) - <100ms latency
+ * 2. File inbox (fallback) - 1-4s latency due to polling
  */
 
 import { mkdir, writeFile } from "fs/promises";
@@ -22,6 +26,12 @@ import {
   type LearningRecord,
 } from '../../../db';
 import type { ToolDefinition, ToolHandler } from '../../types';
+import {
+  isServerRunning,
+  isAgentConnected,
+  sendTaskToAgent,
+  broadcastTask as wsBroadcastTask,
+} from '../../../ws-server';
 
 // ============ Utility Functions ============
 
@@ -107,12 +117,7 @@ async function assignTask(args: unknown) {
   const input = AssignTaskSchema.parse(args) as AssignTaskInput;
   const { agent_id, task, context, priority, session_id, include_context_bundle, auto_save_session } = input;
 
-  const inboxDir = `${CONFIG.INBOX_BASE}/${agent_id}`;
   const taskId = generateTaskId();
-  const taskFile = `${inboxDir}/${taskId}.json`;
-
-  // Ensure inbox directory exists
-  await mkdir(inboxDir, { recursive: true });
 
   // Build enhanced context if requested
   let enhancedContext = context || '';
@@ -123,7 +128,7 @@ async function assignTask(args: unknown) {
     }
   }
 
-  // Create task JSON with new fields
+  // Create task data
   const taskData = {
     id: taskId,
     prompt: task,
@@ -134,7 +139,23 @@ async function assignTask(args: unknown) {
     assigned_at: new Date().toISOString(),
   };
 
-  await writeFile(taskFile, JSON.stringify(taskData, null, 2));
+  // Try WebSocket delivery first (if server running and agent connected)
+  let deliveryMethod = 'file';
+  if (isServerRunning() && isAgentConnected(agent_id)) {
+    const sent = sendTaskToAgent(agent_id, taskData);
+    if (sent) {
+      deliveryMethod = 'websocket';
+    }
+  }
+
+  // Fall back to file-based delivery if WebSocket failed or unavailable
+  if (deliveryMethod === 'file') {
+    const inboxDir = `${CONFIG.INBOX_BASE}/${agent_id}`;
+    const taskFile = `${inboxDir}/${taskId}.json`;
+    await mkdir(inboxDir, { recursive: true });
+    await writeFile(taskFile, JSON.stringify(taskData, null, 2));
+  }
+
   sendMessage("orchestrator", String(agent_id), `Assigned task: ${taskId}`);
 
   // Link task to session if provided
@@ -142,12 +163,13 @@ async function assignTask(args: unknown) {
     linkTaskToSession(taskId, session_id);
   }
 
+  const deliveryInfo = deliveryMethod === 'websocket' ? '\nDelivery: WebSocket (instant)' : '\nDelivery: File inbox (polling)';
   const contextInfo = include_context_bundle ? '\nContext bundle: included' : '';
   const sessionInfo = session_id ? `\nLinked to session: ${session_id}` : '';
   const autoSaveInfo = taskData.auto_save_session ? '\nAuto-save session: enabled' : '';
 
   return successResponse(
-    `Task assigned to Agent ${agent_id}\nTask ID: ${taskId}\nPriority: ${priority}${contextInfo}${sessionInfo}${autoSaveInfo}\n\nThe agent will process this using Claude CLI and write results to outbox.`
+    `Task assigned to Agent ${agent_id}\nTask ID: ${taskId}\nPriority: ${priority}${deliveryInfo}${contextInfo}${sessionInfo}${autoSaveInfo}`
   );
 }
 
@@ -161,30 +183,50 @@ async function broadcastTask(args: unknown) {
     return errorResponse("No agents available for broadcast");
   }
 
-  const taskIds: string[] = [];
+  const results: string[] = [];
+  let wsDelivered = 0;
+  let fileDelivered = 0;
 
   for (const agent of agents) {
-    const inboxDir = `${CONFIG.INBOX_BASE}/${agent.id}`;
     const taskId = generateTaskId();
-    const taskFile = `${inboxDir}/${taskId}.json`;
-
-    await mkdir(inboxDir, { recursive: true });
 
     const taskData = {
       id: taskId,
       prompt: task,
       context,
-      priority: "normal",
+      priority: "normal" as const,
       assigned_at: new Date().toISOString(),
     };
 
-    await writeFile(taskFile, JSON.stringify(taskData, null, 2));
+    // Try WebSocket first
+    let delivered = false;
+    if (isServerRunning() && isAgentConnected(agent.id)) {
+      delivered = sendTaskToAgent(agent.id, taskData);
+      if (delivered) {
+        wsDelivered++;
+        results.push(`Agent ${agent.id}: ${taskId} (WS)`);
+      }
+    }
+
+    // Fall back to file if needed
+    if (!delivered) {
+      const inboxDir = `${CONFIG.INBOX_BASE}/${agent.id}`;
+      const taskFile = `${inboxDir}/${taskId}.json`;
+      await mkdir(inboxDir, { recursive: true });
+      await writeFile(taskFile, JSON.stringify(taskData, null, 2));
+      fileDelivered++;
+      results.push(`Agent ${agent.id}: ${taskId} (file)`);
+    }
+
     sendMessage("orchestrator", String(agent.id), `Broadcast task: ${taskId}`);
-    taskIds.push(`Agent ${agent.id}: ${taskId}`);
   }
 
+  const deliveryStats = wsDelivered > 0
+    ? `\n\nDelivery: ${wsDelivered} via WebSocket, ${fileDelivered} via file`
+    : '';
+
   return successResponse(
-    `Task broadcast to ${agents.length} agents:\n${taskIds.join("\n")}`
+    `Task broadcast to ${agents.length} agents:\n${results.join("\n")}${deliveryStats}`
   );
 }
 

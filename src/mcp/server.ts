@@ -19,6 +19,7 @@ import { CONFIG } from './config';
 import { allTools, allHandlers } from './tools';
 import { errorResponse } from './utils/response';
 import { initVectorDBWithAutoStart, getHealthStatus } from '../vector-db';
+import { startServer as startWsServer, isServerRunning, getConnectionStats } from '../ws-server';
 
 // Create MCP server
 const server = new Server(
@@ -76,6 +77,19 @@ async function main() {
     } catch (error) {
       console.error(`[MCP] Warning: Vector DB init failed: ${error}`);
       console.error("[MCP] Continuing without semantic search...");
+    }
+  }
+
+  // Start WebSocket server for real-time agent communication
+  if (process.env.SKIP_WEBSOCKET !== "true") {
+    try {
+      const wsPort = parseInt(process.env.WS_PORT || '8080');
+      console.error(`[MCP] Starting WebSocket server on port ${wsPort}...`);
+      startWsServer(wsPort);
+      console.error(`[MCP] WebSocket: listening on ws://localhost:${wsPort}`);
+    } catch (error) {
+      console.error(`[MCP] Warning: WebSocket server failed: ${error}`);
+      console.error("[MCP] Continuing without real-time delivery...");
     }
   }
 
