@@ -108,7 +108,7 @@ After analysis, we're **removing** `scripts/python_memory/` and `hybrid-memory-b
 | `OracleInsights` | `GET /api/oracle/insights` |
 | `LearningExplorer` | `GET /api/learnings` |
 
-**GitHub Issue:** #14
+**GitHub Issue:** #13
 
 ---
 
@@ -116,7 +116,7 @@ After analysis, we're **removing** `scripts/python_memory/` and `hybrid-memory-b
 
 **Goal:** Structured event logging for debugging.
 
-**GitHub Issue:** #15
+**GitHub Issue:** #14
 
 ---
 
@@ -173,12 +173,18 @@ After analysis, we're **removing** `scripts/python_memory/` and `hybrid-memory-b
 - [x] Delete `hybrid-memory-bridge.ts`
 - [x] Archive `scripts/python_memory/`
 
+### Recently Completed
+- [x] Smart Learn command with auto-detect (ad23ba9)
+  - File learning: `bun memory learn ./docs/file.md`
+  - URL learning: `bun memory learn https://example.com/article`
+  - YouTube learning: `bun memory learn https://youtube.com/watch?v=x`
+  - Git learning: `bun memory learn HEAD~3`
+
 ### Future Work
-- [ ] Scaffold React dashboard (Phase 4, Issue #14)
+- [ ] Scaffold React dashboard (Phase 4, Issue #13)
 - [ ] Implement AgentGrid + MissionQueue views
-- [ ] Create telemetry middleware (Phase 5, Issue #15)
+- [ ] Create telemetry middleware (Phase 5, Issue #14)
 - [ ] Implement OracleInsights + LearningExplorer
-- [ ] Smart Learn command with auto-detect (Issue #12)
 
 ---
 
