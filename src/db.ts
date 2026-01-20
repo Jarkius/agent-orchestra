@@ -873,6 +873,26 @@ export function getLearningById(learningId: number): LearningRecord | null {
   };
 }
 
+export function updateLearning(learningId: number, updates: Partial<Pick<LearningRecord, 'title' | 'description' | 'context' | 'confidence' | 'source_url' | 'what_happened' | 'lesson' | 'prevention'>>): boolean {
+  const fields: string[] = [];
+  const values: any[] = [];
+
+  if (updates.title !== undefined) { fields.push('title = ?'); values.push(updates.title); }
+  if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
+  if (updates.context !== undefined) { fields.push('context = ?'); values.push(updates.context); }
+  if (updates.confidence !== undefined) { fields.push('confidence = ?'); values.push(updates.confidence); }
+  if (updates.source_url !== undefined) { fields.push('source_url = ?'); values.push(updates.source_url); }
+  if (updates.what_happened !== undefined) { fields.push('what_happened = ?'); values.push(updates.what_happened); }
+  if (updates.lesson !== undefined) { fields.push('lesson = ?'); values.push(updates.lesson); }
+  if (updates.prevention !== undefined) { fields.push('prevention = ?'); values.push(updates.prevention); }
+
+  if (fields.length === 0) return false;
+
+  values.push(learningId);
+  db.run(`UPDATE learnings SET ${fields.join(', ')} WHERE id = ?`, values);
+  return true;
+}
+
 export interface ListLearningsOptions {
   category?: string;
   confidence?: string;
