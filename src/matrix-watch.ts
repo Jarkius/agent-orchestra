@@ -9,6 +9,11 @@
  * Usage:
  *   bun run src/matrix-watch.ts
  *   bun memory watch
+ *
+ * Environment:
+ *   MATRIX_DAEMON_PORT - Daemon port to connect to (default: 37888)
+ *
+ * Note: Automatically included in spawn script tmux layout
  */
 
 import { basename } from 'path';

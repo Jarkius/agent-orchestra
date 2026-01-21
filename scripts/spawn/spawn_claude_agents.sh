@@ -111,8 +111,8 @@ tmux kill-session -t "$SESSION" 2>/dev/null
 # Create new tmux session
 tmux new-session -d -s "$SESSION" -x "$(tput cols)" -y "$(tput lines)"
 
-# Split: info panel on top (20%), agents below (80%)
-tmux split-window -v -t "$SESSION" -p 80
+# Split: info panel on top (15%), agents below (85%)
+tmux split-window -v -t "$SESSION" -p 85
 
 # Create agent panes based on count
 case $NUM_AGENTS in
@@ -138,6 +138,12 @@ case $NUM_AGENTS in
         tmux split-window -v -t "$SESSION:0.3"
         ;;
 esac
+
+# Add watch pane on the right side (after all agent panes are created)
+# Find the last pane and split it to create watch pane
+LAST_PANE=$NUM_AGENTS  # Last agent pane index
+tmux split-window -h -t "$SESSION:0.$LAST_PANE" -p 30  # Watch pane is 30% of rightmost agent
+WATCH_PANE=$((LAST_PANE + 1))
 
 # Enable mouse mode
 tmux set-option -t "$SESSION" -g mouse on
@@ -166,6 +172,12 @@ tmux send-keys -t "$SESSION:0.0" "clear && cat << 'EOF'
 ║  MONITOR:                                                    ║
 ║    cat /tmp/agent_outbox/1/*.json                            ║
 ║                                                              ║
+║  MATRIX WATCH PANE (right side):                             ║
+║  ─────────────────────────────────                           ║
+║    Shows real-time cross-matrix messages                     ║
+║    Broadcasts and direct messages appear instantly           ║
+║    Send: bun memory message "Hello!"                         ║
+║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Session: $SESSION
@@ -186,16 +198,21 @@ for i in $(seq 1 $NUM_AGENTS); do
     fi
 done
 
+# Start matrix watch in the watch pane (rightmost)
+DAEMON_PORT=${MATRIX_DAEMON_PORT:-37888}
+tmux send-keys -t "$SESSION:0.$WATCH_PANE" "cd '$PROJECT_ROOT' && clear && echo '📡 Matrix Watch (port $DAEMON_PORT)' && echo '─────────────────────────────────' && bun run src/matrix-watch.ts" Enter
+
 echo ""
 echo "Session '$SESSION' created with $NUM_AGENTS REAL Claude agents!"
 echo ""
 echo "Layout:"
-echo "  ┌────────────────────────────────────────────┐"
-echo "  │           INFO / CONTROL CENTER            │"
-echo "  ├──────────────┬──────────────┬──────────────┤"
-echo "  │  Claude #1   │  Claude #2   │  Claude #3   │"
-echo "  │  (real AI)   │  (real AI)   │  (real AI)   │"
-echo "  └──────────────┴──────────────┴──────────────┘"
+echo "  ┌──────────────────────────────────────────────────────┐"
+echo "  │              INFO / CONTROL CENTER                   │"
+echo "  ├──────────────┬──────────────┬──────────────┬─────────┤"
+echo "  │  Claude #1   │  Claude #2   │  Claude #3   │ 📡 WATCH│"
+echo "  │  (real AI)   │  (real AI)   │  (real AI)   │ Matrix  │"
+echo "  │              │              │              │ Messages│"
+echo "  └──────────────┴──────────────┴──────────────┴─────────┘"
 echo ""
 echo "Each agent is a REAL Claude CLI instance using your Max plan!"
 echo ""

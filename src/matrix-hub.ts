@@ -19,6 +19,7 @@ import {
 // ============ Configuration ============
 
 const HUB_PORT = parseInt(process.env.MATRIX_HUB_PORT || '8081');
+const HUB_HOST = process.env.MATRIX_HUB_HOST || 'localhost'; // Use '0.0.0.0' for LAN access
 const HUB_SECRET = process.env.MATRIX_HUB_SECRET || 'default-hub-secret-change-me';
 const TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const HEARTBEAT_INTERVAL_MS = 10000; // 10 seconds
@@ -199,7 +200,7 @@ function notifyPresenceChange(matrixId: string, status: MatrixStatus, displayNam
 /**
  * Start the matrix hub server
  */
-export function startHub(port = HUB_PORT): void {
+export function startHub(port = HUB_PORT, hostname = HUB_HOST): void {
   if (server) {
     console.log('[Hub] Server already running');
     return;
@@ -207,6 +208,7 @@ export function startHub(port = HUB_PORT): void {
 
   server = Bun.serve({
     port,
+    hostname,
 
     fetch(req, server) {
       const url = new URL(req.url);
@@ -411,7 +413,7 @@ export function startHub(port = HUB_PORT): void {
     },
   });
 
-  console.log(`[Hub] Server started on port ${port}`);
+  console.log(`[Hub] Server started on ${hostname}:${port}`);
 
   // Start heartbeat interval to detect dead connections
   heartbeatInterval = setInterval(() => {
@@ -500,7 +502,12 @@ if (import.meta.main) {
     process.exit(0);
   });
 
-  console.log(`Matrix Hub running on ws://localhost:${HUB_PORT}`);
+  const displayHost = HUB_HOST === '0.0.0.0' ? 'all interfaces' : HUB_HOST;
+  console.log(`Matrix Hub running on ws://${HUB_HOST}:${HUB_PORT}`);
+  console.log(`  Binding: ${displayHost}`);
+  if (HUB_HOST === 'localhost') {
+    console.log(`  Tip: Use MATRIX_HUB_HOST=0.0.0.0 for LAN access`);
+  }
   console.log('Endpoints:');
   console.log(`  GET /health - Health check`);
   console.log(`  GET /register?matrix_id=X&display_name=Y - Register and get token`);
