@@ -10,8 +10,20 @@ Spawns real Claude CLI instances as sub-agents via MCP.
 ## Quick Start
 
 ```bash
-./scripts/spawn/spawn_claude_agents.sh [n]   # Start n agents
-tmux attach -t claude-agents-<pid>           # View agents
+./scripts/spawn/spawn_claude_agents.sh [n]   # Start n agents (includes watch pane)
+tmux attach -t claude-agents-<pid>           # View agents + matrix watch
 bun memory <cmd>                             # Memory system
 bun memory message                           # Cross-matrix messaging
+bun memory watch                             # Live message feed
+bun memory init                              # Start hub + daemon
+```
+
+## Matrix Setup (Cross-Machine)
+
+```bash
+# Hub host (Machine A)
+MATRIX_HUB_HOST=0.0.0.0 bun run src/matrix-hub.ts
+
+# Client (Machine B)
+MATRIX_HUB_URL=ws://192.168.1.x:8081 bun run src/matrix-daemon.ts start
 ```

@@ -52,6 +52,9 @@ Agent Orchestra provides:
 - **Mission Queue** - Priority-based task queue with retry logic and dependencies
 - **WebSocket Communication** - Real-time task delivery (no more polling)
 - **Matrix Hub** - Cross-instance communication for multi-matrix setups
+- **SSE Streaming** - Real-time duplex message visibility via Server-Sent Events
+- **Watch Pane** - Dedicated tmux pane for live matrix message feed
+- **Cross-Machine Support** - LAN/remote matrix communication via `MATRIX_HUB_HOST`
 
 ### Persistent Memory System
 - **Session Persistence** - Save/recall sessions with full context
@@ -186,17 +189,41 @@ bun memory purge sessions --keep 20  # Cleanup old sessions
 ### Multi-Agent Orchestration
 
 ```bash
-# Spawn 3 agents with worktree isolation
+# Spawn 3 agents with worktree isolation (includes watch pane)
 ./scripts/spawn/spawn_claude_agents.sh 3
 
 # Or programmatically
 bun run spawn --count 3 --isolation worktree
 
-# View agents
+# View agents (watch pane shows matrix messages on the right)
 tmux attach -t claude-agents-<pid>
 
 # Assign tasks via MCP tools (from Claude Code)
 # Use: agent, mission, worktree tools
+```
+
+### Matrix Communication (Cross-Instance)
+
+```bash
+# Quick setup - starts hub and daemon
+bun memory init
+
+# Send messages between matrices
+bun memory message "Hello everyone!"           # Broadcast to all
+bun memory message --to other-proj "Hey!"      # Direct message
+bun memory message --inbox                     # Check inbox
+
+# Watch live message feed
+bun memory watch                               # Dedicated watch process
+```
+
+**Cross-Machine Setup (LAN):**
+```bash
+# Machine A (Hub Host) - bind to all interfaces
+MATRIX_HUB_HOST=0.0.0.0 bun run src/matrix-hub.ts
+
+# Machine B (Client) - point to hub IP
+MATRIX_HUB_URL=ws://192.168.1.100:8081 bun run src/matrix-daemon.ts start
 ```
 
 ### Slash Commands (from Claude Code)
@@ -417,6 +444,13 @@ Tools are consolidated with `action` parameters for efficiency.
 | `export_learnings` | Export to LEARNINGS.md |
 | `stats` | System statistics |
 
+### Matrix Communication Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_inbox` | Check cross-matrix messages with hub status |
+| `matrix_send` | Send message to other matrices (broadcast or direct) |
+
 ---
 
 ## Configuration
@@ -432,6 +466,12 @@ CHROMA_CONTAINER=chromadb
 # Embedding model (local, no API costs)
 EMBEDDING_PROVIDER=transformers
 EMBEDDING_MODEL=bge-small-en-v1.5
+
+# Matrix Communication
+MATRIX_HUB_HOST=localhost     # Use 0.0.0.0 for LAN access
+MATRIX_HUB_PORT=8081          # Hub WebSocket port
+MATRIX_HUB_URL=ws://localhost:8081  # Hub URL for clients
+MATRIX_DAEMON_PORT=37888      # Daemon HTTP API port
 ```
 
 ### Claude Code Integration
