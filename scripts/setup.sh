@@ -147,7 +147,8 @@ if curl -s "http://localhost:$HUB_PORT/health" &> /dev/null; then
     echo -e "${GREEN}✓${NC} Matrix Hub already running on port $HUB_PORT"
 else
     echo "Starting Matrix Hub..."
-    nohup bun run src/matrix-hub.ts > /tmp/matrix-hub.log 2>&1 &
+    mkdir -p "$HOME/.matrix-logs"
+    nohup bun run src/matrix-hub.ts > "$HOME/.matrix-logs/hub.log" 2>&1 &
     for i in {1..10}; do
         if curl -s "http://localhost:$HUB_PORT/health" &> /dev/null; then
             echo -e "${GREEN}✓${NC} Matrix Hub started on port $HUB_PORT"

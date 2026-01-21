@@ -1237,7 +1237,8 @@ export function isInitialized(): boolean {
  */
 export async function resetVectorCollections(): Promise<void> {
   const chromaClient = getClient();
-  const collectionNames = [
+  const prefix = getCollectionPrefix();
+  const baseNames = [
     'task_prompts',
     'task_results',
     'messages_inbound',
@@ -1246,9 +1247,12 @@ export async function resetVectorCollections(): Promise<void> {
     'orchestrator_sessions',
     'orchestrator_learnings',
     'session_tasks',
+    'knowledge_entries',
+    'lesson_entries',
   ];
 
-  for (const name of collectionNames) {
+  for (const baseName of baseNames) {
+    const name = `${prefix}_${baseName}`;
     try {
       await chromaClient.deleteCollection({ name });
       console.error(`[VectorDB] Deleted collection: ${name}`);
