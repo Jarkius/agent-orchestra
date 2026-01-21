@@ -304,9 +304,12 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
   }
 
   try {
+    // Hub expects type: 'message' for both direct and broadcast
+    // Direct: { type: 'message', to: 'target', content }
+    // Broadcast: { type: 'message', content } (no 'to' field)
     const payload = type === 'broadcast'
-      ? { type: 'broadcast', content, id: messageId }
-      : { type: 'direct', to, content, id: messageId };
+      ? { type: 'message', content, id: messageId }
+      : { type: 'message', to, content, id: messageId };
 
     ws.send(JSON.stringify(payload));
 
