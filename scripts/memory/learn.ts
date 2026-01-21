@@ -17,6 +17,7 @@
 
 import { initVectorDB, saveLearning as saveLearningToChroma, findSimilarLearnings } from '../../src/vector-db';
 import { createLearning, createLearningLink, extractAndLinkEntities } from '../../src/db';
+import { distillFromContent } from '../../src/learning/distill-engine';
 import * as readline from 'readline';
 import { existsSync, readFileSync } from 'fs';
 import { basename } from 'path';
@@ -127,7 +128,7 @@ function detectInputType(input: string): InputType {
 
 // ============ Smart Learn Handlers ============
 
-async function learnFromFile(path: string): Promise<void> {
+async function learnFromFile(path: string, options?: { deep?: boolean }): Promise<void> {
   console.log(`\n📄 Learning from file: ${path}\n`);
 
   const content = readFileSync(path, 'utf-8');
@@ -142,20 +143,46 @@ async function learnFromFile(path: string): Promise<void> {
     }
   }
 
-  // Save full content - don't limit learning opportunities
-  await saveLearning('pattern', {
-    title: title,
-    what_happened: `Learned from file: ${path}`,
-    lesson: cleanContent,
-    context: `Source: ${path}`,
-    source_url: `file://${path}`,
-  });
+  if (options?.deep) {
+    // Deep extraction mode: parse and extract individual learnings
+    console.log('  🔍 Deep extraction mode...\n');
+    const result = distillFromContent(cleanContent, { sourcePath: path });
 
-  const lineCount = cleanContent.split('\n').length;
-  console.log(`  📝 Saved full content (${lineCount} lines)\n`);
+    console.log(`  📊 Found ${result.learnings.length} learnings in ${result.stats.sectionsProcessed} sections`);
+    console.log(`     (analyzed ${result.stats.itemsAnalyzed} items, skipped ${result.stats.skippedLowRelevance} low-relevance)\n`);
+
+    if (result.learnings.length === 0) {
+      console.log('  ⚠️  No actionable learnings extracted. Try without --deep for bulk save.\n');
+      return;
+    }
+
+    for (const learning of result.learnings) {
+      await saveLearning(learning.category, {
+        title: learning.title,
+        what_happened: `Extracted from ${path} (section: ${learning.source_section})`,
+        lesson: learning.lesson,
+        prevention: learning.prevention,
+        source_url: `file://${path}#L${learning.source_line}`,
+      });
+    }
+
+    console.log(`\n  ✅ Saved ${result.learnings.length} learnings from ${path}\n`);
+  } else {
+    // Quick save mode: save full content as single learning
+    await saveLearning('pattern', {
+      title: title,
+      what_happened: `Learned from file: ${path}`,
+      lesson: cleanContent,
+      context: `Source: ${path}`,
+      source_url: `file://${path}`,
+    });
+
+    const lineCount = cleanContent.split('\n').length;
+    console.log(`  📝 Saved full content (${lineCount} lines)\n`);
+  }
 }
 
-async function learnFromUrl(url: string): Promise<void> {
+async function learnFromUrl(url: string, options?: { deep?: boolean }): Promise<void> {
   // Auto-convert GitHub blob URLs to raw URLs
   let fetchUrl = url;
   if (url.includes('github.com') && url.includes('/blob/')) {
@@ -194,16 +221,43 @@ async function learnFromUrl(url: string): Promise<void> {
         }
       }
 
-      await saveLearning('pattern', {
-        title: `${title}`,
-        what_happened: `Learned from URL: ${url}`,
-        lesson: cleanContent,
-        context: `Source: ${url}`,
-        source_url: url,
-      });
+      if (options?.deep) {
+        // Deep extraction mode
+        console.log('  🔍 Deep extraction mode...\n');
+        const result = distillFromContent(cleanContent, { sourceUrl: url });
 
-      const lineCount = cleanContent.split('\n').length;
-      console.log(`  📝 Saved full content (${lineCount} lines)\n`);
+        console.log(`  📊 Found ${result.learnings.length} learnings in ${result.stats.sectionsProcessed} sections`);
+        console.log(`     (analyzed ${result.stats.itemsAnalyzed} items, skipped ${result.stats.skippedLowRelevance} low-relevance)\n`);
+
+        if (result.learnings.length === 0) {
+          console.log('  ⚠️  No actionable learnings extracted. Try without --deep for bulk save.\n');
+          return;
+        }
+
+        for (const learning of result.learnings) {
+          await saveLearning(learning.category, {
+            title: learning.title,
+            what_happened: `Extracted from ${url} (section: ${learning.source_section})`,
+            lesson: learning.lesson,
+            prevention: learning.prevention,
+            source_url: url,
+          });
+        }
+
+        console.log(`\n  ✅ Saved ${result.learnings.length} learnings from ${url}\n`);
+      } else {
+        // Quick save mode
+        await saveLearning('pattern', {
+          title: `${title}`,
+          what_happened: `Learned from URL: ${url}`,
+          lesson: cleanContent,
+          context: `Source: ${url}`,
+          source_url: url,
+        });
+
+        const lineCount = cleanContent.split('\n').length;
+        console.log(`  📝 Saved full content (${lineCount} lines)\n`);
+      }
     } else {
       // HTML page - extract title and description
       const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
@@ -538,7 +592,8 @@ async function main() {
 🧠 Memory Learn - Smart Knowledge Capture
 
 Smart Mode (auto-detects input type):
-  bun memory learn ./docs/file.md              # Learn from file
+  bun memory learn ./docs/file.md              # Learn from file (bulk save)
+  bun memory learn ./docs/file.md --deep       # Extract individual learnings
   bun memory learn https://example.com/article # Learn from URL
   bun memory learn https://youtube.com/watch?v=x # Learn from YouTube
   bun memory learn HEAD~3                       # Learn from git commits
@@ -550,6 +605,7 @@ Traditional Mode:
   bun memory learn --interactive
 
 Options:
+  --deep, -d          Extract individual learnings from markdown (vs bulk save)
   --interactive, -i   Interactive mode with structured prompts
   --lesson "..."      What you learned (key insight)
   --prevention "..."  How to prevent/apply in future
@@ -558,7 +614,8 @@ Options:
   --help, -h          Show this help
 
 Quick Examples:
-  bun memory learn ./README.md                  # Auto-detect file
+  bun memory learn ./README.md                  # Bulk save file content
+  bun memory learn ./README.md --deep           # Extract learnings from sections
   bun memory learn HEAD~5                       # Last 5 commits
   bun memory learn tooling "jq parses JSON"    # Traditional category mode
 `);
@@ -566,18 +623,22 @@ Quick Examples:
     return;
   }
 
+  // Check for --deep flag
+  const deepMode = args.includes('--deep') || args.includes('-d');
+  const filteredArgs = args.filter(a => a !== '--deep' && a !== '-d');
+
   // Smart detection: check if first arg is file/url/youtube/git
-  const firstArg = args[0]!;
+  const firstArg = filteredArgs[0]!;
   const inputType = detectInputType(firstArg);
 
   if (inputType !== 'category') {
     // Smart mode: auto-detect and process
     switch (inputType) {
       case 'file':
-        await learnFromFile(firstArg);
+        await learnFromFile(firstArg, { deep: deepMode });
         return;
       case 'url':
-        await learnFromUrl(firstArg);
+        await learnFromUrl(firstArg, { deep: deepMode });
         return;
       case 'youtube':
         await learnFromYoutube(firstArg);

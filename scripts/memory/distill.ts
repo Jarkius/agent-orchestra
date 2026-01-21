@@ -40,7 +40,7 @@ const CATEGORY_ICONS: Record<Category, string> = {
 };
 
 // Simple category suggestion based on keywords
-function suggestCategory(text: string): Category {
+export function suggestCategory(text: string): Category {
   const lower = text.toLowerCase();
 
   // Technical patterns
