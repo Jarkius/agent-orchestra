@@ -1,55 +1,51 @@
-# CLAUDE.md
+# Claude Sub-Agent Orchestration System
 
-## Project Overview
+Spawns real Claude CLI instances as sub-agents via MCP.
 
-Claude Sub-Agent Orchestration System - spawns real Claude CLI instances as sub-agents using Claude Max plan.
+## Commands
 
-## Quick Start
+| Command | Description |
+|---------|-------------|
+| `./scripts/spawn/spawn_claude_agents.sh [n]` | Start n agents |
+| `tmux attach -t claude-agents-<pid>` | View agents |
 
-```bash
-./scripts/spawn/spawn_claude_agents.sh [num_agents]  # Start agents
-tmux attach -t claude-agents-<pid>      # View agents
-```
+### Memory (`bun memory <cmd>` or `/memory-<cmd>`)
 
-## Memory Commands
+| Command | Args | Description |
+|---------|------|-------------|
+| `save` | [summary] | Save session before `/clear` |
+| `recall` | [query] | Resume or search sessions |
+| `learn` | cat "title" [--lesson --prevention] | Add learning |
+| `distill` | [--all] | Extract learnings from sessions |
+| `export` | | → LEARNINGS.md |
+| `validate` | | Increase confidence |
+| `purge` | target [--keep N] | Cleanup |
+| `reindex` | | Rebuild vectors |
+| `graph` | [entity] | Explore knowledge graph |
+| `stats` | | View statistics |
+| `context` | "query" | Get context for new work |
 
-```bash
-bun memory save ["summary"]   # Save session + learnings
-bun memory recall ["query"]   # Resume/search sessions
-bun memory learn <cat> "title" [--lesson "..." --prevention "..."]
-bun memory distill [--all]    # Extract learnings from sessions
-bun memory export             # Export to LEARNINGS.md
-bun memory stats              # View statistics
-bun memory purge <target>     # Cleanup (--keep N, --duplicates)
-bun memory reindex            # Re-index vectors
-bun memory graph ["entity"]   # Explore knowledge graph
-```
+**Categories:** performance, architecture, tooling, process, debugging, security, testing, philosophy, principle, insight, pattern, retrospective
 
-**Slash commands:** `/memory-save`, `/memory-recall`, `/memory-validate`, `/memory-reindex`, `/memory-distill`, `/memory-purge`, `/memory-graph`
+**Confidence:** low → medium → high → proven
 
-Categories: performance, architecture, tooling, process, debugging, security, testing, philosophy, principle, insight, pattern, retrospective
+## Workflow: Search Memory First
 
-Confidence: low → medium → high → proven (use `/memory-validate` to increase)
-
-## Key Files
-
-- `src/mcp/server.ts` - MCP server with tools
-- `src/db.ts` - SQLite: agents, sessions, learnings
-- `src/vector-db.ts` - ChromaDB for semantic search
-- `scripts/spawn/spawn_claude_agents.sh` - Agent launcher
-
-## Directory Structure
-
-```
-/tmp/agent_inbox/{id}/   # Pending tasks
-/tmp/agent_outbox/{id}/  # Results
-agents.db                # SQLite DB
-```
-
-## Workflow
+Before suggesting workflows or patterns, search for proven learnings:
 
 ```bash
-bun memory save           # Before /clear
-bun memory recall         # Resume session
-bun memory context "..."  # Context for new work
+bun memory recall "topic keywords"
+```
+
+**When to search:** Before suggesting tools, patterns, or "how to" approaches. Proven learnings (20x+ validated) should inform suggestions.
+
+## Architecture
+
+```
+src/mcp/server.ts     MCP server + tools
+src/db.ts             SQLite (agents, sessions, learnings)
+src/vector-db.ts      ChromaDB semantic search
+agents.db             SQLite database
+/tmp/agent_inbox/     Task queue (by agent id)
+/tmp/agent_outbox/    Results (by agent id)
 ```

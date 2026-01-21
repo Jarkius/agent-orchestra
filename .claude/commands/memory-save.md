@@ -1,5 +1,5 @@
 ---
-description: "Save session context, git state, tasks, and learnings for later recall. Use before clear or ending work."
+description: "Save session context, git state, tasks, and learnings for later recall. Use before reset or ending work."
 ---
 
 # Memory Save
