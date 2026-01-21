@@ -81,32 +81,42 @@ function main() {
   `).all(lastSeen) as MessageRecord[];
 
   if (rows.length === 0) {
-    // No new messages - silent exit
+    // No new messages - silent exit (no JSON needed)
     process.exit(0);
   }
 
-  // Show new messages
-  console.log(`\n📬 ${rows.length} new message(s):\n`);
-
+  // Build message context for Claude
+  const messages: string[] = [];
   let maxId = lastSeen;
+
   for (const msg of rows) {
     const parsed = parseMessage(msg.title);
     if (parsed) {
       const icon = parsed.type === 'broadcast' ? '📢' : '✉️';
       const from = formatFrom(parsed.from);
-      // Truncate long messages
-      const content = parsed.content.length > 80
-        ? parsed.content.slice(0, 77) + '...'
-        : parsed.content;
-      console.log(`  ${icon} [${from}] ${content}`);
+      messages.push(`${icon} [${from}] ${parsed.content}`);
     }
     if (msg.id > maxId) maxId = msg.id;
   }
 
-  console.log(`\n  Run 'bun memory message --inbox' for full inbox\n`);
-
   // Update last seen
   saveLastSeenId(maxId);
+
+  // Show clean summary to user on stderr (visible)
+  const summary = messages.length === 1
+    ? `📬 ${messages[0]}`
+    : `📬 ${rows.length} messages: ${messages.map(m => m.split('] ')[1]).join(' | ')}`;
+  console.error(summary);
+
+  // Output hook JSON - additionalContext goes to Claude
+  const hookOutput = {
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: `📬 ${rows.length} new matrix message(s):\n${messages.join('\n')}\n\nRespond to these if relevant, or acknowledge receipt.`
+    }
+  };
+
+  console.log(JSON.stringify(hookOutput));
 }
 
 main();

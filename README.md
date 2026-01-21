@@ -464,8 +464,9 @@ CHROMA_PORT=8100
 CHROMA_CONTAINER=chromadb
 
 # Embedding model (local, no API costs)
+# nomic-embed-text-v1.5: 768 dims, 8192 context, Matryoshka support
 EMBEDDING_PROVIDER=transformers
-EMBEDDING_MODEL=bge-small-en-v1.5
+EMBEDDING_MODEL=nomic-embed-text-v1.5
 
 # Matrix Communication
 MATRIX_HUB_HOST=localhost     # Use 0.0.0.0 for LAN access

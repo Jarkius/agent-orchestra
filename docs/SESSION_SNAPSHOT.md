@@ -5,7 +5,7 @@
 
 ### Stack
 - **Runtime**: Bun/TypeScript
-- **Embeddings**: Transformers.js (bge-small-en-v1.5) - 3ms queries
+- **Embeddings**: Transformers.js (nomic-embed-text-v1.5, 768 dims, 8192 context) - ~5ms queries
 - **Vector DB**: ChromaDB via Docker on port 8100 (auto-restart)
 - **Database**: SQLite (agents.db) - 3,500+ ops/sec
 

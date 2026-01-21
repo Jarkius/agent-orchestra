@@ -371,7 +371,7 @@ PRAGMA synchronous=NORMAL;    -- Balance between safety and performance
 | `learnings_search` | Semantic learning search |
 | `task_search` | Task-based search |
 
-Embedding model: `bge-small-en-v1.5` via Transformers.js (~3ms per query)
+Embedding model: `nomic-embed-text-v1.5` via Transformers.js (768 dims, 8192 context, ~5ms per query)
 
 ### SQLite-First Save Pattern
 
