@@ -86,6 +86,7 @@ echo ""
 echo -e "${YELLOW}Setting up ChromaDB...${NC}"
 
 CHROMA_PORT="${CHROMADB_PORT:-8100}"
+CHROMA_DATA="$HOME/.chromadb_data"
 
 # Check if any chromadb container is already running
 if docker ps --format '{{.Names}}' | grep -q "^chromadb$"; then
@@ -96,13 +97,16 @@ elif docker ps -a --format '{{.Names}}' | grep -q "^chromadb$"; then
     docker start chromadb
     echo -e "${GREEN}✓${NC} ChromaDB started"
 else
-    # Create new shared container
+    # Create shared data directory
+    mkdir -p "$CHROMA_DATA"
+
+    # Create new shared container with local directory
     echo "Creating ChromaDB container..."
     docker run -d --name chromadb --restart unless-stopped \
         -p "$CHROMA_PORT:8000" \
-        -v chromadb_data:/chroma/chroma \
+        -v "$CHROMA_DATA:/chroma/chroma" \
         chromadb/chroma
-    echo -e "${GREEN}✓${NC} ChromaDB container created (shared, collections prefixed by project)"
+    echo -e "${GREEN}✓${NC} ChromaDB container created (data: $CHROMA_DATA)"
 fi
 
 # Wait for ChromaDB to be healthy
