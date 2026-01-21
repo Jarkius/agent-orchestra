@@ -63,7 +63,8 @@ async function main() {
     case 'recall':
     case 'search':
       // No arg = resume last session, with arg = search/lookup
-      process.argv = [process.argv[0]!, process.argv[1]!, arg || ''];
+      // Pass through all args including flags (--index, --summary)
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./recall');
       break;
 
