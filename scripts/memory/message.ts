@@ -13,9 +13,26 @@
 import { createLearning, db } from '../../src/db';
 import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConnected, disconnect, waitForFlush } from '../../src/matrix-client';
 import { execSync } from 'child_process';
-import { basename } from 'path';
+import { basename, join } from 'path';
+import { existsSync, readFileSync } from 'fs';
+
+// Load .matrix.json config if it exists
+function loadMatrixConfig(): Record<string, any> {
+  const configPath = join(process.cwd(), '.matrix.json');
+  if (existsSync(configPath)) {
+    try {
+      return JSON.parse(readFileSync(configPath, 'utf-8'));
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+const matrixConfig = loadMatrixConfig();
 
 function getMatrixId(): string {
+  if (matrixConfig.matrix_id) return matrixConfig.matrix_id;
   try {
     const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
     return basename(gitRoot);
@@ -185,8 +202,8 @@ async function main() {
 
   // Try delivery: Daemon first → Direct hub fallback → SQLite persistence
   let delivered = false;
-  const daemonPort = process.env.MATRIX_DAEMON_PORT || '37888';
-  const hubUrl = process.env.MATRIX_HUB_URL || 'ws://localhost:8081';
+  const daemonPort = process.env.MATRIX_DAEMON_PORT || matrixConfig.daemon_port || '37888';
+  const hubUrl = process.env.MATRIX_HUB_URL || matrixConfig.hub_url || 'ws://localhost:8081';
 
   // Try 1: Daemon API (persistent connection)
   let daemonAvailable = false;

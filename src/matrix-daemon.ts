@@ -30,8 +30,14 @@ import {
 
 // ============ Configuration ============
 
-const DAEMON_PORT = parseInt(process.env.MATRIX_DAEMON_PORT || '37888');
-const HUB_URL = process.env.MATRIX_HUB_URL || 'ws://localhost:8081';
+// Load .matrix.json config if it exists
+const CONFIG_FILE = join(process.cwd(), '.matrix.json');
+const matrixConfig = existsSync(CONFIG_FILE)
+  ? JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'))
+  : {};
+
+const DAEMON_PORT = parseInt(process.env.MATRIX_DAEMON_PORT || matrixConfig.daemon_port || '37888');
+const HUB_URL = process.env.MATRIX_HUB_URL || matrixConfig.hub_url || 'ws://localhost:8081';
 const RECONNECT_INTERVAL = 5000;
 const HEARTBEAT_INTERVAL = 30000;
 const RETRY_INTERVAL = 10000; // Retry failed messages every 10s
@@ -40,13 +46,15 @@ const ENABLE_BELL = process.env.MATRIX_BELL !== 'false'; // Terminal bell
 const ENABLE_MACOS_NOTIFY = process.env.MATRIX_MACOS_NOTIFY === 'true'; // macOS notification center
 
 // Use home directory for persistence across reboots
-const DAEMON_DIR = join(process.env.HOME || '/tmp', '.matrix-daemon');
+const DEFAULT_DAEMON_DIR = join(process.env.HOME || '/tmp', '.matrix-daemon');
+const DAEMON_DIR = process.env.MATRIX_DAEMON_DIR ||
+  (matrixConfig.daemon_dir ? matrixConfig.daemon_dir.replace('~', process.env.HOME || '') : DEFAULT_DAEMON_DIR);
 const PID_FILE = join(DAEMON_DIR, 'daemon.pid');
 const SOCKET_FILE = join(DAEMON_DIR, 'daemon.sock');
 
-// Determine matrix ID from project path
+// Determine matrix ID from config or project path
 const PROJECT_PATH = process.cwd();
-const MATRIX_ID = PROJECT_PATH.replace(/.*\//, ''); // Last path component
+const MATRIX_ID = matrixConfig.matrix_id || PROJECT_PATH.replace(/.*\//, ''); // Last path component
 
 // ============ State ============
 
