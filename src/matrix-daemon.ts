@@ -61,6 +61,10 @@ let httpServer: Server | null = null;
 const messageQueue: Array<{ type: 'broadcast' | 'direct'; content: string; to?: string; id?: string }> = [];
 const receivedMessages: Array<{ from: string; content: string; timestamp: string; type: string; id?: string }> = [];
 
+// SSE clients for real-time streaming
+import type { ServerResponse } from 'http';
+const sseClients = new Set<ServerResponse>();
+
 // ============ Hub Connection ============
 
 async function getToken(): Promise<string | null> {
@@ -238,6 +242,15 @@ function handleMessage(msg: any): void {
     // Log with unread count
     const unreadCount = getUnreadCount(MATRIX_ID);
     console.log(`[Daemon] 📬 [${unreadCount} unread] Message from ${fromMatrix}: ${content.substring(0, 50)}...`);
+
+    // Push to all SSE clients for real-time updates
+    for (const client of sseClients) {
+      try {
+        client.write(`data: ${JSON.stringify(received)}\n\n`);
+      } catch {
+        // Client disconnected, will be cleaned up on close
+      }
+    }
 
   } else if (msg.type === 'presence') {
     const presenceId = msg.matrix_id || msg.matrixId; // Handle both formats
@@ -454,6 +467,57 @@ function startHttpServer(): void {
       const count = getUnreadCount(MATRIX_ID);
       res.writeHead(200);
       res.end(JSON.stringify({ unread: count }));
+      return;
+    }
+
+    // SSE Stream for real-time message updates
+    if (url.pathname === '/stream') {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.writeHead(200);
+
+      // Send connection event
+      res.write(`data: ${JSON.stringify({ type: 'connected', matrix: MATRIX_ID, timestamp: new Date().toISOString() })}\n\n`);
+
+      // Send recent messages for context
+      try {
+        const recent = getInboxMessages(MATRIX_ID, 5);
+        for (const msg of recent.reverse()) {
+          res.write(`data: ${JSON.stringify({
+            from: msg.from_matrix,
+            content: msg.content,
+            timestamp: msg.created_at,
+            type: msg.message_type,
+            id: msg.message_id,
+            historical: true,
+          })}\n\n`);
+        }
+      } catch {
+        // Ignore errors fetching history
+      }
+
+      // Register this client
+      sseClients.add(res);
+      console.log(`[Daemon] SSE client connected (${sseClients.size} total)`);
+
+      // Heartbeat every 15s to keep connection alive
+      const heartbeat = setInterval(() => {
+        try {
+          res.write(`: heartbeat ${Date.now()}\n\n`);
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 15000);
+
+      // Cleanup on disconnect
+      req.on('close', () => {
+        sseClients.delete(res);
+        clearInterval(heartbeat);
+        console.log(`[Daemon] SSE client disconnected (${sseClients.size} remaining)`);
+      });
+
       return;
     }
 

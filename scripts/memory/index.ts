@@ -125,6 +125,10 @@ async function main() {
       await import('./message');
       break;
 
+    case 'watch':
+      await import('../../src/matrix-watch');
+      break;
+
     case 'validate':
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./validate-search');
@@ -190,6 +194,7 @@ Commands:
   message "text"    Broadcast to all matrices
   message --to path Direct message to specific matrix
   message --inbox   Check incoming messages
+  watch             Live message feed (SSE stream) - run in separate pane
   status            Show matrix communication status
   init              Initialize hub and daemon (single setup command)
   purge <target>    Purge sessions or learnings (with filters)
