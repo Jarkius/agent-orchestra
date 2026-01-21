@@ -79,3 +79,6 @@ archive/LEARNINGS*.md
 
 # Agent data (inbox/outbox)
 data/
+
+# Claude Code state
+.claude/.inbox-state
