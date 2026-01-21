@@ -23,7 +23,7 @@ export interface EmbeddingConfig {
   batchSize?: number;
 }
 
-// Default batch size per model (larger models can handle larger batches)
+// Default batch size per model (larger models need smaller batches)
 const MODEL_BATCH_SIZES: Record<string, number> = {
   'nomic-embed-text-v1.5': 64,
   'nomic-embed-text-v1': 64,
