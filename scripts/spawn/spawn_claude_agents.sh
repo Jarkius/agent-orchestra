@@ -43,7 +43,7 @@ else
     # Check if Docker is available
     if ! command -v docker &> /dev/null; then
         echo "  ⚠ Docker not found. ChromaDB server mode requires Docker."
-        echo "  Install Docker or run ChromaDB manually: chroma run --path ./chroma_data --port $CHROMA_PORT"
+        echo "  Install Docker or run ChromaDB manually: chroma run --path ~/.chromadb_data --port $CHROMA_PORT"
         echo "  Continuing without server mode (embedded mode will be used)..."
         unset CHROMA_URL
     else
@@ -53,11 +53,13 @@ else
         else
             # Create new container with auto-restart
             echo "  Creating new ChromaDB container..."
+            # Use shared ChromaDB data directory
+            mkdir -p "$HOME/.chromadb_data"
             docker run -d \
                 --name "$CHROMA_CONTAINER" \
                 --restart unless-stopped \
                 -p "$CHROMA_PORT:8000" \
-                -v "$PROJECT_ROOT/chroma_data:/data" \
+                -v "$HOME/.chromadb_data:/chroma/chroma" \
                 chromadb/chroma > /dev/null 2>&1
 
             if [ $? -eq 0 ]; then

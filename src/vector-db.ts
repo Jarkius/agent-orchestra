@@ -136,7 +136,7 @@ export function chunkContentAdaptive(content: string, category?: string): string
 const writeQueue = new PQueue({ concurrency: 1 });
 
 // ChromaDB client - connects to server at localhost:8100
-// Start server with: chroma run --path ./chroma_data --port 8100
+// Start server with: chroma run --path ~/.chromadb_data --port 8100
 let client: ChromaClient | null = null;
 let embeddingFunction: EmbeddingFunction | null = null;
 
@@ -1362,7 +1362,7 @@ export async function ensureChromaRunning(): Promise<{ started: boolean; contain
       "--name", containerName,
       "--restart", "unless-stopped",
       "-p", `${chromaPort}:8000`,
-      "-v", `${process.cwd()}/chroma_data:/data`,
+      "-v", `${process.env.HOME}/.chromadb_data:/chroma/chroma`,
       "chromadb/chroma"
     ], {
       stdout: "pipe",
