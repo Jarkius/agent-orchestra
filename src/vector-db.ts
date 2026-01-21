@@ -20,8 +20,48 @@ import PQueue from 'p-queue';
 // ============ Content Chunking ============
 
 /**
+ * Get adaptive chunk parameters based on content type and category
+ * - Code/debugging: smaller chunks (300), less overlap (50) - precision matters
+ * - Philosophy/insights: larger chunks (800), more overlap (150) - context matters
+ * - Default: balanced (500/100)
+ */
+export function getAdaptiveChunkParams(
+  content: string,
+  category?: string
+): { chunkSize: number; overlap: number } {
+  // Code-heavy content: smaller, precise chunks
+  const isCodeHeavy = content.includes('```') ||
+    content.includes('function ') ||
+    content.includes('const ') ||
+    content.includes('class ') ||
+    (content.match(/\n {2,}/g)?.length ?? 0) > 5; // Indented blocks
+
+  if (category === 'debugging' || category === 'tooling' || isCodeHeavy) {
+    return { chunkSize: 300, overlap: 50 };
+  }
+
+  // High-context categories: larger chunks to preserve meaning
+  if (category === 'philosophy' || category === 'principle' ||
+      category === 'insight' || category === 'retrospective') {
+    return { chunkSize: 800, overlap: 150 };
+  }
+
+  // Architecture/process: medium-large for structure context
+  if (category === 'architecture' || category === 'process' || category === 'pattern') {
+    return { chunkSize: 600, overlap: 120 };
+  }
+
+  // Default: balanced
+  return { chunkSize: 500, overlap: 100 };
+}
+
+/**
  * Split long content into overlapping chunks for better embedding
  * Each chunk is embedded separately for more precise semantic matching
+ *
+ * @param content - Text to chunk
+ * @param chunkSize - Target size per chunk (default: 500)
+ * @param overlap - Overlap between chunks (default: 100)
  */
 export function chunkContent(content: string, chunkSize = 500, overlap = 100): string[] {
   if (content.length <= chunkSize) {
@@ -31,16 +71,29 @@ export function chunkContent(content: string, chunkSize = 500, overlap = 100): s
   const chunks: string[] = [];
   let start = 0;
 
+  // Extended break points including semantic boundaries
+  const breakPoints = [
+    '\n\n',      // Paragraphs
+    '\n```',     // Code blocks
+    '\n## ',     // Markdown H2
+    '\n### ',    // Markdown H3
+    '\n- ',      // List items
+    '\n',        // Lines
+    '. ',        // Sentences
+    '! ',
+    '? ',
+    '; ',
+  ];
+
   while (start < content.length) {
     let end = Math.min(start + chunkSize, content.length);
 
-    // Try to break at sentence/paragraph boundaries for cleaner chunks
+    // Try to break at semantic boundaries for cleaner chunks
     if (end < content.length) {
-      const breakPoints = ['\n\n', '\n', '. ', '! ', '? ', '; '];
       for (const bp of breakPoints) {
         const lastBreak = content.lastIndexOf(bp, end);
-        // Only use break point if it's in the valid range (past halfway)
-        if (lastBreak > start + chunkSize / 2) {
+        // Only use break point if it's in the valid range (past 40% of chunk)
+        if (lastBreak > start + chunkSize * 0.4) {
           end = lastBreak + bp.length;
           break;
         }
@@ -62,6 +115,14 @@ export function chunkContent(content: string, chunkSize = 500, overlap = 100): s
   }
 
   return chunks.filter(c => c.length > 0);
+}
+
+/**
+ * Adaptive chunking that uses category-appropriate parameters
+ */
+export function chunkContentAdaptive(content: string, category?: string): string[] {
+  const { chunkSize, overlap } = getAdaptiveChunkParams(content, category);
+  return chunkContent(content, chunkSize, overlap);
 }
 
 // Write queue - serializes all ChromaDB writes to prevent concurrent access corruption
@@ -255,55 +316,65 @@ export async function initVectorDB(): Promise<void> {
   try {
     const chromaClient = getClient();
     const embedFn = await getEmbeddingFunction();
+
+    // HNSW tuning for better recall (quality > speed for memory system)
+    // Note: These only apply to NEW collections. Run `bun memory reindex` after changing.
+    const hnswMetadata = {
+      "hnsw:space": "cosine",
+      "hnsw:construction_ef": 200,  // More neighbors during build (better quality)
+      "hnsw:M": 32,                 // More connections per node (better recall)
+      "hnsw:search_ef": 50,         // More neighbors during search (better accuracy)
+    };
+
     collections = {
       tasks: await chromaClient.getOrCreateCollection({
         name: "task_prompts",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       results: await chromaClient.getOrCreateCollection({
         name: "task_results",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       messagesIn: await chromaClient.getOrCreateCollection({
         name: "messages_inbound",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       messagesOut: await chromaClient.getOrCreateCollection({
         name: "messages_outbound",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       context: await chromaClient.getOrCreateCollection({
         name: "shared_context",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       sessions: await chromaClient.getOrCreateCollection({
         name: "orchestrator_sessions",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       learnings: await chromaClient.getOrCreateCollection({
         name: "orchestrator_learnings",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       sessionTasks: await chromaClient.getOrCreateCollection({
         name: "session_tasks",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       knowledge: await chromaClient.getOrCreateCollection({
         name: "knowledge_entries",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       lessons: await chromaClient.getOrCreateCollection({
         name: "lesson_entries",
-        metadata: { "hnsw:space": "cosine" },
+        metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
     };
@@ -340,6 +411,27 @@ export async function reconnectVectorDB(): Promise<void> {
   // Reinitialize
   await initVectorDB();
   console.error("[VectorDB] Reconnected successfully");
+}
+
+/**
+ * Warm up the embedding model by running a test embedding
+ * This preloads the model into memory, avoiding first-query latency
+ * Call at startup or after long idle periods
+ */
+export async function warmUpModel(): Promise<{ success: boolean; latencyMs: number }> {
+  const startTime = Date.now();
+  try {
+    const embedFn = await getEmbeddingFunction();
+    // Run a simple test embedding to trigger model load
+    await embedFn.generate(['warmup test']);
+    const latencyMs = Date.now() - startTime;
+    console.error(`[VectorDB] Model warmed up in ${latencyMs}ms`);
+    return { success: true, latencyMs };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    console.error(`[VectorDB] Model warmup failed after ${latencyMs}ms:`, error);
+    return { success: false, latencyMs };
+  }
 }
 
 // ============ TASK EMBEDDINGS ============

@@ -763,6 +763,9 @@ Examples:
         console.warn(`⚠️  Invalid confidence level: ${args[i + 1]}. Using 'low'. Valid: ${validConfidenceLevels.join(', ')}`);
       }
       i++;
+    } else if ((args[i] === '--context' || args[i] === '--description') && args[i + 1]) {
+      context = args[i + 1];
+      i++;
     } else if (!title) {
       title = args[i]!;
     } else if (!context) {

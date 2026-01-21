@@ -1592,6 +1592,81 @@ export function validateLearning(learningId: number): ValidationResult | null {
 }
 
 /**
+ * Apply confidence decay to stale learnings
+ *
+ * Learnings that haven't been validated in a long time are demoted:
+ * - proven → high after 180 days
+ * - high → medium after 90 days
+ * - medium → low after 60 days (if times_validated < 3)
+ *
+ * @param dryRun - If true, only report what would be decayed without making changes
+ * @returns Count of learnings decayed per confidence level
+ */
+export function applyConfidenceDecay(dryRun = false): {
+  provenToHigh: number;
+  highToMedium: number;
+  mediumToLow: number;
+  total: number;
+} {
+  const now = new Date().toISOString();
+
+  // Get counts first
+  const provenToHigh = (db.query(`
+    SELECT COUNT(*) as count FROM learnings
+    WHERE confidence = 'proven'
+      AND last_validated_at IS NOT NULL
+      AND last_validated_at < datetime('now', '-180 days')
+  `).get() as { count: number }).count;
+
+  const highToMedium = (db.query(`
+    SELECT COUNT(*) as count FROM learnings
+    WHERE confidence = 'high'
+      AND last_validated_at IS NOT NULL
+      AND last_validated_at < datetime('now', '-90 days')
+  `).get() as { count: number }).count;
+
+  const mediumToLow = (db.query(`
+    SELECT COUNT(*) as count FROM learnings
+    WHERE confidence = 'medium'
+      AND times_validated < 3
+      AND (last_validated_at IS NULL OR last_validated_at < datetime('now', '-60 days'))
+  `).get() as { count: number }).count;
+
+  if (!dryRun) {
+    // Decay proven → high (180+ days)
+    db.run(`
+      UPDATE learnings SET confidence = 'high'
+      WHERE confidence = 'proven'
+        AND last_validated_at IS NOT NULL
+        AND last_validated_at < datetime('now', '-180 days')
+    `);
+
+    // Decay high → medium (90+ days)
+    db.run(`
+      UPDATE learnings SET confidence = 'medium'
+      WHERE confidence = 'high'
+        AND last_validated_at IS NOT NULL
+        AND last_validated_at < datetime('now', '-90 days')
+    `);
+
+    // Decay medium → low (60+ days, only if not well-validated)
+    db.run(`
+      UPDATE learnings SET confidence = 'low'
+      WHERE confidence = 'medium'
+        AND times_validated < 3
+        AND (last_validated_at IS NULL OR last_validated_at < datetime('now', '-60 days'))
+    `);
+  }
+
+  return {
+    provenToHigh,
+    highToMedium,
+    mediumToLow,
+    total: provenToHigh + highToMedium + mediumToLow,
+  };
+}
+
+/**
  * Get learnings that are ready for promotion (close to next threshold)
  */
 export function getPromotionCandidates(limit = 10): Array<LearningRecord & { nextStage: MaturityStage; validationsNeeded: number }> {

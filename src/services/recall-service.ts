@@ -36,6 +36,140 @@ import {
   type TaskType,
 } from '../learning/context-router';
 
+// ============ Query Cache ============
+
+interface CachedResult {
+  results: Array<{ id: number; score: number; vectorScore: number; keywordScore: number }>;
+  timestamp: number;
+}
+
+const queryCache = new Map<string, CachedResult>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_CACHE_SIZE = 100; // Max entries before LRU eviction
+
+/**
+ * Get cached results for a query if still valid
+ */
+function getCachedResults(cacheKey: string): CachedResult['results'] | null {
+  const cached = queryCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.results;
+  }
+  // Remove stale entry
+  if (cached) {
+    queryCache.delete(cacheKey);
+  }
+  return null;
+}
+
+/**
+ * Store results in cache with LRU eviction
+ */
+function setCachedResults(cacheKey: string, results: CachedResult['results']): void {
+  // LRU eviction: remove oldest entries if at capacity
+  if (queryCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = queryCache.keys().next().value;
+    if (oldestKey) queryCache.delete(oldestKey);
+  }
+  queryCache.set(cacheKey, { results, timestamp: Date.now() });
+}
+
+/**
+ * Clear query cache (call when new learnings are added)
+ */
+export function clearQueryCache(): void {
+  queryCache.clear();
+}
+
+// ============ MMR Reranking ============
+
+interface ScoredResult {
+  id: number;
+  score: number;
+  vectorScore: number;
+  keywordScore: number;
+}
+
+/**
+ * Maximal Marginal Relevance (MMR) reranking for result diversity
+ *
+ * MMR iteratively selects results that are both relevant and diverse.
+ * Since we don't have raw embeddings, we use a score-based heuristic:
+ * - Results with similar scores (vector & keyword) are considered similar
+ * - We penalize selecting results too close to already-selected ones
+ *
+ * @param results - Sorted results from hybrid search
+ * @param lambda - Balance: 1.0 = pure relevance, 0.0 = pure diversity (default: 0.7)
+ * @param limit - Max results to return
+ * @returns Reranked results with diversity
+ */
+export function mmrRerank(
+  results: ScoredResult[],
+  lambda: number = 0.7,
+  limit: number = 10
+): ScoredResult[] {
+  if (results.length <= limit) {
+    return results;
+  }
+
+  const selected: ScoredResult[] = [];
+  const remaining = [...results];
+
+  // Always select the top result first
+  if (remaining.length > 0) {
+    selected.push(remaining.shift()!);
+  }
+
+  while (selected.length < limit && remaining.length > 0) {
+    let bestScore = -Infinity;
+    let bestIdx = 0;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i]!;
+      const relevance = candidate.score;
+
+      // Calculate max similarity to already selected results
+      // Using score profile similarity as a proxy for content similarity
+      const maxSimilarity = Math.max(
+        ...selected.map(s => scoreSimilarity(candidate, s))
+      );
+
+      // MMR formula: λ * relevance - (1-λ) * max_similarity
+      const mmrScore = lambda * relevance - (1 - lambda) * maxSimilarity;
+
+      if (mmrScore > bestScore) {
+        bestScore = mmrScore;
+        bestIdx = i;
+      }
+    }
+
+    selected.push(remaining.splice(bestIdx, 1)[0]!);
+  }
+
+  return selected;
+}
+
+/**
+ * Calculate similarity between two results based on their score profiles
+ * Results with similar vector/keyword score ratios are likely similar content
+ */
+function scoreSimilarity(a: ScoredResult, b: ScoredResult): number {
+  // Normalize scores to 0-1 range
+  const aVec = a.vectorScore;
+  const aKey = a.keywordScore;
+  const bVec = b.vectorScore;
+  const bKey = b.keywordScore;
+
+  // Euclidean distance in score space, converted to similarity
+  const distance = Math.sqrt(
+    Math.pow(aVec - bVec, 2) + Math.pow(aKey - bKey, 2)
+  );
+
+  // Max possible distance is sqrt(2) ≈ 1.41
+  // Convert to similarity: 1 - normalized_distance
+  return 1 - (distance / 1.41);
+}
+
 // ============ Pattern Detection ============
 
 const SESSION_ID_PATTERN = /^session_\d+$/;
@@ -123,9 +257,17 @@ function extractParentLearningId(id: string): number {
   return parseInt(parentId || '0');
 }
 
+// Configurable hybrid search weights via environment variables
+// Previous tuning found 0.36/0.64 (vector/keyword) worked well
+const DEFAULT_VECTOR_WEIGHT = parseFloat(process.env.VECTOR_WEIGHT || '0.36');
+const DEFAULT_KEYWORD_WEIGHT = parseFloat(process.env.KEYWORD_WEIGHT || '0.64');
+
 /**
  * Hybrid search combining vector similarity + keyword matching
  * Returns deduplicated learning IDs with combined scores
+ *
+ * @param useMMR - Enable MMR reranking for diverse results (default: true)
+ * @param mmrLambda - MMR balance: 1.0 = relevance only, 0.0 = diversity only (default: 0.7)
  */
 export async function hybridSearchLearnings(
   query: string,
@@ -136,16 +278,33 @@ export async function hybridSearchLearnings(
     agentId?: number | null;
     includeShared?: boolean;
     projectPath?: string;
+    skipCache?: boolean;
+    useMMR?: boolean;
+    mmrLambda?: number;
   } = {}
 ): Promise<Array<{ id: number; score: number; vectorScore: number; keywordScore: number }>> {
   const {
     limit = 10,
-    vectorWeight = 0.6,
-    keywordWeight = 0.4,
+    vectorWeight = DEFAULT_VECTOR_WEIGHT,
+    keywordWeight = DEFAULT_KEYWORD_WEIGHT,
     agentId,
     includeShared = true,
     projectPath,
+    skipCache = false,
+    useMMR = true,
+    mmrLambda = 0.7,
   } = options;
+
+  // Generate cache key from query parameters
+  const cacheKey = JSON.stringify({ query, limit, agentId, includeShared, projectPath });
+
+  // Check cache first (unless explicitly skipped)
+  if (!skipCache) {
+    const cached = getCachedResults(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
 
   // Run vector and keyword searches in parallel
   const [vectorResults, ftsResults] = await Promise.all([
@@ -192,15 +351,25 @@ export async function hybridSearchLearnings(
   }
 
   // Calculate hybrid scores and sort
-  const results = [...scoreMap.entries()]
+  let results = [...scoreMap.entries()]
     .map(([id, scores]) => ({
       id,
       score: scores.vector * vectorWeight + scores.keyword * keywordWeight,
       vectorScore: scores.vector,
       keywordScore: scores.keyword,
     }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+    .sort((a, b) => b.score - a.score);
+
+  // Apply MMR reranking for diversity if enabled
+  // Fetch more than needed, then rerank and slice
+  if (useMMR && results.length > limit) {
+    results = mmrRerank(results, mmrLambda, limit);
+  } else {
+    results = results.slice(0, limit);
+  }
+
+  // Cache results for future queries
+  setCachedResults(cacheKey, results);
 
   return results;
 }
