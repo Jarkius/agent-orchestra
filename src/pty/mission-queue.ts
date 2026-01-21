@@ -1,6 +1,8 @@
 /**
  * Mission Queue - Self-correcting task queue with retry, timeout, and dependencies
  * Implements IMissionQueue interface for Expert Multi-Agent Orchestration
+ *
+ * Persistence: Missions are persisted to SQLite and survive restarts.
  */
 
 import type {
@@ -13,6 +15,7 @@ import type {
 } from '../interfaces/mission';
 import { calculateBackoff, isRecoverable } from '../interfaces/mission';
 import { randomUUID } from 'crypto';
+import { saveMission, loadPendingMissions, updateMissionStatus, type MissionRecord } from '../db';
 
 export class MissionQueue implements IMissionQueue {
   private missions: Map<string, Mission> = new Map();
@@ -56,6 +59,9 @@ export class MissionQueue implements IMissionQueue {
       fullMission.status = 'queued';
     }
 
+    // Persist to SQLite
+    this.persistMission(fullMission);
+
     return id;
   }
 
@@ -78,6 +84,12 @@ export class MissionQueue implements IMissionQueue {
         if (startWait) {
           this.waitTimes.set(missionId, Date.now() - startWait);
         }
+
+        // Persist status change
+        updateMissionStatus(missionId, 'running', {
+          assignedTo: agentId,
+          startedAt: mission.startedAt,
+        });
 
         return mission;
       }
@@ -137,6 +149,11 @@ export class MissionQueue implements IMissionQueue {
     const delay = mission.retryDelayMs || calculateBackoff(mission.retryCount);
     mission.retryDelayMs = delay;
 
+    // Persist retry status
+    updateMissionStatus(missionId, 'retrying', {
+      retryCount: mission.retryCount,
+    });
+
     // Re-queue after delay
     setTimeout(() => {
       if (mission.status === 'retrying') {
@@ -144,6 +161,9 @@ export class MissionQueue implements IMissionQueue {
         mission.assignedTo = undefined;
         mission.startedAt = undefined;
         this.insertByPriority(missionId, mission.priority);
+
+        // Persist queued status
+        updateMissionStatus(missionId, 'queued');
       }
     }, delay);
   }
@@ -231,6 +251,12 @@ export class MissionQueue implements IMissionQueue {
     mission.result = result;
     mission.completedAt = new Date();
 
+    // Persist completion
+    updateMissionStatus(missionId, 'completed', {
+      result,
+      completedAt: mission.completedAt,
+    });
+
     // Unblock dependent missions
     this.unblockDependents(missionId);
   }
@@ -248,6 +274,12 @@ export class MissionQueue implements IMissionQueue {
     mission.status = 'failed';
     mission.error = error;
     mission.completedAt = new Date();
+
+    // Persist failure
+    updateMissionStatus(missionId, 'failed', {
+      error,
+      completedAt: mission.completedAt,
+    });
   }
 
   getQueueLength(): number {
@@ -354,6 +386,78 @@ export class MissionQueue implements IMissionQueue {
   getAllMissions(): Mission[] {
     return Array.from(this.missions.values());
   }
+
+  // Persist mission to SQLite
+  private persistMission(mission: Mission): void {
+    saveMission({
+      id: mission.id,
+      prompt: mission.prompt,
+      context: mission.context,
+      priority: mission.priority,
+      type: mission.type,
+      status: mission.status,
+      timeoutMs: mission.timeoutMs,
+      maxRetries: mission.maxRetries,
+      retryCount: mission.retryCount,
+      dependsOn: mission.dependsOn,
+      assignedTo: mission.assignedTo,
+      error: mission.error,
+      result: mission.result,
+      createdAt: mission.createdAt,
+      startedAt: mission.startedAt,
+      completedAt: mission.completedAt,
+    });
+  }
+
+  // Load missions from SQLite (for startup recovery)
+  loadFromDb(): number {
+    const records = loadPendingMissions();
+    let loaded = 0;
+
+    for (const record of records) {
+      // Skip if already in memory
+      if (this.missions.has(record.id)) continue;
+
+      const mission: Mission = {
+        id: record.id,
+        prompt: record.prompt,
+        context: record.context || undefined,
+        priority: record.priority as Priority,
+        type: record.type as Mission['type'],
+        status: record.status as MissionStatus,
+        timeoutMs: record.timeout_ms,
+        maxRetries: record.max_retries,
+        retryCount: record.retry_count,
+        dependsOn: record.depends_on ? JSON.parse(record.depends_on) : undefined,
+        assignedTo: record.assigned_to || undefined,
+        error: record.error ? JSON.parse(record.error) : undefined,
+        result: record.result ? JSON.parse(record.result) : undefined,
+        createdAt: new Date(record.created_at),
+        startedAt: record.started_at ? new Date(record.started_at) : undefined,
+        completedAt: record.completed_at ? new Date(record.completed_at) : undefined,
+      };
+
+      this.missions.set(mission.id, mission);
+
+      // Add to queue if queued or blocked
+      if (mission.status === 'queued' || mission.status === 'blocked') {
+        this.insertByPriority(mission.id, mission.priority);
+      }
+
+      // Running missions that were interrupted should be retried
+      if (mission.status === 'running') {
+        mission.status = 'queued';
+        mission.assignedTo = undefined;
+        mission.startedAt = undefined;
+        this.insertByPriority(mission.id, mission.priority);
+        updateMissionStatus(mission.id, 'queued');
+      }
+
+      loaded++;
+    }
+
+    return loaded;
+  }
 }
 
 // Singleton instance
@@ -362,6 +466,11 @@ let instance: MissionQueue | null = null;
 export function getMissionQueue(): MissionQueue {
   if (!instance) {
     instance = new MissionQueue();
+    // Load any pending missions from previous session
+    const loaded = instance.loadFromDb();
+    if (loaded > 0) {
+      console.log(`[MissionQueue] Recovered ${loaded} mission(s) from database`);
+    }
     instance.startTimeoutEnforcement(); // Auto-start timeout enforcement
   }
   return instance;

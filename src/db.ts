@@ -90,6 +90,69 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id)`);
 
+// ============ Mission Queue Schema Migration ============
+// Add columns for mission persistence (safe migration - checks if column exists)
+const taskColumns = db.query("PRAGMA table_info(tasks)").all() as { name: string }[];
+const existingColumns = new Set(taskColumns.map(c => c.name));
+
+const missionColumns = [
+  { name: 'type', sql: 'ALTER TABLE tasks ADD COLUMN type TEXT' },
+  { name: 'timeout_ms', sql: 'ALTER TABLE tasks ADD COLUMN timeout_ms INTEGER DEFAULT 120000' },
+  { name: 'max_retries', sql: 'ALTER TABLE tasks ADD COLUMN max_retries INTEGER DEFAULT 3' },
+  { name: 'retry_count', sql: 'ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0' },
+  { name: 'depends_on', sql: 'ALTER TABLE tasks ADD COLUMN depends_on TEXT' },
+  { name: 'assigned_to', sql: 'ALTER TABLE tasks ADD COLUMN assigned_to INTEGER' },
+];
+
+for (const col of missionColumns) {
+  if (!existingColumns.has(col.name)) {
+    db.run(col.sql);
+  }
+}
+
+// Update CHECK constraint to include mission statuses (running, retrying, blocked)
+// SQLite requires table recreation to modify constraints
+try {
+  // Test if constraint needs updating by trying an insert with 'running' status
+  db.run(`INSERT INTO tasks (id, status) VALUES ('__constraint_test__', 'running')`);
+  db.run(`DELETE FROM tasks WHERE id = '__constraint_test__'`);
+} catch {
+  // Constraint is restrictive - need to recreate table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tasks_new (
+      id TEXT PRIMARY KEY,
+      agent_id INTEGER,
+      prompt TEXT,
+      context TEXT,
+      priority TEXT DEFAULT 'normal',
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'queued', 'processing', 'running', 'completed', 'failed', 'retrying', 'blocked', 'cancelled')),
+      result TEXT,
+      error TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      duration_ms INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      started_at TEXT,
+      completed_at TEXT,
+      type TEXT,
+      timeout_ms INTEGER DEFAULT 120000,
+      max_retries INTEGER DEFAULT 3,
+      retry_count INTEGER DEFAULT 0,
+      depends_on TEXT,
+      assigned_to INTEGER,
+      FOREIGN KEY (agent_id) REFERENCES agents(id)
+    )
+  `);
+  // Copy existing data
+  db.run(`INSERT OR IGNORE INTO tasks_new SELECT id, agent_id, prompt, context, priority, status, result, error, input_tokens, output_tokens, duration_ms, created_at, started_at, completed_at, type, timeout_ms, max_retries, retry_count, depends_on, assigned_to FROM tasks`);
+  // Drop old table and rename
+  db.run(`DROP TABLE tasks`);
+  db.run(`ALTER TABLE tasks_new RENAME TO tasks`);
+  // Recreate indexes
+  db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+}
+
 // ============ Session Memory Schema ============
 
 db.run(`
@@ -621,6 +684,143 @@ export function cancelTask(taskId: string) {
     return true;
   }
   return false;
+}
+
+// ============ Mission Persistence Functions ============
+
+export interface MissionRecord {
+  id: string;
+  prompt: string;
+  context?: string;
+  priority: string;
+  type?: string;
+  status: string;
+  timeout_ms: number;
+  max_retries: number;
+  retry_count: number;
+  depends_on?: string;
+  assigned_to?: number;
+  result?: string;
+  error?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export function saveMission(mission: {
+  id: string;
+  prompt: string;
+  context?: string;
+  priority: string;
+  type?: string;
+  status: string;
+  timeoutMs: number;
+  maxRetries: number;
+  retryCount: number;
+  dependsOn?: string[];
+  assignedTo?: number;
+  error?: object;
+  result?: object;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+}): void {
+  const dependsOnJson = mission.dependsOn ? JSON.stringify(mission.dependsOn) : null;
+  const errorJson = mission.error ? JSON.stringify(mission.error) : null;
+  const resultJson = mission.result ? JSON.stringify(mission.result) : null;
+
+  db.run(`
+    INSERT INTO tasks (id, prompt, context, priority, type, status, timeout_ms, max_retries, retry_count, depends_on, assigned_to, error, result, created_at, started_at, completed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status,
+      retry_count = excluded.retry_count,
+      assigned_to = excluded.assigned_to,
+      error = excluded.error,
+      result = excluded.result,
+      started_at = excluded.started_at,
+      completed_at = excluded.completed_at
+  `, [
+    mission.id,
+    mission.prompt,
+    mission.context || null,
+    mission.priority,
+    mission.type || null,
+    mission.status,
+    mission.timeoutMs,
+    mission.maxRetries,
+    mission.retryCount,
+    dependsOnJson,
+    mission.assignedTo || null,
+    errorJson,
+    resultJson,
+    mission.createdAt.toISOString(),
+    mission.startedAt?.toISOString() || null,
+    mission.completedAt?.toISOString() || null,
+  ]);
+}
+
+export function loadPendingMissions(): MissionRecord[] {
+  return db.query(`
+    SELECT * FROM tasks
+    WHERE status IN ('pending', 'queued', 'running', 'retrying', 'blocked')
+    ORDER BY
+      CASE priority
+        WHEN 'critical' THEN 0
+        WHEN 'high' THEN 1
+        WHEN 'normal' THEN 2
+        WHEN 'low' THEN 3
+      END,
+      created_at ASC
+  `).all() as MissionRecord[];
+}
+
+export function updateMissionStatus(
+  missionId: string,
+  status: string,
+  extras?: {
+    retryCount?: number;
+    assignedTo?: number;
+    error?: object;
+    result?: object;
+    startedAt?: Date;
+    completedAt?: Date;
+  }
+): void {
+  const updates: string[] = ['status = ?'];
+  const params: any[] = [status];
+
+  if (extras?.retryCount !== undefined) {
+    updates.push('retry_count = ?');
+    params.push(extras.retryCount);
+  }
+  if (extras?.assignedTo !== undefined) {
+    updates.push('assigned_to = ?');
+    params.push(extras.assignedTo);
+  }
+  if (extras?.error !== undefined) {
+    updates.push('error = ?');
+    params.push(JSON.stringify(extras.error));
+  }
+  if (extras?.result !== undefined) {
+    updates.push('result = ?');
+    params.push(JSON.stringify(extras.result));
+  }
+  if (extras?.startedAt !== undefined) {
+    updates.push('started_at = ?');
+    params.push(extras.startedAt.toISOString());
+  }
+  if (extras?.completedAt !== undefined) {
+    updates.push('completed_at = ?');
+    params.push(extras.completedAt.toISOString());
+  }
+
+  params.push(missionId);
+  db.run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, params);
+}
+
+export function getMissionFromDb(missionId: string): MissionRecord | null {
+  return db.query(`SELECT * FROM tasks WHERE id = ?`).get(missionId) as MissionRecord | null;
 }
 
 // ============ Event Functions ============
