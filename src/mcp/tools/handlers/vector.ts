@@ -29,7 +29,7 @@ async function ensureVectorDB() {
 // ============ Schemas ============
 
 const SearchSchema = z.object({
-  type: z.enum(['tasks', 'results', 'messages', 'memory']),
+  type: z.enum(['agent_tasks', 'results', 'messages', 'memory']),
   query: z.string().min(1),
   limit: z.number().min(1).max(20).optional(),
   agent_id: z.number().optional(),
@@ -48,7 +48,7 @@ export const vectorTools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        type: { type: 'string', enum: ['tasks', 'results', 'messages', 'memory'] },
+        type: { type: 'string', enum: ['agent_tasks', 'results', 'messages', 'memory'] },
         query: { type: 'string' },
         limit: { type: 'number' },
         agent_id: { type: 'number' },
@@ -94,10 +94,10 @@ async function handleSearch(args: unknown) {
 
   try {
     switch (type) {
-      case 'tasks': {
+      case 'agent_tasks': {
         const results = await searchSimilarTasks(query, limit, agent_id);
         return jsonResponse({
-          type: 'tasks',
+          type: 'agent_tasks',
           query,
           count: results.ids[0]?.length || 0,
           results: formatSearchResults(results),

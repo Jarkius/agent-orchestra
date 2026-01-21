@@ -518,7 +518,7 @@ export function createTask(
   priority = 'normal'
 ) {
   db.run(
-    `INSERT INTO tasks (id, agent_id, prompt, context, priority, status, created_at)
+    `INSERT INTO agent_tasks (id, agent_id, prompt, context, priority, status, created_at)
      VALUES (?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP)`,
     [taskId, agentId, prompt, context || null, priority]
   );
@@ -528,7 +528,7 @@ export function createTask(
 
 export function startTask(taskId: string) {
   db.run(
-    `UPDATE tasks SET status = 'processing', started_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    `UPDATE agent_tasks SET status = 'processing', started_at = CURRENT_TIMESTAMP WHERE id = ?`,
     [taskId]
   );
 }
@@ -541,7 +541,7 @@ export function completeTask(
   outputTokens?: number
 ) {
   db.run(
-    `UPDATE tasks SET
+    `UPDATE agent_tasks SET
       status = 'completed',
       result = ?,
       duration_ms = ?,
@@ -562,7 +562,7 @@ export function completeTask(
 
 export function failTask(taskId: string, error: string, durationMs: number) {
   db.run(
-    `UPDATE tasks SET
+    `UPDATE agent_tasks SET
       status = 'failed',
       error = ?,
       duration_ms = ?,
@@ -580,17 +580,17 @@ export function failTask(taskId: string, error: string, durationMs: number) {
 }
 
 export function getTask(taskId: string) {
-  return db.query(`SELECT * FROM tasks WHERE id = ?`).get(taskId) as any;
+  return db.query(`SELECT * FROM agent_tasks WHERE id = ?`).get(taskId) as any;
 }
 
 export function getAgentTasks(agentId: number, status?: string, limit = 20) {
   if (status) {
     return db.query(
-      `SELECT * FROM tasks WHERE agent_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?`
+      `SELECT * FROM agent_tasks WHERE agent_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?`
     ).all(agentId, status, limit);
   }
   return db.query(
-    `SELECT * FROM tasks WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?`
+    `SELECT * FROM agent_tasks WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?`
   ).all(agentId, limit);
 }
 
@@ -602,7 +602,7 @@ export function getTaskStats() {
       AVG(duration_ms) as avg_duration_ms,
       SUM(input_tokens) as total_input_tokens,
       SUM(output_tokens) as total_output_tokens
-    FROM tasks
+    FROM agent_tasks
     GROUP BY status
   `).all();
 }
@@ -611,7 +611,7 @@ export function cancelTask(taskId: string) {
   const task = getTask(taskId);
   if (task && task.status !== 'completed' && task.status !== 'failed') {
     db.run(
-      `UPDATE tasks SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      `UPDATE agent_tasks SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [taskId]
     );
     if (task.agent_id) {
@@ -649,7 +649,7 @@ export function getRecentEvents(limit = 50) {
 export function clearSession() {
   db.run(`DELETE FROM events`);
   db.run(`DELETE FROM messages`);
-  db.run(`DELETE FROM tasks`);
+  db.run(`DELETE FROM agent_tasks`);
   db.run(`DELETE FROM agents`);
 }
 
@@ -1608,7 +1608,7 @@ export function getImprovementReport() {
 export function linkTaskToSession(taskId: string, sessionId: string): boolean {
   try {
     db.run(
-      `UPDATE tasks SET session_id = ? WHERE id = ?`,
+      `UPDATE agent_tasks SET session_id = ? WHERE id = ?`,
       [sessionId, taskId]
     );
     return true;
@@ -1622,7 +1622,7 @@ export function linkTaskToSession(taskId: string, sessionId: string): boolean {
  */
 export function getTasksBySession(sessionId: string, limit = 50): any[] {
   return db.query(
-    `SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`
+    `SELECT * FROM agent_tasks WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`
   ).all(sessionId, limit);
 }
 
@@ -1630,7 +1630,7 @@ export function getTasksBySession(sessionId: string, limit = 50): any[] {
  * Get the session associated with a task
  */
 export function getSessionByTask(taskId: string): SessionRecord | null {
-  const task = db.query(`SELECT session_id FROM tasks WHERE id = ?`).get(taskId) as any;
+  const task = db.query(`SELECT session_id FROM agent_tasks WHERE id = ?`).get(taskId) as any;
   if (!task?.session_id) return null;
   return getSessionById(task.session_id);
 }
@@ -1641,11 +1641,11 @@ export function getSessionByTask(taskId: string): SessionRecord | null {
 export function getUnlinkedTasks(agentId?: number, limit = 50): any[] {
   if (agentId) {
     return db.query(
-      `SELECT * FROM tasks WHERE session_id IS NULL AND agent_id = ? ORDER BY created_at DESC LIMIT ?`
+      `SELECT * FROM agent_tasks WHERE session_id IS NULL AND agent_id = ? ORDER BY created_at DESC LIMIT ?`
     ).all(agentId, limit);
   }
   return db.query(
-    `SELECT * FROM tasks WHERE session_id IS NULL ORDER BY created_at DESC LIMIT ?`
+    `SELECT * FROM agent_tasks WHERE session_id IS NULL ORDER BY created_at DESC LIMIT ?`
   ).all(limit);
 }
 

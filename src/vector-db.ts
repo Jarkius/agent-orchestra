@@ -558,7 +558,7 @@ export async function getRelatedMemory(
 
   if (includeTasks) {
     searches.push(searchSimilarTasks(query, limit));
-    keys.push('tasks');
+    keys.push('agent_tasks');
   }
   if (includeResults) {
     searches.push(searchSimilarResults(query, limit));
