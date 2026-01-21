@@ -317,6 +317,25 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
     // Mark as sent
     markMessageSent(messageId);
     console.log(`[Daemon] Sent ${type}: ${content.substring(0, 50)}...`);
+
+    // Push to SSE clients so watch shows outgoing messages too
+    const outboundMsg = {
+      type,
+      from: MATRIX_ID,
+      to: to || undefined,
+      content,
+      timestamp: new Date().toISOString(),
+      id: messageId,
+      outbound: true,  // Flag to distinguish from incoming
+    };
+    for (const client of sseClients) {
+      try {
+        client.write(`data: ${JSON.stringify(outboundMsg)}\n\n`);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+
     return true;
   } catch (error) {
     console.error('[Daemon] Send failed:', error);

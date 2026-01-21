@@ -65,11 +65,14 @@ function formatMessage(msg: any): string {
   const time = `${C.gray}[${formatTime(msg.timestamp)}]${C.reset}`;
   const from = shortName(msg.from || 'unknown');
   const historical = msg.historical ? `${C.dim}(history)${C.reset} ` : '';
+  const outbound = msg.outbound ? `${C.green}>>>${C.reset} ` : '';
 
   if (msg.type === 'broadcast') {
-    return `${time} ${C.cyan}[broadcast]${C.reset} ${C.bold}${from}${C.reset}: ${historical}${msg.content}`;
+    const tag = msg.outbound ? `${C.green}[sent]${C.reset}` : `${C.cyan}[broadcast]${C.reset}`;
+    return `${time} ${tag} ${C.bold}${from}${C.reset}: ${outbound}${historical}${msg.content}`;
   } else if (msg.type === 'direct') {
-    return `${time} ${C.magenta}[DM]${C.reset} ${C.bold}${from}${C.reset}: ${historical}${msg.content}`;
+    const tag = msg.outbound ? `${C.green}[sent→${shortName(msg.to)}]${C.reset}` : `${C.magenta}[DM]${C.reset}`;
+    return `${time} ${tag} ${C.bold}${from}${C.reset}: ${outbound}${historical}${msg.content}`;
   } else if (msg.type === 'connected') {
     return `${time} ${C.green}[system]${C.reset} Connected to matrix: ${msg.matrix}`;
   } else {
