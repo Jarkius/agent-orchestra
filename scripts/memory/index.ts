@@ -139,6 +139,13 @@ async function main() {
       await import('./consolidate');
       break;
 
+    case 'daemon':
+      // Daemon commands: start, stop, status
+      const daemonCmd = args[1] || 'status';
+      process.argv = [process.argv[0]!, process.argv[1]!, daemonCmd];
+      await import('../../src/matrix-daemon');
+      break;
+
     case 'help':
     case '--help':
     case '-h':

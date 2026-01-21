@@ -156,25 +156,47 @@ async function main() {
     title = `[msg:broadcast] [from:${THIS_MATRIX}] ${content}`;
   }
 
-  // Try WebSocket delivery first (Phase 3)
+  // Try delivery: Daemon first → Direct hub fallback → SQLite persistence
   let delivered = false;
+  const daemonPort = process.env.MATRIX_DAEMON_PORT || '37888';
   const hubUrl = process.env.MATRIX_HUB_URL || 'ws://localhost:8081';
 
+  // Try 1: Daemon API (persistent connection)
   try {
-    const connected = await connectToHub(hubUrl);
-    if (connected) {
-      if (to) {
-        delivered = sendDirect(to, content);
-      } else {
-        delivered = broadcast(content);
+    const endpoint = to ? '/send' : '/broadcast';
+    const body = to ? { content, to } : { content };
+    const response = await fetch(`http://localhost:${daemonPort}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (response.ok) {
+      const result = await response.json() as { sent: boolean; queued: boolean };
+      delivered = result.sent;
+      if (result.queued) {
+        console.log('  📤 Queued in daemon (hub reconnecting...)');
       }
-
-      // Give it a moment for the message to be sent
-      await new Promise(resolve => setTimeout(resolve, 100));
-      disconnect();
     }
-  } catch (error) {
-    // Hub not available, fall back to SQLite
+  } catch {
+    // Daemon not running, try direct connection
+  }
+
+  // Try 2: Direct hub connection (creates new connection)
+  if (!delivered) {
+    try {
+      const connected = await connectToHub(hubUrl);
+      if (connected) {
+        if (to) {
+          delivered = sendDirect(to, content);
+        } else {
+          delivered = broadcast(content);
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        disconnect();
+      }
+    } catch {
+      // Hub not available
+    }
   }
 
   // Always persist to SQLite (source of truth + fallback)
