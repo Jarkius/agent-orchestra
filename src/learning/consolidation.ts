@@ -262,7 +262,12 @@ export async function consolidateLearnings(
     const primaryLearning = getLearningById(strategy.keepId);
     if (primaryLearning) {
       try {
-        const client = new ChromaClient();
+        const url = process.env.CHROMA_URL || 'http://localhost:8100';
+        const parsed = new URL(url);
+        const client = new ChromaClient({
+          host: parsed.hostname,
+          port: parseInt(parsed.port) || 8100,
+        });
         const collection = await client.getCollection({ name: 'orchestrator_learnings' });
 
         // Delete old embeddings for merged learnings
