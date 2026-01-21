@@ -66,7 +66,7 @@ function parseMessage(title: string): { type: 'broadcast' | 'direct'; from: stri
 }
 
 function getInbox(): MessageRecord[] {
-  // Get broadcasts + direct messages to this matrix (use full path for DB queries)
+  // Get broadcasts + direct messages to this matrix (match both full path and short name)
   const rows = db.query(`
     SELECT id, title, context, lesson, created_at
     FROM learnings
@@ -74,6 +74,7 @@ function getInbox(): MessageRecord[] {
       AND (
         title LIKE '[msg:broadcast]%'
         OR title LIKE '%[to:${THIS_MATRIX_PATH}]%'
+        OR title LIKE '%[to:${THIS_MATRIX}]%'
       )
     ORDER BY created_at DESC
     LIMIT 20
