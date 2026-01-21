@@ -61,6 +61,9 @@ const connectionHandlers: Set<ConnectionHandler> = new Set();
 // Message queue for offline delivery
 const pendingMessages: Array<{ to?: string; content: string; metadata?: Record<string, any> }> = [];
 
+// Presence state for debouncing logs
+const lastPresenceStatus: Map<string, MatrixStatus> = new Map();
+
 // ============ Token Management ============
 
 /**
@@ -261,7 +264,12 @@ function handleMessage(message: HubMessage): void {
 
     case 'presence':
       if (message.matrix_id && message.status) {
-        console.log(`[MatrixClient] Presence: ${message.matrix_id} is ${message.status}`);
+        // Only log if status actually changed (debounce)
+        const lastStatus = lastPresenceStatus.get(message.matrix_id);
+        if (lastStatus !== message.status) {
+          lastPresenceStatus.set(message.matrix_id, message.status);
+          console.log(`[MatrixClient] ${message.matrix_id.split('/').pop()} is ${message.status}`);
+        }
         presenceHandlers.forEach(handler => handler({
           matrix_id: message.matrix_id!,
           status: message.status!,

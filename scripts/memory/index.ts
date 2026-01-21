@@ -146,6 +146,14 @@ async function main() {
       await import('../../src/matrix-daemon');
       break;
 
+    case 'status':
+      await import('./status');
+      break;
+
+    case 'init':
+      await import('./init');
+      break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -182,6 +190,8 @@ Commands:
   message "text"    Broadcast to all matrices
   message --to path Direct message to specific matrix
   message --inbox   Check incoming messages
+  status            Show matrix communication status
+  init              Initialize hub and daemon (single setup command)
   purge <target>    Purge sessions or learnings (with filters)
   reset             Nuclear option - wipe ALL memory data
   reindex [type]    Re-index SQLite data into ChromaDB vectors

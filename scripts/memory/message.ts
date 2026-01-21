@@ -12,8 +12,20 @@
 
 import { createLearning, db } from '../../src/db';
 import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConnected, disconnect } from '../../src/matrix-client';
+import { execSync } from 'child_process';
+import { basename } from 'path';
 
-const THIS_MATRIX = process.cwd();
+function getMatrixId(): string {
+  try {
+    const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
+    return basename(gitRoot);
+  } catch {
+    return basename(process.cwd());
+  }
+}
+
+const THIS_MATRIX = getMatrixId();
+const THIS_MATRIX_PATH = process.cwd();
 
 interface MessageRecord {
   id: number;
@@ -39,14 +51,14 @@ function parseMessage(title: string): { type: 'broadcast' | 'direct'; from: stri
 }
 
 function getInbox(): MessageRecord[] {
-  // Get broadcasts + direct messages to this matrix
+  // Get broadcasts + direct messages to this matrix (use full path for DB queries)
   const rows = db.query(`
     SELECT id, title, context, lesson, created_at
     FROM learnings
     WHERE category = 'insight'
       AND (
         title LIKE '[msg:broadcast]%'
-        OR title LIKE '%[to:${THIS_MATRIX}]%'
+        OR title LIKE '%[to:${THIS_MATRIX_PATH}]%'
       )
     ORDER BY created_at DESC
     LIMIT 20
@@ -60,7 +72,7 @@ function getUnreadCount(): number {
     SELECT COUNT(*) as count
     FROM learnings
     WHERE category = 'insight'
-      AND (title LIKE '[msg:broadcast]%' OR title LIKE '%[to:${THIS_MATRIX}]%')
+      AND (title LIKE '[msg:broadcast]%' OR title LIKE '%[to:${THIS_MATRIX_PATH}]%')
       AND created_at > datetime('now', '-1 hour')
   `).get() as { count: number };
   return rows.count;
@@ -107,9 +119,8 @@ async function main() {
       if (parsed) {
         const icon = parsed.type === 'broadcast' ? '📢' : '✉️';
         const fromShort = parsed.from.split('/').slice(-2).join('/');
-        console.log(`  ${icon} #${msg.id} [${fromShort}] ${parsed.content}`);
+        console.log(`  ${icon} #${msg.id} [${fromShort}] ${msg.created_at} - ${parsed.content}`);
         if (msg.lesson) console.log(`     ${msg.lesson}`);
-        console.log(`     ${msg.created_at}`);
         console.log('');
       }
     }
@@ -147,13 +158,13 @@ async function main() {
     process.exit(1);
   }
 
-  // Build message title
+  // Build message title (use full path for routing)
   const type = to ? 'direct' : 'broadcast';
   let title: string;
   if (to) {
-    title = `[msg:direct] [from:${THIS_MATRIX}] [to:${to}] ${content}`;
+    title = `[msg:direct] [from:${THIS_MATRIX_PATH}] [to:${to}] ${content}`;
   } else {
-    title = `[msg:broadcast] [from:${THIS_MATRIX}] ${content}`;
+    title = `[msg:broadcast] [from:${THIS_MATRIX_PATH}] ${content}`;
   }
 
   // Try delivery: Daemon first → Direct hub fallback → SQLite persistence
@@ -162,6 +173,7 @@ async function main() {
   const hubUrl = process.env.MATRIX_HUB_URL || 'ws://localhost:8081';
 
   // Try 1: Daemon API (persistent connection)
+  let daemonAvailable = false;
   try {
     const endpoint = to ? '/send' : '/broadcast';
     const body = to ? { content, to } : { content };
@@ -171,6 +183,7 @@ async function main() {
       body: JSON.stringify(body),
     });
     if (response.ok) {
+      daemonAvailable = true;
       const result = await response.json() as { sent: boolean; queued: boolean };
       delivered = result.sent;
       if (result.queued) {
@@ -178,7 +191,7 @@ async function main() {
       }
     }
   } catch {
-    // Daemon not running, try direct connection
+    // Daemon not running
   }
 
   // Try 2: Direct hub connection (creates new connection)
@@ -197,6 +210,11 @@ async function main() {
     } catch {
       // Hub not available
     }
+  }
+
+  // Show helpful message if no real-time delivery
+  if (!delivered && !daemonAvailable) {
+    console.log('  ⚠️  No real-time delivery. Start with: bun memory init');
   }
 
   // Always persist to SQLite (source of truth + fallback)

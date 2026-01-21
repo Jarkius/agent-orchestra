@@ -2,19 +2,29 @@
 
 Like players in an online game - matrices can broadcast and direct message each other.
 
-## Quick Start (Same Machine)
+## Quick Start
 
 ```bash
-# Terminal 1: Start hub
-bun run src/matrix-hub.ts
+# Single command to set up everything
+bun memory init
 
-# Terminal 2: Start daemon in your project
-bun run src/matrix-daemon.ts start
+# Check status at a glance
+bun memory status
 
 # Send messages
 bun memory message "Hello everyone!"           # Broadcast
 bun memory message --to other-proj "Hey!"      # Direct
 bun memory message --inbox                     # Check inbox
+```
+
+## Manual Setup (if init fails)
+
+```bash
+# Terminal 1: Start hub
+bun run src/matrix-hub.ts
+
+# Terminal 2: Start daemon
+bun run src/matrix-daemon.ts start
 ```
 
 ## Same Network Setup
