@@ -5,6 +5,8 @@
  * Phase 3: Client-side WebSocket connection management
  */
 
+import { basename } from 'path';
+
 // ============ Configuration ============
 
 const DEFAULT_HUB_URL = 'ws://localhost:8081';
@@ -46,7 +48,7 @@ type ConnectionHandler = (connected: boolean, onlineMatrices?: string[]) => void
 // ============ State ============
 
 let hubUrl = DEFAULT_HUB_URL;
-let matrixId = process.cwd(); // Default to current working directory
+let matrixId = basename(process.cwd()); // Default to project name
 let displayName: string | undefined;
 let connection: WebSocket | null = null;
 let connected = false;

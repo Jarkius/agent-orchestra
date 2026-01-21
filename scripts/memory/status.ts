@@ -102,13 +102,20 @@ async function main() {
 
   console.log('─'.repeat(40));
 
-  // Online matrices
+  // Online matrices (deduplicated by short name)
   if (hub && hub.online.length > 0) {
-    console.log(`\n  Online matrices: ${hub.online.length}`);
+    const seen = new Set<string>();
+    const unique: { short: string; isSelf: boolean }[] = [];
     for (const m of hub.online) {
       const short = m.split('/').slice(-1)[0];
-      const isSelf = m.includes(matrixId) ? ' (you)' : '';
-      console.log(`    - ${short}${isSelf}`);
+      if (!seen.has(short)) {
+        seen.add(short);
+        unique.push({ short, isSelf: short === matrixId || m.includes(matrixId) });
+      }
+    }
+    console.log(`\n  Online matrices: ${unique.length}`);
+    for (const { short, isSelf } of unique) {
+      console.log(`    - ${short}${isSelf ? ' (you)' : ''}`);
     }
   }
 
