@@ -8,7 +8,7 @@
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { existsSync } from "fs";
 import { CONFIG } from '../../config';
-import { successResponse } from '../../utils/response';
+import { successResponse, jsonResponse } from '../../utils/response';
 import {
   UpdateSharedContextSchema,
   type UpdateSharedContextInput,
@@ -138,7 +138,7 @@ async function getInbox(args: unknown) {
   const hubConnected = isHubConnected();
   const hubStatus = getHubStatus();
 
-  return successResponse({
+  return jsonResponse({
     this_matrix: thisMatrix,
     since_hours: sinceHours,
     message_count: parsed.length,
