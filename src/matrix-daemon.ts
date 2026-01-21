@@ -39,7 +39,7 @@ const matrixConfig = existsSync(CONFIG_FILE)
 const DAEMON_PORT = parseInt(process.env.MATRIX_DAEMON_PORT || matrixConfig.daemon_port || '37888');
 const HUB_URL = process.env.MATRIX_HUB_URL || matrixConfig.hub_url || 'ws://localhost:8081';
 const RECONNECT_INTERVAL = 5000;
-const HEARTBEAT_INTERVAL = 30000;
+const HEARTBEAT_INTERVAL = 15000; // Must be less than hub's 30s timeout
 const RETRY_INTERVAL = 10000; // Retry failed messages every 10s
 const MAX_RETRIES = 3;
 const ENABLE_BELL = process.env.MATRIX_BELL !== 'false'; // Terminal bell
@@ -176,7 +176,8 @@ function startHeartbeat(): void {
 
   heartbeatInterval = setInterval(() => {
     if (ws && connected) {
-      ws.ping();
+      // Send JSON ping (hub expects this format, not WebSocket ping frames)
+      ws.send(JSON.stringify({ type: 'ping' }));
     }
   }, HEARTBEAT_INTERVAL);
 }
@@ -265,8 +266,13 @@ function handleMessage(msg: any): void {
     if (presenceId) {
       console.log(`[Daemon] 👤 ${presenceId} is now ${msg.status}`);
     }
+  } else if (msg.type === 'ping') {
+    // Respond to hub's ping with pong
+    if (ws && connected) {
+      ws.send(JSON.stringify({ type: 'pong' }));
+    }
   } else if (msg.type === 'pong') {
-    // Heartbeat response
+    // Heartbeat response from hub
   }
 }
 
