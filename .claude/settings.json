@@ -1,9 +1,13 @@
 {
   "hooks": {
-    "user-prompt-submit": [
+    "UserPromptSubmit": [
       {
-        "type": "command",
-        "command": "./scripts/hooks/check-inbox.sh"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/hooks/check-inbox.sh"
+          }
+        ]
       }
     ]
   }
