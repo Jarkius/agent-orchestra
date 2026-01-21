@@ -775,8 +775,14 @@ export async function searchSessions(
   const conditions: Where[] = [];
 
   // Project scoping - filter by git root path
+  // Include empty string to support sessions indexed before project_path was added
   if (projectPath) {
-    conditions.push({ project_path: projectPath } as Where);
+    conditions.push({
+      $or: [
+        { project_path: projectPath },
+        { project_path: '' },  // Backwards compatibility
+      ],
+    } as Where);
   }
 
   // Agent filtering
@@ -921,8 +927,14 @@ export async function searchLearnings(
   const conditions: Where[] = [];
 
   // Project scoping - filter by git root path
+  // Include empty string to support learnings indexed before project_path was added
   if (projectPath) {
-    conditions.push({ project_path: projectPath } as Where);
+    conditions.push({
+      $or: [
+        { project_path: projectPath },
+        { project_path: '' },  // Backwards compatibility
+      ],
+    } as Where);
   }
 
   if (cat) {

@@ -27,6 +27,25 @@ import {
   rebuildLearningsFTS,
 } from "../../src/db";
 
+import { execSync } from "child_process";
+
+function getGitRootPath(): string | undefined {
+  // Allow override via environment variable
+  if (process.env.MEMORY_PROJECT_PATH) {
+    return process.env.MEMORY_PROJECT_PATH;
+  }
+
+  try {
+    const root = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return root || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const args = process.argv.slice(2);
 const target = args[0]; // sessions, learnings, tasks, or undefined for all
 
@@ -99,6 +118,9 @@ async function reindexLearnings(): Promise<number> {
 
   console.log(`  Found ${learnings.length} learnings`);
 
+  // Get project path for scoping (use SQLite value or current git root)
+  const projectPath = getGitRootPath();
+
   for (let i = 0; i < learnings.length; i++) {
     const learning = learnings[i]!;
     progress(i + 1, learnings.length, "learnings");
@@ -110,6 +132,8 @@ async function reindexLearnings(): Promise<number> {
       created_at: learning.created_at || new Date().toISOString(),
       agent_id: learning.agent_id,
       visibility: learning.visibility || 'public',
+      // Use SQLite project_path if set, otherwise current project path
+      project_path: learning.project_path || projectPath,
     });
   }
 
