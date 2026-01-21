@@ -387,7 +387,7 @@ async function learnFromGit(ref: string): Promise<void> {
   }
 }
 
-async function learnFromGitRepo(repoUrl: string): Promise<void> {
+async function learnFromGitRepo(repoUrl: string, options?: { deep?: boolean }): Promise<void> {
   console.log(`\n📦 Learning from git repository: ${repoUrl}\n`);
 
   // Extract repo name from URL
@@ -435,7 +435,7 @@ async function learnFromGitRepo(repoUrl: string): Promise<void> {
     const readmePath = `${ghqPath}/README.md`;
     if (existsSync(readmePath)) {
       console.log(`\n  📄 Found README.md, learning from it...`);
-      await learnFromFile(readmePath);
+      await learnFromFile(readmePath, { deep: options?.deep });
     } else {
       // Create placeholder learning about the repo
       await saveLearning('tooling', {
@@ -647,7 +647,7 @@ Quick Examples:
         await learnFromGit(firstArg);
         return;
       case 'git_repo':
-        await learnFromGitRepo(firstArg);
+        await learnFromGitRepo(firstArg, { deep: deepMode });
         return;
     }
   }
