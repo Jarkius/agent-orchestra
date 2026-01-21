@@ -74,6 +74,7 @@ async function reindexSessions(): Promise<number> {
     return 0;
   }
 
+  const projectPath = getGitRootPath();
   console.log(`  Found ${sessions.length} sessions`);
 
   for (let i = 0; i < sessions.length; i++) {
@@ -102,6 +103,7 @@ async function reindexSessions(): Promise<number> {
       created_at: session.created_at || new Date().toISOString(),
       agent_id: session.agent_id,
       visibility: session.visibility || 'public',
+      project_path: (session as any).project_path || projectPath,
     });
   }
 
