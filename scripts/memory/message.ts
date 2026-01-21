@@ -27,6 +27,21 @@ function getMatrixId(): string {
 const THIS_MATRIX = getMatrixId();
 const THIS_MATRIX_PATH = process.cwd();
 
+function formatLocalTime(utcString: string): string {
+  // SQLite stores UTC without 'Z' suffix - add it for proper parsing
+  const isoString = utcString.includes('Z') || utcString.includes('+') ? utcString : utcString.replace(' ', 'T') + 'Z';
+  const date = new Date(isoString);
+  return date.toLocaleString('sv-SE', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+}
+
 interface MessageRecord {
   id: number;
   title: string;
@@ -119,7 +134,7 @@ async function main() {
       if (parsed) {
         const icon = parsed.type === 'broadcast' ? '📢' : '✉️';
         const fromShort = parsed.from.split('/').slice(-2).join('/');
-        console.log(`  ${icon} #${msg.id} [${fromShort}] ${msg.created_at} - ${parsed.content}`);
+        console.log(`  ${icon} #${msg.id} [${fromShort}] ${formatLocalTime(msg.created_at)} - ${parsed.content}`);
         if (msg.lesson) console.log(`     ${msg.lesson}`);
         console.log('');
       }
