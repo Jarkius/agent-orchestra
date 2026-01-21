@@ -155,11 +155,41 @@ else
     done
 fi
 
-# Start Matrix Daemon if not running
+# Start Matrix Daemon - each project needs its own
 DAEMON_PORT="${MATRIX_DAEMON_PORT:-37888}"
-if curl -s "http://localhost:$DAEMON_PORT/status" &> /dev/null; then
+MATRIX_ID="$(basename "$(pwd)")"
+CONFIG_FILE=".matrix.json"
+
+# Check if we already have a config with a daemon running
+if [ -f "$CONFIG_FILE" ]; then
+    EXISTING_PORT=$(grep -o '"daemon_port"[[:space:]]*:[[:space:]]*[0-9]*' "$CONFIG_FILE" 2>/dev/null | grep -o '[0-9]*' || echo "")
+    if [ -n "$EXISTING_PORT" ]; then
+        DAEMON_PORT="$EXISTING_PORT"
+    fi
+fi
+
+# Check if this project's daemon is already running
+if curl -s "http://localhost:$DAEMON_PORT/status" 2>/dev/null | grep -q "$MATRIX_ID"; then
     echo -e "${GREEN}✓${NC} Matrix Daemon already running on port $DAEMON_PORT"
 else
+    # Find available port if default is in use by another project
+    while curl -s "http://localhost:$DAEMON_PORT/status" &> /dev/null; do
+        echo "Port $DAEMON_PORT in use by another project, trying next..."
+        DAEMON_PORT=$((DAEMON_PORT + 1))
+    done
+
+    # Create/update .matrix.json with our settings
+    cat > "$CONFIG_FILE" << EOF
+{
+  "matrix_id": "$MATRIX_ID",
+  "daemon_port": $DAEMON_PORT,
+  "daemon_dir": "~/.matrix-daemon-$MATRIX_ID",
+  "database": "./agents.db",
+  "hub_url": "ws://localhost:$HUB_PORT"
+}
+EOF
+    echo "Created $CONFIG_FILE (daemon port: $DAEMON_PORT)"
+
     echo "Starting Matrix Daemon..."
     bun run src/matrix-daemon.ts start > /dev/null 2>&1 &
     for i in {1..10}; do
