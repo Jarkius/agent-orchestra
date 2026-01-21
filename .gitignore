@@ -76,3 +76,6 @@ credentials.json
 secrets.json
 export
 archive/LEARNINGS*.md
+
+# Agent data (inbox/outbox)
+data/

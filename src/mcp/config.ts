@@ -3,11 +3,17 @@
  * Central place for all constants, paths, and defaults
  */
 
+import { join } from 'path';
+
+// Project root for relative paths
+const PROJECT_ROOT = process.cwd();
+
 export const CONFIG = {
-  // File system paths
-  INBOX_BASE: "/tmp/agent_inbox",
-  OUTBOX_BASE: "/tmp/agent_outbox",
-  SHARED_DIR: "/tmp/agent_shared",
+  // File system paths (project-local, persists across reboots)
+  // Add ./data/ to .gitignore
+  INBOX_BASE: join(PROJECT_ROOT, "data", "agent_inbox"),
+  OUTBOX_BASE: join(PROJECT_ROOT, "data", "agent_outbox"),
+  SHARED_DIR: join(PROJECT_ROOT, "data", "agent_shared"),
 
   // Pagination defaults
   DEFAULT_LIMIT: 20,
