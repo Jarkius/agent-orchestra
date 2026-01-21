@@ -5,9 +5,11 @@
 # This script:
 # 1. Checks prerequisites (bun, docker, tmux)
 # 2. Installs dependencies
-# 3. Starts ChromaDB container
+# 3. Starts ChromaDB container (port 8100)
 # 4. Initializes SQLite database
 # 5. Builds initial vector index
+# 6. Starts Matrix Hub (port 8081)
+# 7. Starts Matrix Daemon (port 37888)
 #
 
 set -e
@@ -131,6 +133,48 @@ bun memory reindex 2>&1 | tail -5
 echo -e "${GREEN}✓${NC} Vector index built"
 echo ""
 
+# Initialize Matrix Communication System
+echo -e "${YELLOW}Setting up Matrix communication...${NC}"
+
+# Start Matrix Hub if not running
+HUB_PORT="${MATRIX_HUB_PORT:-8081}"
+if curl -s "http://localhost:$HUB_PORT/health" &> /dev/null; then
+    echo -e "${GREEN}✓${NC} Matrix Hub already running on port $HUB_PORT"
+else
+    echo "Starting Matrix Hub..."
+    nohup bun run src/matrix-hub.ts > /tmp/matrix-hub.log 2>&1 &
+    for i in {1..10}; do
+        if curl -s "http://localhost:$HUB_PORT/health" &> /dev/null; then
+            echo -e "${GREEN}✓${NC} Matrix Hub started on port $HUB_PORT"
+            break
+        fi
+        if [ $i -eq 10 ]; then
+            echo -e "${YELLOW}⚠${NC} Matrix Hub failed to start (non-critical)"
+        fi
+        sleep 0.5
+    done
+fi
+
+# Start Matrix Daemon if not running
+DAEMON_PORT="${MATRIX_DAEMON_PORT:-37888}"
+if curl -s "http://localhost:$DAEMON_PORT/status" &> /dev/null; then
+    echo -e "${GREEN}✓${NC} Matrix Daemon already running on port $DAEMON_PORT"
+else
+    echo "Starting Matrix Daemon..."
+    bun run src/matrix-daemon.ts start > /dev/null 2>&1 &
+    for i in {1..10}; do
+        if curl -s "http://localhost:$DAEMON_PORT/status" &> /dev/null; then
+            echo -e "${GREEN}✓${NC} Matrix Daemon started on port $DAEMON_PORT"
+            break
+        fi
+        if [ $i -eq 10 ]; then
+            echo -e "${YELLOW}⚠${NC} Matrix Daemon failed to start (non-critical)"
+        fi
+        sleep 0.5
+    done
+fi
+echo ""
+
 # Verify installation
 echo -e "${YELLOW}Verifying installation...${NC}"
 echo ""
@@ -158,11 +202,16 @@ echo "     ${BLUE}bun memory learn ./docs/file.md${NC}      # From file"
 echo "     ${BLUE}bun memory learn HEAD~3${NC}              # From git"
 echo "     ${BLUE}bun memory learn tooling \"title\"${NC}     # Manual"
 echo ""
-echo "  4. Spawn agents (optional):"
+echo "  4. Cross-matrix messaging:"
+echo "     ${BLUE}bun memory message \"Hello!\"${NC}         # Broadcast"
+echo "     ${BLUE}bun memory message --inbox${NC}          # Check inbox"
+echo "     ${BLUE}bun memory status${NC}                   # View status"
+echo ""
+echo "  5. Spawn agents (optional):"
 echo "     ${BLUE}./scripts/spawn/spawn_claude_agents.sh 3${NC}"
 echo ""
-echo "  5. Use slash commands in Claude Code:"
-echo "     ${BLUE}/memory-save, /memory-recall, /memory-learn, /memory-distill${NC}"
+echo "  6. Use slash commands in Claude Code:"
+echo "     ${BLUE}/memory-save, /memory-recall, /memory-learn, /matrix-connect${NC}"
 echo ""
 echo "For documentation, see: ${BLUE}docs/${NC}"
 echo ""
