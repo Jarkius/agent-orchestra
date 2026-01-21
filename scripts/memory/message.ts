@@ -11,7 +11,7 @@
  */
 
 import { createLearning, db } from '../../src/db';
-import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConnected, disconnect } from '../../src/matrix-client';
+import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConnected, disconnect, waitForFlush } from '../../src/matrix-client';
 import { execSync } from 'child_process';
 import { basename } from 'path';
 
@@ -204,7 +204,7 @@ async function main() {
         } else {
           delivered = broadcast(content);
         }
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await waitForFlush(); // Wait for message to actually transmit
         disconnect();
       }
     } catch {

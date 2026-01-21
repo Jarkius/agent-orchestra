@@ -174,7 +174,10 @@ function handleMessage(msg: any): void {
 
     console.log(`[Daemon] 📬 Message from ${received.from}: ${received.content.substring(0, 50)}...`);
   } else if (msg.type === 'presence') {
-    console.log(`[Daemon] 👤 ${msg.matrixId} is now ${msg.status}`);
+    const presenceId = msg.matrix_id || msg.matrixId; // Handle both formats
+    if (presenceId) {
+      console.log(`[Daemon] 👤 ${presenceId} is now ${msg.status}`);
+    }
   } else if (msg.type === 'pong') {
     // Heartbeat response
   }

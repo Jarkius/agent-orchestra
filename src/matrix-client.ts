@@ -52,6 +52,7 @@ let connection: WebSocket | null = null;
 let connected = false;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let token: string | null = null;
+let intentionalDisconnect = false; // Prevents auto-reconnect after disconnect()
 
 // Event handlers
 const messageHandlers: Set<MessageHandler> = new Set();
@@ -97,6 +98,7 @@ async function getToken(): Promise<string | null> {
 export async function connectToHub(url?: string, name?: string): Promise<boolean> {
   if (url) hubUrl = url;
   if (name) displayName = name;
+  intentionalDisconnect = false; // Reset flag for new connection
 
   // Don't reconnect if already connected
   if (connected && connection) {
@@ -147,8 +149,10 @@ export async function connectToHub(url?: string, name?: string): Promise<boolean
         // Notify handlers
         connectionHandlers.forEach(handler => handler(false));
 
-        // Schedule reconnection
-        scheduleReconnect();
+        // Schedule reconnection only if not intentionally disconnected
+        if (!intentionalDisconnect) {
+          scheduleReconnect();
+        }
 
         if (!connected) {
           resolve(false);
@@ -191,9 +195,32 @@ function scheduleReconnect(): void {
 }
 
 /**
+ * Wait for WebSocket send buffer to flush
+ * Returns when all queued messages have been transmitted
+ */
+export async function waitForFlush(timeoutMs = 5000): Promise<boolean> {
+  if (!connection) return true;
+
+  const startTime = Date.now();
+  const checkInterval = 10; // Check every 10ms
+
+  while (connection.bufferedAmount > 0) {
+    if (Date.now() - startTime > timeoutMs) {
+      console.warn(`[MatrixClient] Flush timeout - ${connection.bufferedAmount} bytes still buffered`);
+      return false;
+    }
+    await new Promise(resolve => setTimeout(resolve, checkInterval));
+  }
+
+  return true;
+}
+
+/**
  * Disconnect from the hub
  */
 export function disconnect(): void {
+  intentionalDisconnect = true; // Prevent auto-reconnect
+
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
