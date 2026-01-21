@@ -2,8 +2,7 @@
   "mcpServers": {
     "agent-orchestrator": {
       "command": "bun",
-      "args": ["run", "src/mcp/server.ts"],
-      "cwd": "/Users/jarkius/workspace/test-spawns"
+      "args": ["run", "src/mcp/server.ts"]
     }
   }
 }
