@@ -13,8 +13,8 @@
  *   MEMORY_PROJECT_PATH                  # Override project path (auto-detected from git root)
  */
 
-import { readdirSync, statSync, readFileSync } from 'fs';
-import { join, basename } from 'path';
+import { readdirSync, statSync, readFileSync, lstatSync, readlinkSync } from 'fs';
+import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
@@ -139,8 +139,32 @@ function getGitRootPath(): string | undefined {
   }
 }
 
+/**
+ * Check if agents.db is a symlink pointing to another location
+ * This indicates a shared database scenario where we should allow cross-project access
+ */
+function isSharedDatabase(): boolean {
+  const dbPath = join(process.cwd(), 'agents.db');
+  try {
+    const stat = lstatSync(dbPath);
+    if (stat.isSymbolicLink()) {
+      const target = readlinkSync(dbPath);
+      // If symlink points outside current directory, it's a shared db
+      const targetDir = dirname(target.startsWith('/') ? target : join(process.cwd(), target));
+      return targetDir !== process.cwd();
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const projectPath = getGitRootPath();
+  const sharedDb = isSharedDatabase();
+
+  // Skip project filtering if using a shared/symlinked database
+  const effectiveProjectPath = sharedDb ? undefined : projectPath;
 
   const result = await recall(query, {
     limit: 5,
@@ -148,18 +172,16 @@ async function main() {
     includeTasks: true,
     agentId,
     includeShared: true,
-    projectPath,  // Filter by current project
+    projectPath: effectiveProjectPath,  // Filter by current project (unless shared db)
   });
 
   // Show active filters
-  if (agentId !== undefined || projectPath) {
-    console.log('');
-    if (projectPath) {
-      console.log(`📁 Project: ${basename(projectPath)}`);
-    }
-    if (agentId !== undefined) {
-      console.log(`🔒 Agent ID: ${agentId}`);
-    }
+  console.log('');
+  if (projectPath) {
+    console.log(`📁 Project: ${basename(projectPath)}${sharedDb ? ' (shared database)' : ''}`);
+  }
+  if (agentId !== undefined) {
+    console.log(`🔒 Agent ID: ${agentId}`);
   }
 
   switch (result.type) {
