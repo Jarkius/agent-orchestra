@@ -209,6 +209,7 @@ tmux attach -t claude-agents-<pid>
 /memory-validate      # Increase learning confidence
 /memory-graph         # Explore knowledge graph
 /memory-stats         # View statistics
+/matrix-connect       # Start matrix daemon for cross-project messaging
 ```
 
 ---
