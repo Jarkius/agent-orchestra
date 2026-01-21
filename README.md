@@ -237,6 +237,7 @@ MATRIX_HUB_URL=ws://192.168.1.100:8081 bun run src/matrix-daemon.ts start
 /memory-graph         # Explore knowledge graph
 /memory-stats         # View statistics
 /matrix-connect       # Start matrix daemon for cross-project messaging
+/matrix-watch         # Open tmux pane with live matrix message feed
 ```
 
 ---
