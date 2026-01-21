@@ -11,7 +11,11 @@ import { listLearningsFromDb, getImprovementReport } from '../../src/db';
 // When called directly, argv is: [bun, export.ts, path]
 const args = process.argv.slice(2);
 const dateSuffix = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-const outputPath = args.find(a => a !== 'export' && !a.startsWith('-')) || `archive/LEARNINGS_${dateSuffix}.md`;
+const customPath = args.find(a => a !== 'export' && !a.startsWith('-'));
+// Always include date suffix in filename
+const outputPath = customPath
+  ? customPath.replace(/\.md$/, `-${dateSuffix}.md`)
+  : `docs/LEARNINGS-${dateSuffix}.md`;
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
