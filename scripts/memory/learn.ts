@@ -18,6 +18,7 @@
 import { initVectorDB, saveLearning as saveLearningToChroma, findSimilarLearnings } from '../../src/vector-db';
 import { createLearning, createLearningLink, extractAndLinkEntities } from '../../src/db';
 import { distillFromContent } from '../../src/learning/distill-engine';
+import { analyzeRepository } from '../../src/learning/code-analyzer';
 import * as readline from 'readline';
 import { existsSync, readFileSync } from 'fs';
 import { basename } from 'path';
@@ -431,24 +432,109 @@ async function learnFromGitRepo(repoUrl: string, options?: { deep?: boolean }): 
       }
     }
 
-    // Step 4: Learn from README if it exists
-    const readmePath = `${ghqPath}/README.md`;
-    if (existsSync(readmePath)) {
-      console.log(`\n  📄 Found README.md, learning from it...`);
-      await learnFromFile(readmePath, { deep: options?.deep });
+    // Step 4: Learn from markdown files
+    if (options?.deep) {
+      // Deep mode: scan all markdown files in the repo
+      console.log(`\n  🔍 Deep mode: scanning all markdown files...\n`);
+
+      const findMdFiles = execSync(
+        `find "${ghqPath}" -name "*.md" -type f ! -path "*/node_modules/*" ! -path "*/.git/*" | head -20`,
+        { encoding: 'utf-8' }
+      ).trim();
+
+      const mdFiles = findMdFiles ? findMdFiles.split('\n').filter(f => f) : [];
+
+      if (mdFiles.length === 0) {
+        console.log('  ⚠️  No markdown files found\n');
+        await saveLearning('tooling', {
+          title: `Cloned: ${repoName}`,
+          what_happened: `Cloned git repository: ${repoUrl}`,
+          lesson: `Repository available at ${ghqPath}`,
+          context: `Source: ${repoUrl}`,
+          source_url: repoUrl,
+        });
+      } else {
+        console.log(`  📚 Found ${mdFiles.length} markdown file(s)\n`);
+
+        let totalLearnings = 0;
+        for (const mdFile of mdFiles) {
+          const relativePath = mdFile.replace(ghqPath + '/', '');
+          console.log(`  ━━━ ${relativePath} ━━━`);
+
+          // Use deep extraction on each file
+          const content = readFileSync(mdFile, 'utf-8');
+          let cleanContent = content;
+          if (content.startsWith('---')) {
+            const endFrontmatter = content.indexOf('---', 3);
+            if (endFrontmatter > 0) {
+              cleanContent = content.substring(endFrontmatter + 3).trim();
+            }
+          }
+
+          const result = distillFromContent(cleanContent, { sourcePath: mdFile });
+
+          if (result.learnings.length > 0) {
+            console.log(`     Found ${result.learnings.length} learnings\n`);
+
+            for (const learning of result.learnings) {
+              await saveLearning(learning.category, {
+                title: learning.title,
+                what_happened: `Extracted from ${repoName}/${relativePath} (section: ${learning.source_section})`,
+                lesson: learning.lesson,
+                prevention: learning.prevention,
+                source_url: `${repoUrl.replace('.git', '')}/blob/main/${relativePath}#L${learning.source_line}`,
+              });
+              totalLearnings++;
+            }
+          } else {
+            console.log(`     No actionable learnings\n`);
+          }
+        }
+
+        console.log(`\n  ✅ Extracted ${totalLearnings} learnings from ${mdFiles.length} markdown files\n`);
+      }
+
+      // Step 5: Analyze source code
+      console.log(`  🔬 Analyzing source code...\n`);
+      const codeAnalysis = analyzeRepository(ghqPath, { maxFiles: 30 });
+
+      console.log(`     Files analyzed: ${codeAnalysis.stats.filesAnalyzed}`);
+      console.log(`     Patterns found: ${codeAnalysis.stats.patternsFound}`);
+      console.log(`     Gems found: ${codeAnalysis.stats.gemsFound}\n`);
+
+      let codeLearnings = 0;
+      for (const learning of codeAnalysis.learnings) {
+        await saveLearning(learning.category, {
+          title: learning.title,
+          what_happened: `Code analysis: ${repoName}/${learning.source_file}`,
+          lesson: learning.lesson,
+          source_url: learning.source_line
+            ? `${repoUrl.replace('.git', '')}/blob/main/${learning.source_file}#L${learning.source_line}`
+            : `${repoUrl.replace('.git', '')}/blob/main/${learning.source_file}`,
+        });
+        codeLearnings++;
+      }
+
+      console.log(`\n  ✅ Extracted ${codeLearnings} learnings from source code\n`);
     } else {
-      // Create placeholder learning about the repo
-      await saveLearning('tooling', {
-        title: `Cloned: ${repoName}`,
-        what_happened: `Cloned git repository: ${repoUrl}`,
-        lesson: `Repository available at ${ghqPath}`,
-        context: `Source: ${repoUrl}`,
-        source_url: repoUrl,
-      });
+      // Quick mode: just README
+      const readmePath = `${ghqPath}/README.md`;
+      if (existsSync(readmePath)) {
+        console.log(`\n  📄 Found README.md, learning from it...`);
+        await learnFromFile(readmePath);
+      } else {
+        await saveLearning('tooling', {
+          title: `Cloned: ${repoName}`,
+          what_happened: `Cloned git repository: ${repoUrl}`,
+          lesson: `Repository available at ${ghqPath}`,
+          context: `Source: ${repoUrl}`,
+          source_url: repoUrl,
+        });
+      }
     }
 
     console.log(`\n  ✅ Repository ready for exploration at: ${ghqPath}\n`);
-    console.log(`  💡 Tip: Use 'bun memory learn ${ghqPath}/path/to/file.md' to learn from specific files\n`);
+    console.log(`  💡 Tip: Use 'bun memory learn ${ghqPath}/path/to/file.md --deep' for more files\n`);
   } catch (error) {
     console.error(`  ❌ Failed to clone repository: ${error}\n`);
     console.log(`  💡 Tip: Make sure ghq is installed (brew install ghq) and the URL is valid.\n`);
