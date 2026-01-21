@@ -526,7 +526,9 @@ agent-orchestra/
 │   ├── vector-db.ts            # ChromaDB with resilience
 │   ├── ws-server.ts            # WebSocket server for real-time tasks
 │   ├── matrix-hub.ts           # Cross-matrix communication hub
-│   ├── matrix-client.ts        # Hub client for matrices
+│   ├── matrix-daemon.ts        # Persistent hub connection manager
+│   ├── matrix-client.ts        # Hub client library
+│   ├── matrix-watch.ts         # SSE streaming for real-time messages
 │   └── embeddings/             # Vector embeddings
 ├── scripts/
 │   ├── spawn/                  # Agent spawning
