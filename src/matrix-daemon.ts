@@ -14,6 +14,19 @@ import { WebSocket } from 'ws';
 import { createServer, type Server } from 'http';
 import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
+import { exec } from 'child_process';
+import {
+  saveIncomingMessage,
+  saveMatrixMessage,
+  markMessageSent,
+  markMessageFailed,
+  incrementMessageRetry,
+  getPendingMessages,
+  getUnreadCount,
+  getInboxMessages,
+  markMessagesRead,
+  type MatrixMessageRecord
+} from './db';
 
 // ============ Configuration ============
 
@@ -21,6 +34,10 @@ const DAEMON_PORT = parseInt(process.env.MATRIX_DAEMON_PORT || '37888');
 const HUB_URL = process.env.MATRIX_HUB_URL || 'ws://localhost:8081';
 const RECONNECT_INTERVAL = 5000;
 const HEARTBEAT_INTERVAL = 30000;
+const RETRY_INTERVAL = 10000; // Retry failed messages every 10s
+const MAX_RETRIES = 3;
+const ENABLE_BELL = process.env.MATRIX_BELL !== 'false'; // Terminal bell
+const ENABLE_MACOS_NOTIFY = process.env.MATRIX_MACOS_NOTIFY === 'true'; // macOS notification center
 
 // Use home directory for persistence across reboots
 const DAEMON_DIR = join(process.env.HOME || '/tmp', '.matrix-daemon');
@@ -38,10 +55,11 @@ let connected = false;
 let token: string | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let retryInterval: ReturnType<typeof setInterval> | null = null;
 let httpServer: Server | null = null;
 
-const messageQueue: Array<{ type: 'broadcast' | 'direct'; content: string; to?: string }> = [];
-const receivedMessages: Array<{ from: string; content: string; timestamp: string; type: string }> = [];
+const messageQueue: Array<{ type: 'broadcast' | 'direct'; content: string; to?: string; id?: string }> = [];
+const receivedMessages: Array<{ from: string; content: string; timestamp: string; type: string; id?: string }> = [];
 
 // ============ Hub Connection ============
 
@@ -86,7 +104,9 @@ async function connectToHub(): Promise<boolean> {
         console.log(`[Daemon] Connected to hub at ${HUB_URL}`);
         connected = true;
         startHeartbeat();
+        startRetryLoop();
         flushMessageQueue();
+        retryPendingMessages(); // Retry any pending from DB immediately
         resolve(true);
       });
 
@@ -104,6 +124,7 @@ async function connectToHub(): Promise<boolean> {
         connected = false;
         ws = null;
         stopHeartbeat();
+        stopRetryLoop();
         scheduleReconnect();
       });
 
@@ -155,24 +176,69 @@ function stopHeartbeat(): void {
   }
 }
 
+// ============ Notification Helpers ============
+
+function sendTerminalBell(): void {
+  if (ENABLE_BELL) {
+    process.stderr.write('\x07'); // BEL character
+  }
+}
+
+function sendMacOSNotification(title: string, message: string): void {
+  if (ENABLE_MACOS_NOTIFY && process.platform === 'darwin') {
+    const escapedTitle = title.replace(/"/g, '\\"');
+    const escapedMsg = message.replace(/"/g, '\\"').substring(0, 100);
+    exec(`osascript -e 'display notification "${escapedMsg}" with title "${escapedTitle}"'`);
+  }
+}
+
 // ============ Message Handling ============
 
 function handleMessage(msg: any): void {
   if (msg.type === 'message' || msg.type === 'broadcast' || msg.type === 'direct') {
+    const fromMatrix = msg.from || 'unknown';
+    const content = msg.content || '';
+    const msgType = msg.type === 'direct' ? 'direct' : 'broadcast';
+
+    // Generate unique message ID
+    const messageId = msg.id || `${fromMatrix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // Persist to SQLite
+    try {
+      saveIncomingMessage({
+        messageId,
+        fromMatrix,
+        toMatrix: msg.to || MATRIX_ID,
+        content,
+        messageType: msgType,
+      });
+    } catch (e) {
+      console.error('[Daemon] Failed to persist message:', e);
+    }
+
+    // In-memory cache for fast API access
     const received = {
-      from: msg.from || 'unknown',
-      content: msg.content || '',
+      from: fromMatrix,
+      content,
       timestamp: new Date().toISOString(),
       type: msg.type,
+      id: messageId,
     };
     receivedMessages.unshift(received);
 
-    // Keep only last 100 messages
+    // Keep only last 100 messages in memory
     if (receivedMessages.length > 100) {
       receivedMessages.pop();
     }
 
-    console.log(`[Daemon] 📬 Message from ${received.from}: ${received.content.substring(0, 50)}...`);
+    // Notify user
+    sendTerminalBell();
+    sendMacOSNotification(`Matrix: ${fromMatrix}`, content);
+
+    // Log with unread count
+    const unreadCount = getUnreadCount(MATRIX_ID);
+    console.log(`[Daemon] 📬 [${unreadCount} unread] Message from ${fromMatrix}: ${content.substring(0, 50)}...`);
+
   } else if (msg.type === 'presence') {
     const presenceId = msg.matrix_id || msg.matrixId; // Handle both formats
     if (presenceId) {
@@ -183,33 +249,89 @@ function handleMessage(msg: any): void {
   }
 }
 
-function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string): boolean {
+function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string, existingId?: string): boolean {
+  // Generate message ID for tracking
+  const messageId = existingId || `${MATRIX_ID}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  // Persist outgoing message (if new)
+  if (!existingId) {
+    try {
+      saveMatrixMessage({
+        messageId,
+        fromMatrix: MATRIX_ID,
+        toMatrix: to,
+        content,
+        messageType: type,
+        maxRetries: MAX_RETRIES,
+      });
+    } catch (e) {
+      console.error('[Daemon] Failed to persist outgoing message:', e);
+    }
+  }
+
   if (!ws || !connected) {
-    // Queue for later
-    messageQueue.push({ type, content, to });
+    // Queue for later retry
+    messageQueue.push({ type, content, to, id: messageId });
     console.log(`[Daemon] Queued message (not connected)`);
     return false;
   }
 
   try {
     const payload = type === 'broadcast'
-      ? { type: 'broadcast', content }
-      : { type: 'direct', to, content };
+      ? { type: 'broadcast', content, id: messageId }
+      : { type: 'direct', to, content, id: messageId };
 
     ws.send(JSON.stringify(payload));
+
+    // Mark as sent
+    markMessageSent(messageId);
     console.log(`[Daemon] Sent ${type}: ${content.substring(0, 50)}...`);
     return true;
   } catch (error) {
     console.error('[Daemon] Send failed:', error);
-    messageQueue.push({ type, content, to });
+    messageQueue.push({ type, content, to, id: messageId });
     return false;
+  }
+}
+
+// Retry failed messages from SQLite
+function retryPendingMessages(): void {
+  if (!connected) return;
+
+  const pending = getPendingMessages(MAX_RETRIES);
+  for (const msg of pending) {
+    const retryCount = incrementMessageRetry(msg.message_id);
+
+    if (retryCount >= MAX_RETRIES) {
+      markMessageFailed(msg.message_id, `Max retries (${MAX_RETRIES}) exceeded`);
+      console.log(`[Daemon] Message ${msg.message_id} failed after ${MAX_RETRIES} retries`);
+      continue;
+    }
+
+    console.log(`[Daemon] Retrying message ${msg.message_id} (attempt ${retryCount}/${MAX_RETRIES})`);
+    sendMessage(msg.message_type, msg.content, msg.to_matrix || undefined, msg.message_id);
+  }
+}
+
+function startRetryLoop(): void {
+  if (retryInterval) return;
+
+  retryInterval = setInterval(() => {
+    retryPendingMessages();
+  }, RETRY_INTERVAL);
+}
+
+function stopRetryLoop(): void {
+  if (retryInterval) {
+    clearInterval(retryInterval);
+    retryInterval = null;
   }
 }
 
 function flushMessageQueue(): void {
   while (messageQueue.length > 0 && connected) {
     const msg = messageQueue.shift()!;
-    sendMessage(msg.type, msg.content, msg.to);
+    sendMessage(msg.type, msg.content, msg.to, msg.id);
   }
 }
 
@@ -273,14 +395,65 @@ function startHttpServer(): void {
       return;
     }
 
-    // Get inbox
+    // Get inbox (from SQLite for persistence)
     if (url.pathname === '/inbox') {
       const limit = parseInt(url.searchParams.get('limit') || '20');
+      const unreadOnly = url.searchParams.get('unread') === 'true';
+
+      try {
+        const messages = getInboxMessages(MATRIX_ID, limit);
+        const unreadCount = getUnreadCount(MATRIX_ID);
+
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          messages: messages.map(m => ({
+            id: m.message_id,
+            from: m.from_matrix,
+            to: m.to_matrix,
+            content: m.content,
+            type: m.message_type,
+            timestamp: m.created_at,
+            read: m.read_at !== null,
+          })),
+          total: messages.length,
+          unread: unreadCount,
+        }));
+      } catch (e) {
+        // Fallback to in-memory
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          messages: receivedMessages.slice(0, limit),
+          total: receivedMessages.length,
+          unread: receivedMessages.length,
+        }));
+      }
+      return;
+    }
+
+    // Mark messages as read
+    if (url.pathname === '/read' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const messageIds = data.ids || [];
+          markMessagesRead(messageIds);
+          res.writeHead(200);
+          res.end(JSON.stringify({ marked: messageIds.length }));
+        } catch (e) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
+      return;
+    }
+
+    // Get unread count
+    if (url.pathname === '/unread') {
+      const count = getUnreadCount(MATRIX_ID);
       res.writeHead(200);
-      res.end(JSON.stringify({
-        messages: receivedMessages.slice(0, limit),
-        total: receivedMessages.length,
-      }));
+      res.end(JSON.stringify({ unread: count }));
       return;
     }
 
@@ -386,6 +559,7 @@ function shutdown(): void {
   console.log('[Daemon] Shutting down...');
 
   stopHeartbeat();
+  stopRetryLoop();
 
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);

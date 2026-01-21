@@ -429,6 +429,31 @@ db.run(`
 db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_status ON matrix_registry(status)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_last_seen ON matrix_registry(last_seen)`);
 
+// ============ Matrix Messages Schema ============
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS matrix_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT UNIQUE,
+    from_matrix TEXT NOT NULL,
+    to_matrix TEXT,
+    content TEXT NOT NULL,
+    message_type TEXT DEFAULT 'broadcast' CHECK(message_type IN ('broadcast', 'direct')),
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'delivered', 'failed')),
+    retry_count INTEGER DEFAULT 0,
+    max_retries INTEGER DEFAULT 3,
+    error TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT,
+    delivered_at TEXT,
+    read_at TEXT
+  )
+`);
+
+db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_messages_status ON matrix_messages(status)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_messages_to ON matrix_messages(to_matrix)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_messages_from ON matrix_messages(from_matrix)`);
+
 // ============ FTS5 Full-Text Search ============
 
 // Create FTS5 virtual table for learnings (keyword search)
@@ -821,6 +846,211 @@ export function updateMissionStatus(
 
 export function getMissionFromDb(missionId: string): MissionRecord | null {
   return db.query(`SELECT * FROM tasks WHERE id = ?`).get(missionId) as MissionRecord | null;
+}
+
+// ============ Matrix Message Functions ============
+
+export interface MatrixMessageRecord {
+  id: number;
+  message_id: string;
+  from_matrix: string;
+  to_matrix: string | null;
+  content: string;
+  message_type: 'broadcast' | 'direct';
+  status: 'pending' | 'sent' | 'delivered' | 'failed';
+  retry_count: number;
+  max_retries: number;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+}
+
+/**
+ * Save a new outgoing matrix message
+ */
+export function saveMatrixMessage(msg: {
+  messageId: string;
+  fromMatrix: string;
+  toMatrix?: string;
+  content: string;
+  messageType: 'broadcast' | 'direct';
+  maxRetries?: number;
+}): number {
+  const result = db.run(`
+    INSERT INTO matrix_messages (message_id, from_matrix, to_matrix, content, message_type, max_retries)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [
+    msg.messageId,
+    msg.fromMatrix,
+    msg.toMatrix || null,
+    msg.content,
+    msg.messageType,
+    msg.maxRetries || 3,
+  ]);
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Mark message as sent (transmitted to hub)
+ */
+export function markMessageSent(messageId: string): void {
+  db.run(`
+    UPDATE matrix_messages
+    SET status = 'sent', sent_at = CURRENT_TIMESTAMP
+    WHERE message_id = ?
+  `, [messageId]);
+}
+
+/**
+ * Mark message as delivered (confirmed by recipient)
+ */
+export function markMessageDelivered(messageId: string): void {
+  db.run(`
+    UPDATE matrix_messages
+    SET status = 'delivered', delivered_at = CURRENT_TIMESTAMP
+    WHERE message_id = ?
+  `, [messageId]);
+}
+
+/**
+ * Mark message as failed with error
+ */
+export function markMessageFailed(messageId: string, error: string): void {
+  db.run(`
+    UPDATE matrix_messages
+    SET status = 'failed', error = ?
+    WHERE message_id = ?
+  `, [error, messageId]);
+}
+
+/**
+ * Increment retry count for a message
+ */
+export function incrementMessageRetry(messageId: string): number {
+  db.run(`
+    UPDATE matrix_messages
+    SET retry_count = retry_count + 1, status = 'pending'
+    WHERE message_id = ?
+  `, [messageId]);
+  const msg = db.query(`SELECT retry_count FROM matrix_messages WHERE message_id = ?`).get(messageId) as { retry_count: number } | null;
+  return msg?.retry_count || 0;
+}
+
+/**
+ * Get pending messages that need retry
+ */
+export function getPendingMessages(maxRetries: number = 3): MatrixMessageRecord[] {
+  return db.query(`
+    SELECT * FROM matrix_messages
+    WHERE status IN ('pending', 'sent')
+      AND retry_count < ?
+    ORDER BY created_at ASC
+  `).all(maxRetries) as MatrixMessageRecord[];
+}
+
+/**
+ * Get failed messages that exceeded max retries
+ */
+export function getFailedMessages(limit: number = 20): MatrixMessageRecord[] {
+  return db.query(`
+    SELECT * FROM matrix_messages
+    WHERE status = 'failed'
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(limit) as MatrixMessageRecord[];
+}
+
+/**
+ * Save incoming message to inbox
+ */
+export function saveIncomingMessage(msg: {
+  messageId: string;
+  fromMatrix: string;
+  toMatrix?: string;
+  content: string;
+  messageType: 'broadcast' | 'direct';
+}): number {
+  const result = db.run(`
+    INSERT OR IGNORE INTO matrix_messages (message_id, from_matrix, to_matrix, content, message_type, status, sent_at, delivered_at)
+    VALUES (?, ?, ?, ?, ?, 'delivered', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    msg.messageId,
+    msg.fromMatrix,
+    msg.toMatrix || null,
+    msg.content,
+    msg.messageType,
+  ]);
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Get unread messages for a matrix
+ */
+export function getUnreadMessages(matrixId: string, limit: number = 50): MatrixMessageRecord[] {
+  return db.query(`
+    SELECT * FROM matrix_messages
+    WHERE (to_matrix = ? OR to_matrix IS NULL OR message_type = 'broadcast')
+      AND from_matrix != ?
+      AND status = 'delivered'
+      AND read_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(matrixId, matrixId, limit) as MatrixMessageRecord[];
+}
+
+/**
+ * Get all inbox messages for a matrix
+ */
+export function getInboxMessages(matrixId: string, limit: number = 50): MatrixMessageRecord[] {
+  return db.query(`
+    SELECT * FROM matrix_messages
+    WHERE (to_matrix = ? OR to_matrix IS NULL OR message_type = 'broadcast')
+      AND from_matrix != ?
+      AND status = 'delivered'
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(matrixId, matrixId, limit) as MatrixMessageRecord[];
+}
+
+/**
+ * Mark messages as read
+ */
+export function markMessagesRead(messageIds: string[]): void {
+  if (messageIds.length === 0) return;
+  const placeholders = messageIds.map(() => '?').join(',');
+  db.run(`
+    UPDATE matrix_messages
+    SET read_at = CURRENT_TIMESTAMP
+    WHERE message_id IN (${placeholders})
+  `, messageIds);
+}
+
+/**
+ * Get unread count for a matrix
+ */
+export function getUnreadCount(matrixId: string): number {
+  const result = db.query(`
+    SELECT COUNT(*) as count FROM matrix_messages
+    WHERE (to_matrix = ? OR to_matrix IS NULL OR message_type = 'broadcast')
+      AND from_matrix != ?
+      AND status = 'delivered'
+      AND read_at IS NULL
+  `).get(matrixId, matrixId) as { count: number };
+  return result.count;
+}
+
+/**
+ * Get outbox messages (sent by this matrix)
+ */
+export function getOutboxMessages(matrixId: string, limit: number = 50): MatrixMessageRecord[] {
+  return db.query(`
+    SELECT * FROM matrix_messages
+    WHERE from_matrix = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(matrixId, limit) as MatrixMessageRecord[];
 }
 
 // ============ Event Functions ============
