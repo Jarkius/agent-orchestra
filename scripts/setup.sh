@@ -5,11 +5,11 @@
 # This script:
 # 1. Checks prerequisites (bun, docker, tmux)
 # 2. Installs dependencies
-# 3. Starts ChromaDB container (port 8100)
+# 3. Starts shared ChromaDB container (port 8100, collections prefixed by project)
 # 4. Initializes SQLite database
 # 5. Builds initial vector index
-# 6. Starts Matrix Hub (port 8081)
-# 7. Starts Matrix Daemon (port 37888)
+# 6. Starts Matrix Hub (port 8081, shared across projects)
+# 7. Starts Matrix Daemon (port auto-assigned per project)
 #
 
 set -e
@@ -82,41 +82,27 @@ bun install
 echo -e "${GREEN}✓${NC} Dependencies installed"
 echo ""
 
-# Start ChromaDB - each project gets its own container
+# Start ChromaDB - shared container, project isolation via collection prefixes
 echo -e "${YELLOW}Setting up ChromaDB...${NC}"
 
-PROJECT_NAME="$(basename "$(pwd)")"
-CHROMA_CONTAINER="chromadb-${PROJECT_NAME}"
 CHROMA_PORT="${CHROMADB_PORT:-8100}"
 
-# Check if this project's container exists
-if docker ps -a --format '{{.Names}}' | grep -q "^${CHROMA_CONTAINER}$"; then
-    # Container exists
-    if docker ps --format '{{.Names}}' | grep -q "^${CHROMA_CONTAINER}$"; then
-        # Get the port it's running on
-        CHROMA_PORT=$(docker port "$CHROMA_CONTAINER" 8000 2>/dev/null | cut -d: -f2 || echo "$CHROMA_PORT")
-        echo -e "${GREEN}✓${NC} ChromaDB already running ($CHROMA_CONTAINER on port $CHROMA_PORT)"
-    else
-        echo "Starting existing ChromaDB container..."
-        docker start "$CHROMA_CONTAINER"
-        CHROMA_PORT=$(docker port "$CHROMA_CONTAINER" 8000 2>/dev/null | cut -d: -f2 || echo "$CHROMA_PORT")
-        echo -e "${GREEN}✓${NC} ChromaDB started ($CHROMA_CONTAINER on port $CHROMA_PORT)"
-    fi
+# Check if any chromadb container is already running
+if docker ps --format '{{.Names}}' | grep -q "^chromadb$"; then
+    echo -e "${GREEN}✓${NC} ChromaDB already running (shared container on port $CHROMA_PORT)"
+elif docker ps -a --format '{{.Names}}' | grep -q "^chromadb$"; then
+    # Container exists but stopped
+    echo "Starting existing ChromaDB container..."
+    docker start chromadb
+    echo -e "${GREEN}✓${NC} ChromaDB started"
 else
-    # Find available port
-    while curl -s "http://localhost:$CHROMA_PORT/api/v2/heartbeat" &> /dev/null || \
-          lsof -i ":$CHROMA_PORT" &> /dev/null; do
-        echo "Port $CHROMA_PORT in use, trying next..."
-        CHROMA_PORT=$((CHROMA_PORT + 1))
-    done
-
-    # Create new container with project-specific name and data
-    echo "Creating ChromaDB container ($CHROMA_CONTAINER on port $CHROMA_PORT)..."
-    docker run -d --name "$CHROMA_CONTAINER" --restart unless-stopped \
+    # Create new shared container
+    echo "Creating ChromaDB container..."
+    docker run -d --name chromadb --restart unless-stopped \
         -p "$CHROMA_PORT:8000" \
-        -v "$(pwd)/chroma_data:/data" \
+        -v chromadb_data:/chroma/chroma \
         chromadb/chroma
-    echo -e "${GREEN}✓${NC} ChromaDB container created"
+    echo -e "${GREEN}✓${NC} ChromaDB container created (shared, collections prefixed by project)"
 fi
 
 # Wait for ChromaDB to be healthy
@@ -127,14 +113,11 @@ for i in {1..30}; do
         break
     fi
     if [ $i -eq 30 ]; then
-        echo -e "${RED}ChromaDB failed to start. Check docker logs $CHROMA_CONTAINER${NC}"
+        echo -e "${RED}ChromaDB failed to start. Check docker logs chromadb${NC}"
         exit 1
     fi
     sleep 1
 done
-
-# Export for later use in this script
-export CHROMADB_URL="http://localhost:$CHROMA_PORT"
 echo ""
 
 # Initialize database
@@ -203,11 +186,10 @@ else
   "daemon_port": $DAEMON_PORT,
   "daemon_dir": "~/.matrix-daemon-$MATRIX_ID",
   "database": "./agents.db",
-  "chromadb_url": "${CHROMADB_URL:-http://localhost:8100}",
   "hub_url": "ws://localhost:$HUB_PORT"
 }
 EOF
-    echo "Created $CONFIG_FILE (daemon: $DAEMON_PORT, chromadb: ${CHROMADB_URL:-http://localhost:8100})"
+    echo "Created $CONFIG_FILE (daemon port: $DAEMON_PORT)"
 
     echo "Starting Matrix Daemon..."
     bun run src/matrix-daemon.ts start > /dev/null 2>&1 &

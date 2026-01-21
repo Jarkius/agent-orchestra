@@ -16,6 +16,13 @@
 import { ChromaClient, type Collection, type EmbeddingFunction, type Where } from 'chromadb';
 import { createEmbeddingFunction, getEmbeddingConfig } from './embeddings';
 import PQueue from 'p-queue';
+import { basename } from 'path';
+
+// Get project prefix for collection names (allows sharing ChromaDB container)
+function getCollectionPrefix(): string {
+  const prefix = process.env.CHROMADB_PREFIX || basename(process.cwd());
+  return prefix.replace(/[^a-zA-Z0-9_-]/g, '_'); // Sanitize for ChromaDB
+}
 
 // ============ Content Chunking ============
 
@@ -326,60 +333,61 @@ export async function initVectorDB(): Promise<void> {
       "hnsw:search_ef": 50,         // More neighbors during search (better accuracy)
     };
 
+    const prefix = getCollectionPrefix();
     collections = {
       tasks: await chromaClient.getOrCreateCollection({
-        name: "task_prompts",
+        name: `${prefix}_task_prompts`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       results: await chromaClient.getOrCreateCollection({
-        name: "task_results",
+        name: `${prefix}_task_results`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       messagesIn: await chromaClient.getOrCreateCollection({
-        name: "messages_inbound",
+        name: `${prefix}_messages_inbound`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       messagesOut: await chromaClient.getOrCreateCollection({
-        name: "messages_outbound",
+        name: `${prefix}_messages_outbound`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       context: await chromaClient.getOrCreateCollection({
-        name: "shared_context",
+        name: `${prefix}_shared_context`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       sessions: await chromaClient.getOrCreateCollection({
-        name: "orchestrator_sessions",
+        name: `${prefix}_orchestrator_sessions`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       learnings: await chromaClient.getOrCreateCollection({
-        name: "orchestrator_learnings",
+        name: `${prefix}_orchestrator_learnings`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       sessionTasks: await chromaClient.getOrCreateCollection({
-        name: "session_tasks",
+        name: `${prefix}_session_tasks`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       knowledge: await chromaClient.getOrCreateCollection({
-        name: "knowledge_entries",
+        name: `${prefix}_knowledge_entries`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
       lessons: await chromaClient.getOrCreateCollection({
-        name: "lesson_entries",
+        name: `${prefix}_lesson_entries`,
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
     };
     initialized = true;
-    console.error("[VectorDB] Initialized with 10 collections");
+    console.error(`[VectorDB] Initialized with 10 collections (prefix: ${prefix})`);
   } catch (error) {
     console.error("[VectorDB] Failed to initialize:", error);
     throw error;
