@@ -129,13 +129,14 @@ function detectInputType(input: string): InputType {
 
 // ============ Smart Learn Handlers ============
 
-async function learnFromFile(path: string, options?: { deep?: boolean }): Promise<void> {
+async function learnFromFile(path: string): Promise<void> {
   console.log(`\n📄 Learning from file: ${path}\n`);
 
   const content = readFileSync(path, 'utf-8');
-  const title = basename(path).replace(/\.[^.]+$/, ''); // Remove extension
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  const title = basename(path).replace(/\.[^.]+$/, '');
 
-  // Remove frontmatter if present
+  // Remove frontmatter if present (for markdown)
   let cleanContent = content;
   if (content.startsWith('---')) {
     const endFrontmatter = content.indexOf('---', 3);
@@ -144,46 +145,82 @@ async function learnFromFile(path: string, options?: { deep?: boolean }): Promis
     }
   }
 
-  if (options?.deep) {
-    // Deep extraction mode: parse and extract individual learnings
-    console.log('  🔍 Deep extraction mode...\n');
+  // Smart detection: use the right tool for the file type
+  if (ext === 'md' || ext === 'markdown') {
+    // Markdown: extract structured learnings
     const result = distillFromContent(cleanContent, { sourcePath: path });
 
-    console.log(`  📊 Found ${result.learnings.length} learnings in ${result.stats.sectionsProcessed} sections`);
-    console.log(`     (analyzed ${result.stats.itemsAnalyzed} items, skipped ${result.stats.skippedLowRelevance} low-relevance)\n`);
+    if (result.learnings.length > 0) {
+      console.log(`  📊 Extracted ${result.learnings.length} learnings from ${result.stats.sectionsProcessed} sections\n`);
 
-    if (result.learnings.length === 0) {
-      console.log('  ⚠️  No actionable learnings extracted. Try without --deep for bulk save.\n');
-      return;
+      for (const learning of result.learnings) {
+        await saveLearning(learning.category, {
+          title: learning.title,
+          what_happened: `Extracted from ${path} (section: ${learning.source_section})`,
+          lesson: learning.lesson,
+          prevention: learning.prevention,
+          source_url: `file://${path}#L${learning.source_line}`,
+        });
+      }
+      console.log(`  ✅ Saved ${result.learnings.length} learnings\n`);
+    } else {
+      // Fallback: save as reference
+      await saveLearning('pattern', {
+        title: title,
+        what_happened: `Reference from: ${path}`,
+        lesson: cleanContent.slice(0, 5000),
+        source_url: `file://${path}`,
+      });
+      console.log(`  📝 Saved as reference (no extractable learnings)\n`);
     }
 
-    for (const learning of result.learnings) {
-      await saveLearning(learning.category, {
-        title: learning.title,
-        what_happened: `Extracted from ${path} (section: ${learning.source_section})`,
-        lesson: learning.lesson,
-        prevention: learning.prevention,
-        source_url: `file://${path}#L${learning.source_line}`,
+  } else if (['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go'].includes(ext)) {
+    // Source code: analyze for patterns and gems
+    console.log(`  🔬 Analyzing source code...\n`);
+
+    const dir = path.substring(0, path.lastIndexOf('/'));
+    const codeAnalysis = analyzeRepository(dir, { maxFiles: 1 });
+
+    // Also extract JSDoc/comments directly from this file
+    const patterns = codeAnalysis.learnings.filter(l => l.source_file.endsWith(basename(path)));
+
+    if (patterns.length > 0) {
+      console.log(`  Found ${patterns.length} patterns/insights\n`);
+      for (const learning of patterns) {
+        await saveLearning(learning.category, {
+          title: learning.title,
+          what_happened: `Code analysis: ${path}`,
+          lesson: learning.lesson,
+          source_url: `file://${path}#L${learning.source_line || 1}`,
+        });
+      }
+    } else {
+      // Save key functions/exports as reference
+      await saveLearning('pattern', {
+        title: `Code: ${title}`,
+        what_happened: `Analyzed source file: ${path}`,
+        lesson: `Source file with ${content.split('\n').length} lines`,
+        source_url: `file://${path}`,
       });
     }
+    console.log(`  ✅ Analysis complete\n`);
 
-    console.log(`\n  ✅ Saved ${result.learnings.length} learnings from ${path}\n`);
   } else {
-    // Quick save mode: save full content as single learning
+    // Other files: save as reference
     await saveLearning('pattern', {
       title: title,
       what_happened: `Learned from file: ${path}`,
-      lesson: cleanContent,
+      lesson: cleanContent.slice(0, 5000),
       context: `Source: ${path}`,
       source_url: `file://${path}`,
     });
 
     const lineCount = cleanContent.split('\n').length;
-    console.log(`  📝 Saved full content (${lineCount} lines)\n`);
+    console.log(`  📝 Saved as reference (${lineCount} lines)\n`);
   }
 }
 
-async function learnFromUrl(url: string, options?: { deep?: boolean }): Promise<void> {
+async function learnFromUrl(url: string): Promise<void> {
   // Auto-convert GitHub blob URLs to raw URLs
   let fetchUrl = url;
   if (url.includes('github.com') && url.includes('/blob/')) {
@@ -208,10 +245,11 @@ async function learnFromUrl(url: string, options?: { deep?: boolean }): Promise<
                       fetchUrl.includes('raw.githubusercontent.com') ||
                       !content.includes('<html');
 
-    // For raw text/markdown, save full content
+    // For raw text/markdown, extract learnings
     if (isRawText) {
       const filename = new URL(fetchUrl).pathname.split('/').pop() || 'document';
       const title = filename.replace(/\.[^.]+$/, '');
+      const ext = filename.split('.').pop()?.toLowerCase() || '';
 
       // Remove frontmatter if present
       let cleanContent = content;
@@ -222,42 +260,42 @@ async function learnFromUrl(url: string, options?: { deep?: boolean }): Promise<
         }
       }
 
-      if (options?.deep) {
-        // Deep extraction mode
-        console.log('  🔍 Deep extraction mode...\n');
+      // Smart extraction based on file type
+      if (ext === 'md' || ext === 'markdown' || !ext) {
         const result = distillFromContent(cleanContent, { sourceUrl: url });
 
-        console.log(`  📊 Found ${result.learnings.length} learnings in ${result.stats.sectionsProcessed} sections`);
-        console.log(`     (analyzed ${result.stats.itemsAnalyzed} items, skipped ${result.stats.skippedLowRelevance} low-relevance)\n`);
+        if (result.learnings.length > 0) {
+          console.log(`  📊 Extracted ${result.learnings.length} learnings\n`);
 
-        if (result.learnings.length === 0) {
-          console.log('  ⚠️  No actionable learnings extracted. Try without --deep for bulk save.\n');
-          return;
-        }
-
-        for (const learning of result.learnings) {
-          await saveLearning(learning.category, {
-            title: learning.title,
-            what_happened: `Extracted from ${url} (section: ${learning.source_section})`,
-            lesson: learning.lesson,
-            prevention: learning.prevention,
+          for (const learning of result.learnings) {
+            await saveLearning(learning.category, {
+              title: learning.title,
+              what_happened: `Extracted from ${url} (section: ${learning.source_section})`,
+              lesson: learning.lesson,
+              prevention: learning.prevention,
+              source_url: url,
+            });
+          }
+          console.log(`  ✅ Saved ${result.learnings.length} learnings\n`);
+        } else {
+          // Fallback: save as reference
+          await saveLearning('pattern', {
+            title: `${title}`,
+            what_happened: `Reference from: ${url}`,
+            lesson: cleanContent.slice(0, 5000),
             source_url: url,
           });
+          console.log(`  📝 Saved as reference\n`);
         }
-
-        console.log(`\n  ✅ Saved ${result.learnings.length} learnings from ${url}\n`);
       } else {
-        // Quick save mode
+        // Source code file from URL
         await saveLearning('pattern', {
-          title: `${title}`,
-          what_happened: `Learned from URL: ${url}`,
-          lesson: cleanContent,
-          context: `Source: ${url}`,
+          title: `Code: ${title}`,
+          what_happened: `Source from: ${url}`,
+          lesson: cleanContent.slice(0, 5000),
           source_url: url,
         });
-
-        const lineCount = cleanContent.split('\n').length;
-        console.log(`  📝 Saved full content (${lineCount} lines)\n`);
+        console.log(`  📝 Saved source reference\n`);
       }
     } else {
       // HTML page - extract title and description
@@ -388,7 +426,7 @@ async function learnFromGit(ref: string): Promise<void> {
   }
 }
 
-async function learnFromGitRepo(repoUrl: string, options?: { deep?: boolean }): Promise<void> {
+async function learnFromGitRepo(repoUrl: string): Promise<void> {
   console.log(`\n📦 Learning from git repository: ${repoUrl}\n`);
 
   // Extract repo name from URL
@@ -432,106 +470,70 @@ async function learnFromGitRepo(repoUrl: string, options?: { deep?: boolean }): 
       }
     }
 
-    // Step 4: Learn from markdown files
-    if (options?.deep) {
-      // Deep mode: scan all markdown files in the repo
-      console.log(`\n  🔍 Deep mode: scanning all markdown files...\n`);
+    // Step 4: Learn from documentation
+    console.log(`\n  📚 Scanning documentation...\n`);
 
-      const findMdFiles = execSync(
-        `find "${ghqPath}" -name "*.md" -type f ! -path "*/node_modules/*" ! -path "*/.git/*" | head -20`,
-        { encoding: 'utf-8' }
-      ).trim();
+    const findMdFiles = execSync(
+      `find "${ghqPath}" -name "*.md" -type f ! -path "*/node_modules/*" ! -path "*/.git/*" | head -20`,
+      { encoding: 'utf-8' }
+    ).trim();
 
-      const mdFiles = findMdFiles ? findMdFiles.split('\n').filter(f => f) : [];
+    const mdFiles = findMdFiles ? findMdFiles.split('\n').filter(f => f) : [];
+    let docLearnings = 0;
 
-      if (mdFiles.length === 0) {
-        console.log('  ⚠️  No markdown files found\n');
-        await saveLearning('tooling', {
-          title: `Cloned: ${repoName}`,
-          what_happened: `Cloned git repository: ${repoUrl}`,
-          lesson: `Repository available at ${ghqPath}`,
-          context: `Source: ${repoUrl}`,
-          source_url: repoUrl,
-        });
-      } else {
-        console.log(`  📚 Found ${mdFiles.length} markdown file(s)\n`);
+    if (mdFiles.length > 0) {
+      console.log(`  Found ${mdFiles.length} markdown file(s)\n`);
 
-        let totalLearnings = 0;
-        for (const mdFile of mdFiles) {
-          const relativePath = mdFile.replace(ghqPath + '/', '');
-          console.log(`  ━━━ ${relativePath} ━━━`);
-
-          // Use deep extraction on each file
-          const content = readFileSync(mdFile, 'utf-8');
-          let cleanContent = content;
-          if (content.startsWith('---')) {
-            const endFrontmatter = content.indexOf('---', 3);
-            if (endFrontmatter > 0) {
-              cleanContent = content.substring(endFrontmatter + 3).trim();
-            }
-          }
-
-          const result = distillFromContent(cleanContent, { sourcePath: mdFile });
-
-          if (result.learnings.length > 0) {
-            console.log(`     Found ${result.learnings.length} learnings\n`);
-
-            for (const learning of result.learnings) {
-              await saveLearning(learning.category, {
-                title: learning.title,
-                what_happened: `Extracted from ${repoName}/${relativePath} (section: ${learning.source_section})`,
-                lesson: learning.lesson,
-                prevention: learning.prevention,
-                source_url: `${repoUrl.replace('.git', '')}/blob/main/${relativePath}#L${learning.source_line}`,
-              });
-              totalLearnings++;
-            }
-          } else {
-            console.log(`     No actionable learnings\n`);
+      for (const mdFile of mdFiles) {
+        const relativePath = mdFile.replace(ghqPath + '/', '');
+        const content = readFileSync(mdFile, 'utf-8');
+        let cleanContent = content;
+        if (content.startsWith('---')) {
+          const endFrontmatter = content.indexOf('---', 3);
+          if (endFrontmatter > 0) {
+            cleanContent = content.substring(endFrontmatter + 3).trim();
           }
         }
 
-        console.log(`\n  ✅ Extracted ${totalLearnings} learnings from ${mdFiles.length} markdown files\n`);
-      }
+        const result = distillFromContent(cleanContent, { sourcePath: mdFile });
 
-      // Step 5: Analyze source code
-      console.log(`  🔬 Analyzing source code...\n`);
-      const codeAnalysis = analyzeRepository(ghqPath, { maxFiles: 30 });
+        if (result.learnings.length > 0) {
+          console.log(`  ━━━ ${relativePath}: ${result.learnings.length} learnings`);
 
-      console.log(`     Files analyzed: ${codeAnalysis.stats.filesAnalyzed}`);
-      console.log(`     Patterns found: ${codeAnalysis.stats.patternsFound}`);
-      console.log(`     Gems found: ${codeAnalysis.stats.gemsFound}\n`);
-
-      let codeLearnings = 0;
-      for (const learning of codeAnalysis.learnings) {
-        await saveLearning(learning.category, {
-          title: learning.title,
-          what_happened: `Code analysis: ${repoName}/${learning.source_file}`,
-          lesson: learning.lesson,
-          source_url: learning.source_line
-            ? `${repoUrl.replace('.git', '')}/blob/main/${learning.source_file}#L${learning.source_line}`
-            : `${repoUrl.replace('.git', '')}/blob/main/${learning.source_file}`,
-        });
-        codeLearnings++;
-      }
-
-      console.log(`\n  ✅ Extracted ${codeLearnings} learnings from source code\n`);
-    } else {
-      // Quick mode: just README
-      const readmePath = `${ghqPath}/README.md`;
-      if (existsSync(readmePath)) {
-        console.log(`\n  📄 Found README.md, learning from it...`);
-        await learnFromFile(readmePath);
-      } else {
-        await saveLearning('tooling', {
-          title: `Cloned: ${repoName}`,
-          what_happened: `Cloned git repository: ${repoUrl}`,
-          lesson: `Repository available at ${ghqPath}`,
-          context: `Source: ${repoUrl}`,
-          source_url: repoUrl,
-        });
+          for (const learning of result.learnings) {
+            await saveLearning(learning.category, {
+              title: learning.title,
+              what_happened: `Extracted from ${repoName}/${relativePath} (section: ${learning.source_section})`,
+              lesson: learning.lesson,
+              prevention: learning.prevention,
+              source_url: `${repoUrl.replace('.git', '')}/blob/main/${relativePath}#L${learning.source_line}`,
+            });
+            docLearnings++;
+          }
+        }
       }
     }
+
+    // Step 5: Analyze source code
+    console.log(`\n  🔬 Analyzing source code...\n`);
+    const codeAnalysis = analyzeRepository(ghqPath, { maxFiles: 30 });
+
+    console.log(`     Files: ${codeAnalysis.stats.filesAnalyzed} | Patterns: ${codeAnalysis.stats.patternsFound} | Gems: ${codeAnalysis.stats.gemsFound}\n`);
+
+    let codeLearnings = 0;
+    for (const learning of codeAnalysis.learnings) {
+      await saveLearning(learning.category, {
+        title: learning.title,
+        what_happened: `Code analysis: ${repoName}/${learning.source_file}`,
+        lesson: learning.lesson,
+        source_url: learning.source_line
+          ? `${repoUrl.replace('.git', '')}/blob/main/${learning.source_file}#L${learning.source_line}`
+          : `${repoUrl.replace('.git', '')}/blob/main/${learning.source_file}`,
+      });
+      codeLearnings++;
+    }
+
+    console.log(`\n  ✅ Total: ${docLearnings} from docs + ${codeLearnings} from code = ${docLearnings + codeLearnings} learnings\n`);
 
     console.log(`\n  ✅ Repository ready for exploration at: ${ghqPath}\n`);
     console.log(`  💡 Tip: Use 'bun memory learn ${ghqPath}/path/to/file.md --deep' for more files\n`);
@@ -677,13 +679,12 @@ async function main() {
     console.log(`
 🧠 Memory Learn - Smart Knowledge Capture
 
-Smart Mode (auto-detects input type):
-  bun memory learn ./docs/file.md              # Learn from file (bulk save)
-  bun memory learn ./docs/file.md --deep       # Extract individual learnings
-  bun memory learn https://example.com/article # Learn from URL
-  bun memory learn https://youtube.com/watch?v=x # Learn from YouTube
-  bun memory learn HEAD~3                       # Learn from git commits
-  bun memory learn https://github.com/u/r.git  # Clone repo with ghq + learn
+Smart Mode (auto-detects input type and uses best approach):
+  bun memory learn ./docs/file.md              # Markdown → extract learnings
+  bun memory learn ./src/utils.ts              # Source → analyze patterns
+  bun memory learn https://example.com/article # URL → extract content
+  bun memory learn https://github.com/u/r.git  # Repo → full analysis (docs + code)
+  bun memory learn HEAD~3                       # Git → extract from commits
 
 Traditional Mode:
   bun memory learn <category> "title" ["context"]
@@ -691,40 +692,35 @@ Traditional Mode:
   bun memory learn --interactive
 
 Options:
-  --deep, -d          Extract individual learnings from markdown (vs bulk save)
   --interactive, -i   Interactive mode with structured prompts
   --lesson "..."      What you learned (key insight)
   --prevention "..."  How to prevent/apply in future
-  --source "URL"      External reference URL (article, paper, etc.)
-  --confidence <lvl>  Confidence level: low, medium, high, proven (default: low)
+  --source "URL"      External reference URL
+  --confidence <lvl>  Confidence level: low, medium, high, proven
   --help, -h          Show this help
 
-Quick Examples:
-  bun memory learn ./README.md                  # Bulk save file content
-  bun memory learn ./README.md --deep           # Extract learnings from sections
+Examples:
+  bun memory learn ./README.md                  # Auto-extracts learnings
+  bun memory learn https://github.com/x/y.git  # Clone + analyze entire repo
   bun memory learn HEAD~5                       # Last 5 commits
-  bun memory learn tooling "jq parses JSON"    # Traditional category mode
+  bun memory learn tooling "jq parses JSON"    # Manual category mode
 `);
     printCategories();
     return;
   }
 
-  // Check for --deep flag
-  const deepMode = args.includes('--deep') || args.includes('-d');
-  const filteredArgs = args.filter(a => a !== '--deep' && a !== '-d');
-
   // Smart detection: check if first arg is file/url/youtube/git
-  const firstArg = filteredArgs[0]!;
+  const firstArg = args[0]!;
   const inputType = detectInputType(firstArg);
 
   if (inputType !== 'category') {
     // Smart mode: auto-detect and process
     switch (inputType) {
       case 'file':
-        await learnFromFile(firstArg, { deep: deepMode });
+        await learnFromFile(firstArg);
         return;
       case 'url':
-        await learnFromUrl(firstArg, { deep: deepMode });
+        await learnFromUrl(firstArg);
         return;
       case 'youtube':
         await learnFromYoutube(firstArg);
@@ -733,7 +729,7 @@ Quick Examples:
         await learnFromGit(firstArg);
         return;
       case 'git_repo':
-        await learnFromGitRepo(firstArg, { deep: deepMode });
+        await learnFromGitRepo(firstArg);
         return;
     }
   }
