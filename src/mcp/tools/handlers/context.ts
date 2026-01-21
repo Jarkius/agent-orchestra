@@ -45,6 +45,18 @@ export const contextTools: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: "matrix_send",
+    description: "Send a message to other matrices via the matrix communication system",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "Message content to send" },
+        to: { type: "string", description: "Target matrix path for direct message (omit for broadcast)" },
+      },
+      required: ["content"],
+    },
+  },
 ];
 
 // ============ Tool Handlers ============
@@ -155,10 +167,57 @@ async function getInbox(args: unknown) {
   });
 }
 
+// ============ Matrix Send Handler ============
+
+async function matrixSend(args: unknown) {
+  const input = args as { content: string; to?: string };
+  const { content, to } = input;
+  const DAEMON_PORT = process.env.MATRIX_DAEMON_PORT || '37888';
+
+  try {
+    // Check if daemon is running
+    const statusRes = await fetch(`http://localhost:${DAEMON_PORT}/status`);
+    if (!statusRes.ok) {
+      return jsonResponse({
+        success: false,
+        error: "Matrix daemon not running. Start with: bun run src/matrix-daemon.ts start",
+      });
+    }
+
+    // Send message via daemon API
+    const endpoint = to ? '/send' : '/broadcast';
+    const body = to ? { content, to } : { content };
+
+    const res = await fetch(`http://localhost:${DAEMON_PORT}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const result = await res.json() as { sent?: boolean; queued?: boolean };
+
+    return jsonResponse({
+      success: true,
+      type: to ? 'direct' : 'broadcast',
+      to: to || 'all matrices',
+      content: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
+      delivered: result.sent || false,
+      queued: result.queued || false,
+    });
+  } catch (error) {
+    return jsonResponse({
+      success: false,
+      error: `Failed to send: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      hint: "Ensure daemon is running: bun memory init",
+    });
+  }
+}
+
 // ============ Export Handlers Map ============
 
 export const contextHandlers: Record<string, ToolHandler> = {
   update_shared_context: updateSharedContext,
   get_shared_context: getSharedContext,
   get_inbox: getInbox,
+  matrix_send: matrixSend,
 };

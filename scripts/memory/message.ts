@@ -210,8 +210,10 @@ async function main() {
     // Daemon not running
   }
 
-  // Try 2: Direct hub connection (creates new connection)
-  if (!delivered) {
+  // Try 2: Direct hub connection (only if daemon is NOT available)
+  // Skip this if daemon is running - it will queue and handle delivery
+  // Direct connection kicks daemon off the hub, breaking SSE watch
+  if (!delivered && !daemonAvailable) {
     try {
       const connected = await connectToHub(hubUrl);
       if (connected) {
