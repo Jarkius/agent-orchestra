@@ -100,8 +100,22 @@ function toLocalTime(utcString?: string): string {
   return date.toLocaleString();
 }
 
-const query = process.argv[2];
+// Parse arguments and flags
+const args = process.argv.slice(2);
+const showIndex = args.includes('--index');
+const showSummary = args.includes('--summary');
+const showFull = !showIndex && !showSummary;
+
+// Extract query (first non-flag argument)
+const query = args.find(arg => !arg.startsWith('--'));
 const agentId = process.env.MEMORY_AGENT_ID ? parseInt(process.env.MEMORY_AGENT_ID) : undefined;
+
+/**
+ * Estimate token count (rough: ~4 chars per token)
+ */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
 
 /**
  * Get the git root path for the current directory
@@ -494,66 +508,100 @@ function displayLearningDetails(ctx: LearningWithContext) {
 }
 
 /**
- * Display semantic search results
+ * Display semantic search results with progressive disclosure:
+ * --index:   IDs + titles only (~50 tokens/result)
+ * --summary: + category + confidence (~100 tokens/result)
+ * (default): Full content (~500+ tokens/result)
  */
 function displaySearchResults(result: RecallResult) {
-  console.log(`\n🔍 Searching for: "${result.query}"\n`);
+  let totalTokens = 0;
+  const countTokens = (text: string) => {
+    const tokens = estimateTokens(text);
+    totalTokens += tokens;
+    return text;
+  };
 
-  // Sessions
-  console.log('━━━ Sessions ━━━');
-  if (result.sessions.length > 0) {
-    for (const { session, tasks, similarity } of result.sessions) {
-      const score = similarity ? `[${similarity.toFixed(3)}] ` : '';
-      console.log(`\n  ${score}${session.id}`);
-      console.log(`  ${truncate(session.summary, 100)}`);
-      console.log(`  Tags: ${session.tags?.join(', ') || 'none'}`);
+  console.log(countTokens(`\n🔍 Searching for: "${result.query}"`));
 
-      // Show tasks
-      if (tasks.length > 0) {
-        console.log('  📋 Tasks:');
-        for (const task of tasks.slice(0, 5)) {
-          console.log(`     ${getStatusIcon(task.status)} ${truncate(task.description, 60)}`);
-        }
-        if (tasks.length > 5) {
-          console.log(`     ... and ${tasks.length - 5} more`);
-        }
-      }
-    }
+  if (showIndex) {
+    console.log(countTokens(`\x1b[2mMode: --index (compact)\x1b[0m\n`));
+  } else if (showSummary) {
+    console.log(countTokens(`\x1b[2mMode: --summary\x1b[0m\n`));
   } else {
-    console.log('  No matching sessions found');
+    console.log('');
   }
 
-  // Learnings
-  console.log('\n━━━ Learnings ━━━');
+  // Sessions (only show in full mode)
+  if (showFull) {
+    console.log(countTokens('━━━ Sessions ━━━'));
+    if (result.sessions.length > 0) {
+      for (const { session, tasks, similarity } of result.sessions) {
+        const score = similarity ? `[${similarity.toFixed(3)}] ` : '';
+        console.log(countTokens(`\n  ${score}${session.id}`));
+        console.log(countTokens(`  ${truncate(session.summary, 100)}`));
+        console.log(countTokens(`  Tags: ${session.tags?.join(', ') || 'none'}`));
+
+        // Show tasks
+        if (tasks.length > 0) {
+          console.log(countTokens('  📋 Tasks:'));
+          for (const task of tasks.slice(0, 5)) {
+            console.log(countTokens(`     ${getStatusIcon(task.status)} ${truncate(task.description, 60)}`));
+          }
+          if (tasks.length > 5) {
+            console.log(countTokens(`     ... and ${tasks.length - 5} more`));
+          }
+        }
+      }
+    } else {
+      console.log(countTokens('  No matching sessions found'));
+    }
+  }
+
+  // Learnings - respects progressive disclosure
+  console.log(countTokens('\n━━━ Learnings ━━━'));
   if (result.learnings.length > 0) {
     for (const { learning, similarity } of result.learnings) {
       const score = similarity ? `[${similarity.toFixed(3)}] ` : '';
       const badge = getConfidenceBadge(learning.confidence || 'low', learning.times_validated, learning.maturity_stage);
-      console.log(`\n  ${score}#${learning.id} · ${learning.title}`);
-      console.log(`  ${badge} Category: ${learning.category} | Confidence: ${learning.confidence}`);
-      if (learning.description) {
-        console.log(`  ${truncate(learning.description, 80)}`);
+
+      if (showIndex) {
+        // Compact: just ID, title, category
+        console.log(countTokens(`  #${learning.id} "${learning.title}" [${learning.category}]`));
+      } else if (showSummary) {
+        // Summary: + badge + confidence
+        console.log(countTokens(`\n  ${score}#${learning.id} · ${learning.title}`));
+        console.log(countTokens(`  ${badge} ${learning.category} | ${learning.confidence}`));
+      } else {
+        // Full: + description
+        console.log(countTokens(`\n  ${score}#${learning.id} · ${learning.title}`));
+        console.log(countTokens(`  ${badge} Category: ${learning.category} | Confidence: ${learning.confidence}`));
+        if (learning.description) {
+          console.log(countTokens(`  ${truncate(learning.description, 80)}`));
+        }
       }
     }
   } else {
-    console.log('  No matching learnings found');
+    console.log(countTokens('  No matching learnings found'));
   }
 
-  // Tasks
-  console.log('\n━━━ Tasks ━━━');
-  if (result.tasks.length > 0) {
-    for (const task of result.tasks) {
-      console.log(`\n  [${task.similarity.toFixed(3)}] Task #${task.id} in ${task.session_id}`);
-      console.log(`  ${getStatusIcon(task.status)} "${task.description}" [${task.status}]`);
-      if (task.notes) {
-        console.log(`  Notes: ${truncate(task.notes, 60)}`);
+  // Tasks (only show in full mode)
+  if (showFull) {
+    console.log(countTokens('\n━━━ Tasks ━━━'));
+    if (result.tasks.length > 0) {
+      for (const task of result.tasks) {
+        console.log(countTokens(`\n  [${task.similarity.toFixed(3)}] Task #${task.id} in ${task.session_id}`));
+        console.log(countTokens(`  ${getStatusIcon(task.status)} "${task.description}" [${task.status}]`));
+        if (task.notes) {
+          console.log(countTokens(`  Notes: ${truncate(task.notes, 60)}`));
+        }
       }
+    } else {
+      console.log(countTokens('  No matching tasks found'));
     }
-  } else {
-    console.log('  No matching tasks found');
   }
 
-  console.log('\n');
+  // Show token estimate
+  console.log(`\n\x1b[2m📊 Results: ${result.sessions.length} sessions, ${result.learnings.length} learnings | ~${totalTokens} tokens\x1b[0m\n`);
 }
 
 main().catch(console.error);
