@@ -133,6 +133,11 @@ async function main() {
       await import('./evaluate-search');
       break;
 
+    case 'consolidate':
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./consolidate');
+      break;
+
     case 'help':
     case '--help':
     case '-h':
@@ -174,6 +179,7 @@ Commands:
   reindex [type]    Re-index SQLite data into ChromaDB vectors
   validate          Run search validation tests (feedback loop)
   evaluate          Full search evaluation (vector vs FTS vs hybrid)
+  consolidate       Find and merge duplicate learnings (--apply to execute)
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing
