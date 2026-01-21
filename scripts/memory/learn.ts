@@ -102,7 +102,7 @@ interface StructuredLearningInput {
 
 // ============ Smart Input Detection ============
 
-type InputType = 'file' | 'url' | 'youtube' | 'git' | 'category';
+type InputType = 'file' | 'url' | 'youtube' | 'git' | 'git_repo' | 'category';
 
 function detectInputType(input: string): InputType {
   // File: exists on disk
@@ -110,6 +110,10 @@ function detectInputType(input: string): InputType {
 
   // YouTube: youtube.com or youtu.be
   if (/youtube\.com|youtu\.be/i.test(input)) return 'youtube';
+
+  // Git repo URL: ends with .git or SSH-style git@host:user/repo
+  if (/^(https?:\/\/|git@).*\.git\b/i.test(input) ||
+      /^git@[^:]+:[^\/]+\/[^\/]+$/i.test(input)) return 'git_repo';
 
   // URL: starts with http
   if (/^https?:\/\//i.test(input)) return 'url';
@@ -329,6 +333,75 @@ async function learnFromGit(ref: string): Promise<void> {
   }
 }
 
+async function learnFromGitRepo(repoUrl: string): Promise<void> {
+  console.log(`\n📦 Learning from git repository: ${repoUrl}\n`);
+
+  // Extract repo name from URL
+  const repoNameMatch = repoUrl.match(/\/([^\/]+?)(\.git)?$/);
+  const repoName = repoNameMatch?.[1]?.replace(/\.git$/, '') || 'repo';
+
+  try {
+    // Step 1: Clone with ghq
+    console.log(`  📥 Cloning with ghq...`);
+    execSync(`ghq get ${repoUrl}`, { encoding: 'utf-8', stdio: 'inherit' });
+
+    // Step 2: Find the cloned path (use exact match on repo name at end of path)
+    const ghqPath = execSync(`ghq list -p | grep -E "/${repoName}$" | head -1`, { encoding: 'utf-8' }).trim();
+
+    if (!ghqPath) {
+      throw new Error('Could not find cloned repository path');
+    }
+
+    console.log(`  📁 Cloned to: ${ghqPath}`);
+
+    // Step 3: Create symlink to exploring directory (if it exists)
+    const exploringDir = `${process.env.HOME}/workspace/exploring`;
+    if (existsSync(exploringDir)) {
+      const symlinkPath = `${exploringDir}/${repoName}`;
+      if (!existsSync(symlinkPath)) {
+        execSync(`ln -s "${ghqPath}" "${symlinkPath}"`, { encoding: 'utf-8' });
+        console.log(`  🔗 Symlinked to: ${symlinkPath}`);
+      } else {
+        // Verify symlink points to correct target
+        try {
+          const currentTarget = execSync(`readlink "${symlinkPath}"`, { encoding: 'utf-8' }).trim();
+          if (currentTarget !== ghqPath) {
+            console.log(`  ⚠️  Symlink exists but points to: ${currentTarget}`);
+            console.log(`  🔗 Expected: ${ghqPath}`);
+          } else {
+            console.log(`  🔗 Symlink verified: ${symlinkPath}`);
+          }
+        } catch {
+          console.log(`  🔗 Symlink exists: ${symlinkPath}`);
+        }
+      }
+    }
+
+    // Step 4: Learn from README if it exists
+    const readmePath = `${ghqPath}/README.md`;
+    if (existsSync(readmePath)) {
+      console.log(`\n  📄 Found README.md, learning from it...`);
+      await learnFromFile(readmePath);
+    } else {
+      // Create placeholder learning about the repo
+      await saveLearning('tooling', {
+        title: `Cloned: ${repoName}`,
+        what_happened: `Cloned git repository: ${repoUrl}`,
+        lesson: `Repository available at ${ghqPath}`,
+        context: `Source: ${repoUrl}`,
+        source_url: repoUrl,
+      });
+    }
+
+    console.log(`\n  ✅ Repository ready for exploration at: ${ghqPath}\n`);
+    console.log(`  💡 Tip: Use 'bun memory learn ${ghqPath}/path/to/file.md' to learn from specific files\n`);
+  } catch (error) {
+    console.error(`  ❌ Failed to clone repository: ${error}\n`);
+    console.log(`  💡 Tip: Make sure ghq is installed (brew install ghq) and the URL is valid.\n`);
+    process.exit(1);
+  }
+}
+
 async function saveLearning(category: Category, input: StructuredLearningInput) {
   console.log('\n💾 Saving learning...\n');
 
@@ -469,6 +542,7 @@ Smart Mode (auto-detects input type):
   bun memory learn https://example.com/article # Learn from URL
   bun memory learn https://youtube.com/watch?v=x # Learn from YouTube
   bun memory learn HEAD~3                       # Learn from git commits
+  bun memory learn https://github.com/u/r.git  # Clone repo with ghq + learn
 
 Traditional Mode:
   bun memory learn <category> "title" ["context"]
@@ -510,6 +584,9 @@ Quick Examples:
         return;
       case 'git':
         await learnFromGit(firstArg);
+        return;
+      case 'git_repo':
+        await learnFromGitRepo(firstArg);
         return;
     }
   }
