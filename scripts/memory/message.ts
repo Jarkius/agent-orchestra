@@ -10,7 +10,7 @@
  * Phase 3: Now supports WebSocket real-time delivery via matrix hub
  */
 
-import { createLearning, db } from '../../src/db';
+import { createLearning, db, getInboxMessages, getUnreadCount as dbGetUnreadCount, type MatrixMessageRecord } from '../../src/db';
 import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConnected, disconnect, waitForFlush } from '../../src/matrix-client';
 import { execSync } from 'child_process';
 import { basename, join } from 'path';
@@ -82,33 +82,14 @@ function parseMessage(title: string): { type: 'broadcast' | 'direct'; from: stri
   return null;
 }
 
-function getInbox(): MessageRecord[] {
-  // Get broadcasts + direct messages to this matrix (match both full path and short name)
-  const rows = db.query(`
-    SELECT id, title, context, lesson, created_at
-    FROM learnings
-    WHERE category = 'insight'
-      AND (
-        title LIKE '[msg:broadcast]%'
-        OR title LIKE '%[to:${THIS_MATRIX_PATH}]%'
-        OR title LIKE '%[to:${THIS_MATRIX}]%'
-      )
-    ORDER BY created_at DESC
-    LIMIT 20
-  `).all() as MessageRecord[];
-  return rows;
+function getInbox(): MatrixMessageRecord[] {
+  // Get messages from the new matrix_messages table
+  return getInboxMessages(THIS_MATRIX, 50);
 }
 
 function getUnreadCount(): number {
-  // Simple heuristic: messages in last hour
-  const rows = db.query(`
-    SELECT COUNT(*) as count
-    FROM learnings
-    WHERE category = 'insight'
-      AND (title LIKE '[msg:broadcast]%' OR title LIKE '%[to:${THIS_MATRIX_PATH}]%')
-      AND created_at > datetime('now', '-1 hour')
-  `).get() as { count: number };
-  return rows.count;
+  // Use the db function to get actual unread count
+  return dbGetUnreadCount(THIS_MATRIX);
 }
 
 function printHelp() {
@@ -148,14 +129,11 @@ async function main() {
     console.log(`\n📬 Inbox (${messages.length} messages)\n`);
     console.log('─'.repeat(80));
     for (const msg of messages) {
-      const parsed = parseMessage(msg.title);
-      if (parsed) {
-        const icon = parsed.type === 'broadcast' ? '📢' : '✉️';
-        const fromShort = parsed.from.split('/').slice(-2).join('/');
-        console.log(`  ${icon} #${msg.id} [${fromShort}] ${formatLocalTime(msg.created_at)} - ${parsed.content}`);
-        if (msg.lesson) console.log(`     ${msg.lesson}`);
-        console.log('');
-      }
+      const icon = msg.message_type === 'broadcast' ? '📢' : '✉️';
+      const unread = msg.read_at ? '' : ' [NEW]';
+      console.log(`  ${icon} #${msg.id}${unread} [${msg.from_matrix}] ${formatLocalTime(msg.created_at)}`);
+      console.log(`     ${msg.content}`);
+      console.log('');
     }
     return;
   }

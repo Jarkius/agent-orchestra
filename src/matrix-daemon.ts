@@ -125,6 +125,7 @@ async function connectToHub(): Promise<boolean> {
       ws.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString());
+          console.log(`[Daemon] WS received: ${msg.type} from ${msg.from || 'hub'}`);
           handleMessage(msg);
         } catch (e) {
           console.error('[Daemon] Invalid message:', e);
