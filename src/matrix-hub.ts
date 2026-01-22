@@ -25,6 +25,15 @@ const TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const HEARTBEAT_INTERVAL_MS = 10000; // 10 seconds
 const HEARTBEAT_TIMEOUT_MS = 30000; // 30 seconds
 
+// PIN Authentication - like WiFi password for the hub
+const PIN_DISABLED = process.env.MATRIX_HUB_PIN === 'disabled';
+const HUB_PIN = PIN_DISABLED ? '' : (process.env.MATRIX_HUB_PIN || generateRandomPin());
+
+function generateRandomPin(): string {
+  // Generate 6-character alphanumeric PIN (uppercase for readability)
+  return randomBytes(4).toString('hex').substring(0, 6).toUpperCase();
+}
+
 // ============ Types ============
 
 interface MatrixConnection {
@@ -235,6 +244,20 @@ export function startHub(port = HUB_PORT, hostname = HUB_HOST): void {
       if (url.pathname === '/register') {
         const matrixId = url.searchParams.get('matrix_id');
         const displayName = url.searchParams.get('display_name');
+        const pin = url.searchParams.get('pin');
+
+        // Validate PIN if enabled
+        if (!PIN_DISABLED) {
+          if (!pin || pin !== HUB_PIN) {
+            return new Response(JSON.stringify({
+              error: 'Invalid or missing PIN',
+              hint: 'Check the hub console for the PIN, or set MATRIX_HUB_PIN in your environment'
+            }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        }
 
         if (!matrixId) {
           return new Response(JSON.stringify({ error: 'Missing matrix_id' }), {
@@ -508,9 +531,22 @@ if (import.meta.main) {
   if (HUB_HOST === 'localhost') {
     console.log(`  Tip: Use MATRIX_HUB_HOST=0.0.0.0 for LAN access`);
   }
+
+  // Display PIN authentication info
+  if (PIN_DISABLED) {
+    console.log();
+    console.log('  ⚠️  PIN authentication DISABLED (open hub)');
+  } else {
+    console.log();
+    console.log(`  🔐 Hub PIN: ${HUB_PIN}`);
+    console.log(`     Share this PIN with matrices that need to connect.`);
+    console.log(`     Set MATRIX_HUB_PIN=disabled for open access.`);
+  }
+
+  console.log();
   console.log('Endpoints:');
   console.log(`  GET /health - Health check`);
-  console.log(`  GET /register?matrix_id=X&display_name=Y - Register and get token`);
+  console.log(`  GET /register?matrix_id=X&display_name=Y&pin=XXX - Register and get token`);
   console.log(`  GET /matrices - List online matrices`);
   console.log(`  WS /?token=XXX - WebSocket connection`);
   console.log();

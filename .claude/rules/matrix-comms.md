@@ -20,11 +20,44 @@ bun memory message --inbox                     # Check inbox
 ## Manual Setup (if init fails)
 
 ```bash
-# Terminal 1: Start hub
+# Terminal 1: Start hub (displays PIN on startup)
 bun run src/matrix-hub.ts
 
-# Terminal 2: Start daemon
-bun run src/matrix-daemon.ts start
+# Terminal 2: Start daemon with PIN
+bun run src/matrix-daemon.ts start --pin <PIN>
+```
+
+## Hub PIN Authentication
+
+The hub displays a PIN on startup. Matrices must provide this PIN to connect (like WiFi password).
+
+### Hub Operator
+```bash
+# Auto-generated PIN (displayed on startup)
+bun run src/matrix-hub.ts
+# Output: 🔐 Hub PIN: A1B2C3
+
+# Custom PIN
+MATRIX_HUB_PIN=mysecret bun run src/matrix-hub.ts
+
+# Disable PIN (open hub - not recommended for LAN/internet)
+MATRIX_HUB_PIN=disabled bun run src/matrix-hub.ts
+```
+
+### Connecting with PIN
+```bash
+# Via CLI flag
+bun run src/matrix-daemon.ts start --pin A1B2C3
+
+# Via environment variable
+MATRIX_HUB_PIN=A1B2C3 bun run src/matrix-daemon.ts start
+
+# Via .matrix.json config
+{
+  "matrix_id": "my-project",
+  "hub_url": "ws://localhost:8081",
+  "hub_pin": "A1B2C3"
+}
 ```
 
 ## Same Network Setup
@@ -47,8 +80,8 @@ ifconfig | grep "inet " | grep -v 127.0.0.1
 # Point to hub machine's IP
 export MATRIX_HUB_URL=ws://192.168.1.100:8081
 
-# Start daemon
-bun run src/matrix-daemon.ts start
+# Start daemon with PIN from hub console
+bun run src/matrix-daemon.ts start --pin A1B2C3
 
 # Test connection
 bun memory message "Hello from Machine B!"
@@ -86,6 +119,7 @@ Matrix A ──► Daemon ──► Hub (8081) ◄── Daemon ◄── Matrix
 | `MATRIX_HUB_URL` | `ws://localhost:8081` | Hub WebSocket URL |
 | `MATRIX_HUB_HOST` | `localhost` | Hub bind address |
 | `MATRIX_HUB_PORT` | `8081` | Hub listen port |
+| `MATRIX_HUB_PIN` | (auto-generated) | Hub PIN, or `disabled` to turn off |
 | `MATRIX_DAEMON_PORT` | `37888` | Daemon HTTP API port |
 
 ## Daemon Management
@@ -97,6 +131,11 @@ bun run src/matrix-daemon.ts status  # Check status
 ```
 
 ## Troubleshooting
+
+**"Invalid or missing PIN"**
+- Check hub console for the PIN (displayed on startup)
+- Set PIN via `--pin`, `MATRIX_HUB_PIN`, or `.matrix.json`
+- PIN is session-only - changes when hub restarts
 
 **"Connection refused"**
 - Is hub running? Check with `lsof -i :8081`

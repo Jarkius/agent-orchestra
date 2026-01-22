@@ -56,6 +56,9 @@ const SOCKET_FILE = join(DAEMON_DIR, 'daemon.sock');
 const PROJECT_PATH = process.cwd();
 const MATRIX_ID = matrixConfig.matrix_id || PROJECT_PATH.replace(/.*\//, ''); // Last path component
 
+// Hub PIN for authentication (parsed later from CLI args if provided)
+let HUB_PIN = process.env.MATRIX_HUB_PIN || matrixConfig.hub_pin || '';
+
 // ============ State ============
 
 let ws: WebSocket | null = null;
@@ -84,7 +87,20 @@ async function getToken(): Promise<string | null> {
       project_path: PROJECT_PATH,
     });
 
+    // Include PIN if configured
+    if (HUB_PIN) {
+      params.set('pin', HUB_PIN);
+    }
+
     const response = await fetch(`${httpUrl}/register?${params}`);
+
+    if (response.status === 401) {
+      const data = await response.json() as { error: string; hint?: string };
+      console.error(`[Daemon] ❌ Hub rejected connection: ${data.error}`);
+      if (data.hint) console.error(`[Daemon]    ${data.hint}`);
+      console.error(`[Daemon]    Set MATRIX_HUB_PIN in env, .matrix.json, or use --pin flag`);
+      return null;
+    }
 
     if (!response.ok) {
       console.error(`[Daemon] Failed to get token: ${response.status}`);
@@ -734,6 +750,12 @@ function showStatus(): void {
 
 const command = process.argv[2];
 
+// Parse --pin flag from any position in argv
+const pinArgIndex = process.argv.findIndex(arg => arg === '--pin');
+if (pinArgIndex !== -1 && process.argv[pinArgIndex + 1]) {
+  HUB_PIN = process.argv[pinArgIndex + 1];
+}
+
 switch (command) {
   case 'start':
     start();
@@ -752,13 +774,17 @@ switch (command) {
 Matrix Daemon - Persistent hub connection
 
 Usage:
-  bun run src/matrix-daemon.ts start    Start daemon
-  bun run src/matrix-daemon.ts stop     Stop daemon
-  bun run src/matrix-daemon.ts status   Check status
-  bun run src/matrix-daemon.ts restart  Restart daemon
+  bun run src/matrix-daemon.ts start [--pin PIN]  Start daemon
+  bun run src/matrix-daemon.ts stop               Stop daemon
+  bun run src/matrix-daemon.ts status             Check status
+  bun run src/matrix-daemon.ts restart            Restart daemon
+
+Options:
+  --pin PIN           Hub PIN for authentication
 
 Environment:
   MATRIX_DAEMON_PORT  Local API port (default: 37888)
   MATRIX_HUB_URL      Hub WebSocket URL (default: ws://localhost:8081)
+  MATRIX_HUB_PIN      Hub PIN (can also be set in .matrix.json as "hub_pin")
 `);
 }
