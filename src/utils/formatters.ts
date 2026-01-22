@@ -64,6 +64,17 @@ export function formatFullContext(ctx: FullContext | null | undefined): string[]
     }
   }
 
+  // Display recent user messages from Claude Code session
+  if (ctx.user_messages && ctx.user_messages.length > 0) {
+    lines.push('');
+    lines.push('📝 Recent Messages:');
+    const messagesToShow = ctx.user_messages.slice(-5); // Show last 5
+    for (const msg of messagesToShow) {
+      const truncated = msg.length > 100 ? msg.substring(0, 100) + '...' : msg;
+      lines.push(`  • ${truncated}`);
+    }
+  }
+
   return lines;
 }
 
