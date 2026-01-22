@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Fast inbox check for Claude Code hooks
- * Only shows messages since last check - non-blocking
+ * Queries matrix_messages table for new incoming messages
  */
 
 import { db } from '../../src/db';
@@ -21,11 +21,12 @@ function getMatrixId(): string {
 }
 
 const THIS_MATRIX = getMatrixId();
-const THIS_MATRIX_PATH = process.cwd();
 
-interface MessageRecord {
+interface MatrixMessage {
   id: number;
-  title: string;
+  from_matrix: string;
+  content: string;
+  message_type: string;
   created_at: string;
 }
 
@@ -46,39 +47,29 @@ function saveLastSeenId(id: number): void {
   } catch {}
 }
 
-function parseMessage(title: string): { type: 'broadcast' | 'direct'; from: string; content: string } | null {
-  const broadcastMatch = title.match(/^\[msg:broadcast\] \[from:([^\]]+)\] (.+)$/);
-  if (broadcastMatch) {
-    return { type: 'broadcast', from: broadcastMatch[1]!, content: broadcastMatch[2]! };
-  }
-  const directMatch = title.match(/^\[msg:direct\] \[from:([^\]]+)\] \[to:[^\]]+\] (.+)$/);
-  if (directMatch) {
-    return { type: 'direct', from: directMatch[1]!, content: directMatch[2]! };
-  }
-  return null;
-}
-
 function formatFrom(from: string): string {
   return from.split('/').pop() || from;
+}
+
+function truncate(str: string, maxLen: number): string {
+  if (str.length <= maxLen) return str;
+  return str.substring(0, maxLen) + '...';
 }
 
 function main() {
   const lastSeen = getLastSeenId();
 
-  // Query new messages since lastSeen
+  // Query new INCOMING messages from matrix_messages table
+  // Incoming = status 'delivered' and NOT from this matrix
   const rows = db.query(`
-    SELECT id, title, created_at
-    FROM learnings
-    WHERE category = 'insight'
-      AND id > ?
-      AND (
-        title LIKE '[msg:broadcast]%'
-        OR title LIKE '%[to:${THIS_MATRIX_PATH}]%'
-        OR title LIKE '%[to:${THIS_MATRIX}]%'
-      )
+    SELECT id, from_matrix, content, message_type, created_at
+    FROM matrix_messages
+    WHERE id > ?
+      AND from_matrix != ?
+      AND status = 'delivered'
     ORDER BY id ASC
-    LIMIT 10
-  `).all(lastSeen) as MessageRecord[];
+    LIMIT 5
+  `).all(lastSeen, THIS_MATRIX) as MatrixMessage[];
 
   if (rows.length === 0) {
     // No new messages - silent exit (no JSON needed)
@@ -90,12 +81,10 @@ function main() {
   let maxId = lastSeen;
 
   for (const msg of rows) {
-    const parsed = parseMessage(msg.title);
-    if (parsed) {
-      const icon = parsed.type === 'broadcast' ? '📢' : '✉️';
-      const from = formatFrom(parsed.from);
-      messages.push(`${icon} [${from}] ${parsed.content}`);
-    }
+    const icon = msg.message_type === 'direct' ? '✉️' : '📢';
+    const from = formatFrom(msg.from_matrix);
+    const content = truncate(msg.content.replace(/\n/g, ' '), 100);
+    messages.push(`${icon} [${from}] ${content}`);
     if (msg.id > maxId) maxId = msg.id;
   }
 
@@ -103,16 +92,19 @@ function main() {
   saveLastSeenId(maxId);
 
   // Show clean summary to user on stderr (visible)
-  const summary = messages.length === 1
-    ? `📬 ${messages[0]}`
-    : `📬 ${rows.length} messages: ${messages.map(m => m.split('] ')[1]).join(' | ')}`;
-  console.error(summary);
+  console.error(`📬 ${rows.length} new matrix message(s)`);
 
-  // Output hook JSON - additionalContext goes to Claude
+  // Output hook JSON - additionalContext goes to Claude with FULL content
+  const fullMessages = rows.map(msg => {
+    const icon = msg.message_type === 'direct' ? '✉️' : '📢';
+    const from = formatFrom(msg.from_matrix);
+    return `${icon} [${from}] ${msg.content}`;
+  });
+
   const hookOutput = {
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext: `📬 ${rows.length} new matrix message(s):\n${messages.join('\n')}\n\nRespond to these if relevant, or acknowledge receipt.`
+      additionalContext: `📬 ${rows.length} new matrix message(s):\n${fullMessages.join('\n\n')}\n\nRespond to these if relevant, or acknowledge receipt.`
     }
   };
 
