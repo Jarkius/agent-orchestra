@@ -95,9 +95,12 @@ echo ""
 
 # Clear previous session data
 rm -f "$SCRIPT_DIR/agents.db"
-rm -rf /tmp/agent_inbox
-rm -rf /tmp/agent_outbox
-rm -rf /tmp/agent_shared
+
+# Use project-relative paths for persistence (data survives reboots, unlike /tmp)
+DATA_DIR="${PROJECT_ROOT}/data"
+rm -rf "$DATA_DIR/agent_inbox"
+rm -rf "$DATA_DIR/agent_outbox"
+rm -rf "$DATA_DIR/agent_shared"
 
 echo "=============================================="
 echo "   REAL CLAUDE SUB-AGENTS LAUNCHER"
@@ -169,10 +172,10 @@ tmux send-keys -t "$SESSION:0.0" "clear && cat << 'EOF'
 ║                                                              ║
 ║  Or manually:                                                ║
 ║    echo '{\"id\":\"t1\",\"prompt\":\"What is 2+2?\"}' > \\         ║
-║      /tmp/agent_inbox/1/task.json                            ║
+║      ./data/agent_inbox/1/task.json                          ║
 ║                                                              ║
 ║  MONITOR:                                                    ║
-║    cat /tmp/agent_outbox/1/*.json                            ║
+║    cat ./data/agent_outbox/1/*.json                          ║
 ║                                                              ║
 ║  MATRIX WATCH PANE (right side):                             ║
 ║  ─────────────────────────────────                           ║
@@ -227,5 +230,5 @@ else
     echo "  tmux attach -t $SESSION"
     echo ""
     echo "To assign a task to Agent 1:"
-    echo "  echo '{\"id\":\"test\",\"prompt\":\"What is 2+2?\"}' > /tmp/agent_inbox/1/task.json"
+    echo "  echo '{\"id\":\"test\",\"prompt\":\"What is 2+2?\"}' > ./data/agent_inbox/1/task.json"
 fi

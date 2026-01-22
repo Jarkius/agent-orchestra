@@ -80,9 +80,9 @@ bun memory stats
 **Confidence levels**: low → medium → high → proven
 
 ### How You Work
-1. You receive tasks via your inbox (/tmp/agent_inbox/${agentId}/)
+1. You receive tasks via your inbox (./data/agent_inbox/${agentId}/)
 2. You execute them autonomously with full Claude capabilities
-3. Your results go to your outbox (/tmp/agent_outbox/${agentId}/)
+3. Your results go to your outbox (./data/agent_outbox/${agentId}/)
 4. You can read/write files, run commands, and access the codebase
 5. You share memory with the orchestrator and other agents
 
@@ -103,7 +103,9 @@ Your output is returned to the orchestrator. Be:
 `;
 }
 
-const SHARED_DIR = "/tmp/agent_shared";
+// Use environment variable or default to ./data/ for persistence
+const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
+const SHARED_DIR = process.env.AGENT_SHARED_DIR || join(PROJECT_ROOT, 'data', 'agent_shared');
 
 /**
  * Query ChromaDB for learnings relevant to the task prompt

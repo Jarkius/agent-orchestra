@@ -41,7 +41,7 @@
 The orchestration logic is **already sophisticated**. The constraint is:
 
 ```
-agent-watcher.ts → Polls /tmp/agent_inbox every 1000ms
+agent-watcher.ts → Polls ./data/agent_inbox every 1000ms
 orchestrator.ts  → ANSI console only, no API
 ```
 

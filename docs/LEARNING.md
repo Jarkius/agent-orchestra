@@ -184,9 +184,9 @@ db.run("INSERT INTO agents (id, status) VALUES (?, ?)", [1, "running"]);
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              Agent Watcher (src/agent-watcher.ts)            │
-│  - Polls /tmp/agent_inbox/{id}/ for new .txt files          │
+│  - Polls ./data/agent_inbox/{id}/ for new .txt files        │
 │  - Processes messages                                        │
-│  - Writes responses to /tmp/agent_outbox/{id}/              │
+│  - Writes responses to ./data/agent_outbox/{id}/            │
 │  - Updates SQLite status                                     │
 └─────────────────────────────────────────────────────────────┘
 ```

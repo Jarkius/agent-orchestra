@@ -56,14 +56,8 @@ models/
 .worktrees/
 
 # Temporary files
-/tmp/
 *.tmp
 *.temp
-
-# Agent inbox/outbox (runtime)
-/tmp/agent_inbox/
-/tmp/agent_outbox/
-/tmp/agent_shared/
 
 # Archive (old/deprecated code)
 archive/

@@ -7,6 +7,7 @@
 
 import { mkdir, readFile, readdir, unlink, writeFile } from "fs/promises";
 import { existsSync } from "fs";
+import { join } from "path";
 import { runClaudeTask, writeToScratchpad } from "./claude-agent";
 import {
   registerAgent,
@@ -28,8 +29,14 @@ import {
 } from "./vector-db";
 
 const AGENT_ID = parseInt(process.argv[2] || "1");
-const INBOX = `/tmp/agent_inbox/${AGENT_ID}`;
-const OUTBOX = `/tmp/agent_outbox/${AGENT_ID}`;
+
+// Use environment variables or default to ./data/ for persistence
+const PROJECT_ROOT = process.env.PROJECT_ROOT || process.cwd();
+const INBOX_BASE = process.env.AGENT_INBOX_BASE || join(PROJECT_ROOT, 'data', 'agent_inbox');
+const OUTBOX_BASE = process.env.AGENT_OUTBOX_BASE || join(PROJECT_ROOT, 'data', 'agent_outbox');
+
+const INBOX = join(INBOX_BASE, String(AGENT_ID));
+const OUTBOX = join(OUTBOX_BASE, String(AGENT_ID));
 const POLL_INTERVAL = 1000; // ms
 
 // WebSocket configuration

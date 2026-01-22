@@ -23,8 +23,13 @@ fi
 
 # Clear previous session data
 rm -f "$SCRIPT_DIR/agents.db"
-rm -rf /tmp/agent_inbox
-rm -rf /tmp/agent_outbox
+
+# Use project-relative paths for persistence (data survives reboots, unlike /tmp)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DATA_DIR="${PROJECT_ROOT}/data"
+rm -rf "$DATA_DIR/agent_inbox"
+rm -rf "$DATA_DIR/agent_outbox"
+rm -rf "$DATA_DIR/agent_shared"
 
 # Kill existing session if exists
 tmux kill-session -t "$SESSION" 2>/dev/null
@@ -90,10 +95,10 @@ echo "  │ Agent 1  │ Agent 2  │ Agent 3 ...  │"
 echo "  │ (watcher)│ (watcher)│ (watcher)    │"
 echo "  └──────────┴──────────┴──────────────┘"
 echo ""
-echo "Agents are now watching for messages in /tmp/agent_inbox/{id}/"
+echo "Agents are now watching for messages in ./data/agent_inbox/{id}/"
 echo ""
 echo "To send a message to agent 1:"
-echo "  echo 'your message' > /tmp/agent_inbox/1/msg_\$(date +%s).txt"
+echo "  echo 'your message' > ./data/agent_inbox/1/msg_\$(date +%s).txt"
 echo ""
 echo "Or use MCP tools from Claude Code after adding the server config."
 echo ""
