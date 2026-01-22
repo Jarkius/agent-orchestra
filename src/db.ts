@@ -52,8 +52,33 @@ db.run(`
   )
 `);
 
+// Migration: handle 'tasks' to 'agent_tasks' rename
+const oldTasksTable = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'").get();
+const newTasksTable = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_tasks'").get();
+if (oldTasksTable && !newTasksTable) {
+  // Simple case: just rename
+  db.run(`ALTER TABLE tasks RENAME TO agent_tasks`);
+  db.run(`DROP INDEX IF EXISTS idx_tasks_agent`);
+  db.run(`DROP INDEX IF EXISTS idx_tasks_status`);
+} else if (oldTasksTable && newTasksTable) {
+  // Both exist - check if we need to migrate data
+  const oldCount = (db.query("SELECT COUNT(*) as c FROM tasks").get() as any)?.c || 0;
+  const newCount = (db.query("SELECT COUNT(*) as c FROM agent_tasks").get() as any)?.c || 0;
+  if (oldCount > 0 && newCount === 0) {
+    // Drop empty agent_tasks and rename tasks (preserves data and constraints)
+    db.run(`DROP TABLE agent_tasks`);
+    db.run(`ALTER TABLE tasks RENAME TO agent_tasks`);
+  } else if (oldCount === 0) {
+    // Old table is empty, just drop it
+    db.run(`DROP TABLE tasks`);
+  }
+  // Either way, clean up old indexes
+  db.run(`DROP INDEX IF EXISTS idx_tasks_agent`);
+  db.run(`DROP INDEX IF EXISTS idx_tasks_status`);
+}
+
 db.run(`
-  CREATE TABLE IF NOT EXISTS tasks (
+  CREATE TABLE IF NOT EXISTS agent_tasks (
     id TEXT PRIMARY KEY,
     agent_id INTEGER,
     prompt TEXT,
@@ -86,22 +111,22 @@ db.run(`
 // Create indexes for faster queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_messages_agent ON messages(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)`);
-db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id)`);
-db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent ON agent_tasks(agent_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id)`);
 
 // ============ Mission Queue Schema Migration ============
 // Add columns for mission persistence (safe migration - checks if column exists)
-const taskColumns = db.query("PRAGMA table_info(tasks)").all() as { name: string }[];
+const taskColumns = db.query("PRAGMA table_info(agent_tasks)").all() as { name: string }[];
 const existingColumns = new Set(taskColumns.map(c => c.name));
 
 const missionColumns = [
-  { name: 'type', sql: 'ALTER TABLE tasks ADD COLUMN type TEXT' },
-  { name: 'timeout_ms', sql: 'ALTER TABLE tasks ADD COLUMN timeout_ms INTEGER DEFAULT 120000' },
-  { name: 'max_retries', sql: 'ALTER TABLE tasks ADD COLUMN max_retries INTEGER DEFAULT 3' },
-  { name: 'retry_count', sql: 'ALTER TABLE tasks ADD COLUMN retry_count INTEGER DEFAULT 0' },
-  { name: 'depends_on', sql: 'ALTER TABLE tasks ADD COLUMN depends_on TEXT' },
-  { name: 'assigned_to', sql: 'ALTER TABLE tasks ADD COLUMN assigned_to INTEGER' },
+  { name: 'type', sql: 'ALTER TABLE agent_tasks ADD COLUMN type TEXT' },
+  { name: 'timeout_ms', sql: 'ALTER TABLE agent_tasks ADD COLUMN timeout_ms INTEGER DEFAULT 120000' },
+  { name: 'max_retries', sql: 'ALTER TABLE agent_tasks ADD COLUMN max_retries INTEGER DEFAULT 3' },
+  { name: 'retry_count', sql: 'ALTER TABLE agent_tasks ADD COLUMN retry_count INTEGER DEFAULT 0' },
+  { name: 'depends_on', sql: 'ALTER TABLE agent_tasks ADD COLUMN depends_on TEXT' },
+  { name: 'assigned_to', sql: 'ALTER TABLE agent_tasks ADD COLUMN assigned_to INTEGER' },
 ];
 
 for (const col of missionColumns) {
@@ -114,12 +139,12 @@ for (const col of missionColumns) {
 // SQLite requires table recreation to modify constraints
 try {
   // Test if constraint needs updating by trying an insert with 'running' status
-  db.run(`INSERT INTO tasks (id, status) VALUES ('__constraint_test__', 'running')`);
-  db.run(`DELETE FROM tasks WHERE id = '__constraint_test__'`);
+  db.run(`INSERT INTO agent_tasks (id, status) VALUES ('__constraint_test__', 'running')`);
+  db.run(`DELETE FROM agent_tasks WHERE id = '__constraint_test__'`);
 } catch {
   // Constraint is restrictive - need to recreate table
   db.run(`
-    CREATE TABLE IF NOT EXISTS tasks_new (
+    CREATE TABLE IF NOT EXISTS agent_tasks_new (
       id TEXT PRIMARY KEY,
       agent_id INTEGER,
       prompt TEXT,
@@ -144,13 +169,13 @@ try {
     )
   `);
   // Copy existing data
-  db.run(`INSERT OR IGNORE INTO tasks_new SELECT id, agent_id, prompt, context, priority, status, result, error, input_tokens, output_tokens, duration_ms, created_at, started_at, completed_at, type, timeout_ms, max_retries, retry_count, depends_on, assigned_to FROM tasks`);
+  db.run(`INSERT OR IGNORE INTO agent_tasks_new SELECT id, agent_id, prompt, context, priority, status, result, error, input_tokens, output_tokens, duration_ms, created_at, started_at, completed_at, type, timeout_ms, max_retries, retry_count, depends_on, assigned_to FROM agent_tasks`);
   // Drop old table and rename
-  db.run(`DROP TABLE tasks`);
-  db.run(`ALTER TABLE tasks_new RENAME TO tasks`);
+  db.run(`DROP TABLE agent_tasks`);
+  db.run(`ALTER TABLE agent_tasks_new RENAME TO agent_tasks`);
   // Recreate indexes
-  db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id)`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent ON agent_tasks(agent_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status)`);
 }
 
 // ============ Session Memory Schema ============
@@ -313,13 +338,13 @@ try {
   db.run(`ALTER TABLE sessions ADD COLUMN challenges TEXT`);
 } catch { /* Column already exists */ }
 
-// Add session_id column to tasks table for task-session linking
+// Add session_id column to agent_tasks table for task-session linking
 try {
-  db.run(`ALTER TABLE tasks ADD COLUMN session_id TEXT REFERENCES sessions(id)`);
+  db.run(`ALTER TABLE agent_tasks ADD COLUMN session_id TEXT REFERENCES sessions(id)`);
 } catch { /* Column already exists */ }
 
 // Create index for task-session queries
-db.run(`CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id)`);
 
 // ============ Phase 1: Per-Agent Memory Schema ============
 
@@ -755,7 +780,7 @@ export function saveMission(mission: {
   const resultJson = mission.result ? JSON.stringify(mission.result) : null;
 
   db.run(`
-    INSERT INTO tasks (id, prompt, context, priority, type, status, timeout_ms, max_retries, retry_count, depends_on, assigned_to, error, result, created_at, started_at, completed_at)
+    INSERT INTO agent_tasks (id, prompt, context, priority, type, status, timeout_ms, max_retries, retry_count, depends_on, assigned_to, error, result, created_at, started_at, completed_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
@@ -787,7 +812,7 @@ export function saveMission(mission: {
 
 export function loadPendingMissions(): MissionRecord[] {
   return db.query(`
-    SELECT * FROM tasks
+    SELECT * FROM agent_tasks
     WHERE status IN ('pending', 'queued', 'running', 'retrying', 'blocked')
     ORDER BY
       CASE priority
@@ -841,11 +866,11 @@ export function updateMissionStatus(
   }
 
   params.push(missionId);
-  db.run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, params);
+  db.run(`UPDATE agent_tasks SET ${updates.join(', ')} WHERE id = ?`, params);
 }
 
 export function getMissionFromDb(missionId: string): MissionRecord | null {
-  return db.query(`SELECT * FROM tasks WHERE id = ?`).get(missionId) as MissionRecord | null;
+  return db.query(`SELECT * FROM agent_tasks WHERE id = ?`).get(missionId) as MissionRecord | null;
 }
 
 // ============ Matrix Message Functions ============
