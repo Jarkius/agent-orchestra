@@ -627,7 +627,7 @@ function removePidFile(): void {
   } catch {}
 }
 
-function isRunning(): { running: boolean; pid?: number; port?: number } {
+function isRunning(): { running: boolean; pid?: number; port?: number; matrixId?: string } {
   if (!existsSync(PID_FILE)) {
     return { running: false };
   }
@@ -636,11 +636,12 @@ function isRunning(): { running: boolean; pid?: number; port?: number } {
     const content = readFileSync(PID_FILE, 'utf-8').trim().split('\n');
     const pid = parseInt(content[0] || '0');
     const port = parseInt(content[1] || '0');
+    const matrixId = content[2] || '';
 
     // Check if process is running
     try {
       process.kill(pid, 0);
-      return { running: true, pid, port };
+      return { running: true, pid, port, matrixId };
     } catch {
       // Process not running, clean up stale PID file
       removePidFile();
@@ -651,6 +652,23 @@ function isRunning(): { running: boolean; pid?: number; port?: number } {
   }
 }
 
+async function checkPortInUse(port: number): Promise<{ inUse: boolean; byOther: boolean }> {
+  try {
+    const response = await fetch(`http://localhost:${port}/status`, {
+      signal: AbortSignal.timeout(2000)
+    });
+    if (response.ok) {
+      const data = await response.json() as { matrixId?: string };
+      // Port is in use - check if by another matrix
+      const isOther = data.matrixId !== MATRIX_ID;
+      return { inUse: true, byOther: isOther };
+    }
+    return { inUse: false, byOther: false };
+  } catch {
+    return { inUse: false, byOther: false };
+  }
+}
+
 async function start(): Promise<void> {
   const status = isRunning();
   if (status.running) {
@@ -658,10 +676,39 @@ async function start(): Promise<void> {
     process.exit(0);
   }
 
+  // Check if port is already in use by another daemon
+  const portCheck = await checkPortInUse(DAEMON_PORT);
+  if (portCheck.inUse) {
+    if (portCheck.byOther) {
+      console.error(`[Daemon] ❌ Port ${DAEMON_PORT} already in use by ANOTHER matrix daemon!`);
+      console.error(`[Daemon]    Another project's daemon may be running on this port.`);
+      console.error(`[Daemon]    Either stop it or use a different port via MATRIX_DAEMON_PORT.`);
+      process.exit(1);
+    } else {
+      console.log(`[Daemon] ⚠️  Port ${DAEMON_PORT} has an orphan daemon. Attempting takeover...`);
+      // Try to stop it gracefully
+      try {
+        await fetch(`http://localhost:${DAEMON_PORT}/stop`, { method: 'POST' });
+        await new Promise(r => setTimeout(r, 1000));
+      } catch {
+        // Ignore - might already be dead
+      }
+    }
+  }
+
   console.log(`[Daemon] Starting matrix daemon for ${MATRIX_ID}`);
   console.log(`[Daemon] PID: ${process.pid}`);
   console.log(`[Daemon] API Port: ${DAEMON_PORT}`);
   console.log(`[Daemon] Hub URL: ${HUB_URL}`);
+
+  // Warn if no PIN configured - most hubs require PIN auth
+  if (!HUB_PIN) {
+    console.log(`[Daemon] ⚠️  No PIN configured!`);
+    console.log(`[Daemon]    If hub requires PIN, connection will fail.`);
+    console.log(`[Daemon]    Set via: --pin FLAG, MATRIX_HUB_PIN env, or .matrix.json hub_pin`);
+  } else {
+    console.log(`[Daemon] PIN: ${HUB_PIN.substring(0, 2)}***`);
+  }
 
   writePidFile();
   startHttpServer();
@@ -727,22 +774,31 @@ function showStatus(): void {
     process.exit(1);
   }
 
-  console.log(`[Daemon] Status: Running`);
-  console.log(`  PID: ${status.pid}`);
-  console.log(`  Port: ${status.port}`);
-
-  // Try to get detailed status from API
+  // Try to get actual connection status from API first
   fetch(`http://localhost:${status.port}/status`)
     .then(res => res.json())
     .then((data: any) => {
-      console.log(`  Connected: ${data.connected}`);
+      // Show actual WebSocket connection state, not just "Running"
+      const wsStatus = data.connected ? '✅ Connected' : '⚠️  Disconnected (WebSocket not connected)';
+      console.log(`[Daemon] Status: ${wsStatus}`);
+      console.log(`  PID: ${status.pid}`);
+      console.log(`  Port: ${status.port}`);
       console.log(`  Matrix ID: ${data.matrixId}`);
       console.log(`  Hub URL: ${data.hubUrl}`);
       console.log(`  Queued: ${data.queuedMessages}`);
       console.log(`  Inbox: ${data.receivedMessages}`);
+
+      if (!data.connected) {
+        console.log(`\n  ⚠️  Daemon process running but NOT connected to hub!`);
+        console.log(`     Check: Hub running? PIN correct? Network accessible?`);
+      }
     })
     .catch(() => {
-      console.log('  (Could not fetch detailed status)');
+      // API not responding - daemon might be zombie
+      console.log(`[Daemon] Status: ⚠️  Process exists but API not responding`);
+      console.log(`  PID: ${status.pid}`);
+      console.log(`  Port: ${status.port}`);
+      console.log(`\n  ⚠️  Daemon may be zombie. Try: bun run src/matrix-daemon.ts restart`);
     });
 }
 

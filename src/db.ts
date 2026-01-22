@@ -952,12 +952,13 @@ export function markMessageFailed(messageId: string, error: string): void {
 
 /**
  * Increment retry count for a message
+ * Only updates pending messages to prevent duplicate sends
  */
 export function incrementMessageRetry(messageId: string): number {
   db.run(`
     UPDATE matrix_messages
-    SET retry_count = retry_count + 1, status = 'pending'
-    WHERE message_id = ?
+    SET retry_count = retry_count + 1
+    WHERE message_id = ? AND status = 'pending'
   `, [messageId]);
   const msg = db.query(`SELECT retry_count FROM matrix_messages WHERE message_id = ?`).get(messageId) as { retry_count: number } | null;
   return msg?.retry_count || 0;
@@ -965,11 +966,12 @@ export function incrementMessageRetry(messageId: string): number {
 
 /**
  * Get pending messages that need retry
+ * Note: Only gets 'pending' status - 'sent' means successfully transmitted
  */
 export function getPendingMessages(maxRetries: number = 3): MatrixMessageRecord[] {
   return db.query(`
     SELECT * FROM matrix_messages
-    WHERE status IN ('pending', 'sent')
+    WHERE status = 'pending'
       AND retry_count < ?
     ORDER BY created_at ASC
   `).all(maxRetries) as MatrixMessageRecord[];
