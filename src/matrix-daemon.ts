@@ -18,7 +18,9 @@ import { exec } from 'child_process';
 import {
   saveIncomingMessage,
   saveMatrixMessage,
+  markMessageSending,
   markMessageSent,
+  markMessagePending,
   markMessageFailed,
   incrementMessageRetry,
   getPendingMessages,
@@ -241,6 +243,7 @@ function handleMessage(msg: any): void {
         toMatrix: msg.to || MATRIX_ID,
         content,
         messageType: msgType,
+        sequenceNumber: msg.seq || 0,  // Preserve sequence from sender
       });
     } catch (e) {
       console.error('[Daemon] Failed to persist message:', e);
@@ -293,14 +296,15 @@ function handleMessage(msg: any): void {
   }
 }
 
-function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string, existingId?: string): boolean {
+function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string, existingId?: string, existingSeq?: number): boolean {
   // Generate message ID for tracking
   const messageId = existingId || `${MATRIX_ID}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let sequenceNumber = existingSeq || 0;
 
   // Persist outgoing message (if new)
   if (!existingId) {
     try {
-      saveMatrixMessage({
+      const saved = saveMatrixMessage({
         messageId,
         fromMatrix: MATRIX_ID,
         toMatrix: to,
@@ -308,31 +312,38 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
         messageType: type,
         maxRetries: MAX_RETRIES,
       });
+      sequenceNumber = saved.sequenceNumber;
     } catch (e) {
       console.error('[Daemon] Failed to persist outgoing message:', e);
     }
   }
 
   if (!ws || !connected) {
-    // Queue for later retry
-    messageQueue.push({ type, content, to, id: messageId });
-    console.log(`[Daemon] Queued message (not connected)`);
+    // Message is already persisted to DB with status 'pending'
+    // The retryPendingMessages() loop will send it on reconnect
+    // No need to also add to in-memory queue (which caused duplicates)
+    console.log(`[Daemon] Message ${messageId} queued in DB (not connected)`);
     return false;
   }
 
+  // Two-phase commit: mark as 'sending' before transmission
+  // This prevents duplicates if crash occurs after ws.send but before markMessageSent
+  markMessageSending(messageId);
+
   try {
     // Hub expects type: 'message' for both direct and broadcast
-    // Direct: { type: 'message', to: 'target', content }
-    // Broadcast: { type: 'message', content } (no 'to' field)
+    // Include seq for message ordering at receiver
+    // Direct: { type: 'message', to: 'target', content, seq }
+    // Broadcast: { type: 'message', content, seq } (no 'to' field)
     const payload = type === 'broadcast'
-      ? { type: 'message', content, id: messageId }
-      : { type: 'message', to, content, id: messageId };
+      ? { type: 'message', content, id: messageId, seq: sequenceNumber }
+      : { type: 'message', to, content, id: messageId, seq: sequenceNumber };
 
     ws.send(JSON.stringify(payload));
 
-    // Mark as sent
+    // Mark as sent (second phase of two-phase commit)
     markMessageSent(messageId);
-    console.log(`[Daemon] Sent ${type}: ${content.substring(0, 50)}...`);
+    console.log(`[Daemon] Sent ${type} #${sequenceNumber}: ${content.substring(0, 50)}...`);
 
     // Push to SSE clients so watch shows outgoing messages too
     const outboundMsg = {
@@ -342,6 +353,7 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
       content,
       timestamp: new Date().toISOString(),
       id: messageId,
+      seq: sequenceNumber,
       outbound: true,  // Flag to distinguish from incoming
     };
     for (const client of sseClients) {
@@ -355,7 +367,8 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
     return true;
   } catch (error) {
     console.error('[Daemon] Send failed:', error);
-    messageQueue.push({ type, content, to, id: messageId });
+    // Mark back to 'pending' for retry (was 'sending')
+    markMessagePending(messageId);
     return false;
   }
 }
@@ -375,7 +388,7 @@ function retryPendingMessages(): void {
     }
 
     console.log(`[Daemon] Retrying message ${msg.message_id} (attempt ${retryCount}/${MAX_RETRIES})`);
-    sendMessage(msg.message_type, msg.content, msg.to_matrix || undefined, msg.message_id);
+    sendMessage(msg.message_type, msg.content, msg.to_matrix || undefined, msg.message_id, msg.sequence_number);
   }
 }
 
@@ -397,7 +410,7 @@ function stopRetryLoop(): void {
 function flushMessageQueue(): void {
   while (messageQueue.length > 0 && connected) {
     const msg = messageQueue.shift()!;
-    sendMessage(msg.type, msg.content, msg.to, msg.id);
+    sendMessage(msg.type, msg.content, msg.to, msg.id, msg.seq);
   }
 }
 

@@ -10,6 +10,29 @@ import { dirname, basename } from 'path';
 import { execSync } from 'child_process';
 
 const STATE_FILE = '.claude/.inbox-state';
+const DEFAULT_LIMIT = 5;
+
+// Get limit from environment, .matrix.json config, or default
+function getMessageLimit(): number {
+  // Check environment variable first
+  const envLimit = process.env.MATRIX_HOOK_LIMIT;
+  if (envLimit) {
+    const parsed = parseInt(envLimit, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+
+  // Check .matrix.json config
+  try {
+    if (existsSync('.matrix.json')) {
+      const config = JSON.parse(readFileSync('.matrix.json', 'utf8'));
+      if (config.hook_limit && typeof config.hook_limit === 'number' && config.hook_limit > 0) {
+        return config.hook_limit;
+      }
+    }
+  } catch {}
+
+  return DEFAULT_LIMIT;
+}
 
 function getMatrixId(): string {
   try {
@@ -21,6 +44,7 @@ function getMatrixId(): string {
 }
 
 const THIS_MATRIX = getMatrixId();
+const MESSAGE_LIMIT = getMessageLimit();
 
 interface MatrixMessage {
   id: number;
@@ -56,29 +80,53 @@ function truncate(str: string, maxLen: number): string {
   return str.substring(0, maxLen) + '...';
 }
 
+function markMessagesAsRead(messageIds: number[]): void {
+  if (messageIds.length === 0) return;
+  try {
+    const placeholders = messageIds.map(() => '?').join(',');
+    db.run(`
+      UPDATE matrix_messages
+      SET read_at = CURRENT_TIMESTAMP
+      WHERE id IN (${placeholders})
+    `, messageIds);
+  } catch {}
+}
+
 function main() {
   const lastSeen = getLastSeenId();
 
-  // Query new INCOMING messages from matrix_messages table
-  // Incoming = status 'delivered' and NOT from this matrix
+  // First, count total unread messages to show pagination hint
+  const countResult = db.query(`
+    SELECT COUNT(*) as total
+    FROM matrix_messages
+    WHERE id > ?
+      AND from_matrix != ?
+      AND status = 'delivered'
+  `).get(lastSeen, THIS_MATRIX) as { total: number };
+
+  const totalUnread = countResult?.total || 0;
+
+  if (totalUnread === 0) {
+    // No new messages - silent exit (no JSON needed)
+    process.exit(0);
+  }
+
+  // Query new INCOMING messages with configurable limit
+  // Order by (from_matrix, sequence_number) to preserve send order per matrix
   const rows = db.query(`
     SELECT id, from_matrix, content, message_type, created_at
     FROM matrix_messages
     WHERE id > ?
       AND from_matrix != ?
       AND status = 'delivered'
-    ORDER BY id ASC
-    LIMIT 5
-  `).all(lastSeen, THIS_MATRIX) as MatrixMessage[];
-
-  if (rows.length === 0) {
-    // No new messages - silent exit (no JSON needed)
-    process.exit(0);
-  }
+    ORDER BY from_matrix ASC, sequence_number ASC, id ASC
+    LIMIT ?
+  `).all(lastSeen, THIS_MATRIX, MESSAGE_LIMIT) as MatrixMessage[];
 
   // Build message context for Claude
   const messages: string[] = [];
   let maxId = lastSeen;
+  const messageIds: number[] = [];
 
   for (const msg of rows) {
     const icon = msg.message_type === 'direct' ? '✉️' : '📢';
@@ -86,13 +134,26 @@ function main() {
     const content = truncate(msg.content.replace(/\n/g, ' '), 100);
     messages.push(`${icon} [${from}] ${content}`);
     if (msg.id > maxId) maxId = msg.id;
+    messageIds.push(msg.id);
   }
 
   // Update last seen
   saveLastSeenId(maxId);
 
+  // Mark these messages as read
+  markMessagesAsRead(messageIds);
+
+  // Calculate remaining messages
+  const remaining = totalUnread - rows.length;
+  const paginationHint = remaining > 0
+    ? `\n\n... and ${remaining} more message(s). Use \`bun memory message --inbox\` for full list.`
+    : '';
+
   // Show clean summary to user on stderr (visible)
-  console.error(`📬 ${rows.length} new matrix message(s)`);
+  const summaryText = remaining > 0
+    ? `📬 ${rows.length} new matrix message(s) (${remaining} more in queue)`
+    : `📬 ${rows.length} new matrix message(s)`;
+  console.error(summaryText);
 
   // Output hook JSON - additionalContext goes to Claude with FULL content
   const fullMessages = rows.map(msg => {
@@ -104,7 +165,7 @@ function main() {
   const hookOutput = {
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext: `📬 ${rows.length} new matrix message(s):\n${fullMessages.join('\n\n')}\n\nRespond to these if relevant, or acknowledge receipt.`
+      additionalContext: `📬 ${rows.length} new matrix message(s):\n${fullMessages.join('\n\n')}${paginationHint}\n\nRespond to these if relevant, or acknowledge receipt.`
     }
   };
 

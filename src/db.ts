@@ -1,6 +1,10 @@
 import { Database } from "bun:sqlite";
+import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdirSync } from "fs";
+import { dirname } from "path";
 
 const DB_PATH = "./agents.db";
+const LOCK_PATH = "./agents.db.init.lock";
+const LOCK_TIMEOUT_MS = 30000; // 30 second timeout for stale locks
 
 // Optional vector DB import - may not be initialized
 let vectorDbModule: any = null;
@@ -15,15 +19,139 @@ async function getVectorDb() {
   return vectorDbModule;
 }
 
+// File-based lock for initialization coordination
+function acquireInitLock(): boolean {
+  try {
+    // Check for stale lock
+    if (existsSync(LOCK_PATH)) {
+      try {
+        const lockData = readFileSync(LOCK_PATH, 'utf-8');
+        const lockTime = parseInt(lockData, 10);
+        if (Date.now() - lockTime > LOCK_TIMEOUT_MS) {
+          // Stale lock, remove it
+          unlinkSync(LOCK_PATH);
+        } else {
+          // Lock is held by another process
+          return false;
+        }
+      } catch {
+        // Corrupted lock file, remove it
+        try { unlinkSync(LOCK_PATH); } catch {}
+      }
+    }
+
+    // Try to create lock file atomically using exclusive flag
+    const fd = Bun.file(LOCK_PATH);
+    writeFileSync(LOCK_PATH, Date.now().toString(), { flag: 'wx' });
+    return true;
+  } catch (e: any) {
+    // EEXIST means another process grabbed the lock
+    if (e.code === 'EEXIST') return false;
+    // Other errors - try to proceed anyway
+    return true;
+  }
+}
+
+function releaseInitLock(): void {
+  try {
+    unlinkSync(LOCK_PATH);
+  } catch {
+    // Lock already removed or never existed
+  }
+}
+
+function waitForInitLock(maxWaitMs: number = 10000): void {
+  const startTime = Date.now();
+  const sleepMs = 50;
+
+  while (existsSync(LOCK_PATH)) {
+    if (Date.now() - startTime > maxWaitMs) {
+      // Timeout - lock might be stale, try to clean up
+      try {
+        const lockData = readFileSync(LOCK_PATH, 'utf-8');
+        const lockTime = parseInt(lockData, 10);
+        if (Date.now() - lockTime > LOCK_TIMEOUT_MS) {
+          unlinkSync(LOCK_PATH);
+          break;
+        }
+      } catch {
+        try { unlinkSync(LOCK_PATH); } catch {}
+        break;
+      }
+      break;
+    }
+    // Busy wait with small delay
+    Bun.sleepSync(sleepMs);
+  }
+}
+
 export const db = new Database(DB_PATH);
 
 // Configure for concurrent access from multiple processes
-db.run("PRAGMA journal_mode=WAL");      // Allow concurrent reads during writes
-db.run("PRAGMA busy_timeout=5000");     // Wait up to 5 seconds if database is locked
-db.run("PRAGMA synchronous=NORMAL");    // Balance between safety and performance
+// These PRAGMAs may fail during concurrent startup - retry with backoff
+function configurePragmas(): void {
+  const maxRetries = 5;
+  const baseDelayMs = 50;
 
-// Initialize schema with comprehensive tracking
-db.run(`
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Set busy_timeout first to help with subsequent operations
+      db.run("PRAGMA busy_timeout=5000");     // Wait up to 5 seconds if database is locked
+      db.run("PRAGMA journal_mode=WAL");      // Allow concurrent reads during writes
+      db.run("PRAGMA synchronous=NORMAL");    // Balance between safety and performance
+      return; // Success
+    } catch (e: any) {
+      if (e.code === 'SQLITE_BUSY' && attempt < maxRetries) {
+        // Database locked - wait and retry with exponential backoff
+        Bun.sleepSync(baseDelayMs * attempt);
+        continue;
+      }
+      throw e; // Rethrow on last attempt or non-busy errors
+    }
+  }
+}
+configurePragmas();
+
+// Check if schema is already initialized (tables exist)
+function isSchemaInitialized(): boolean {
+  try {
+    const result = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='agents'").get();
+    return result !== null;
+  } catch {
+    return false;
+  }
+}
+
+// Initialize schema with file-based lock coordination
+function initializeSchema(): void {
+  // Skip if already initialized and we don't hold the lock
+  if (isSchemaInitialized() && existsSync(LOCK_PATH)) {
+    // Another process is initializing, wait for it
+    waitForInitLock();
+    return;
+  }
+
+  // Try to acquire lock for initialization
+  const gotLock = acquireInitLock();
+
+  if (!gotLock) {
+    // Another process is initializing, wait and return
+    waitForInitLock();
+    return;
+  }
+
+  try {
+    // Double-check after acquiring lock
+    if (isSchemaInitialized()) {
+      // Schema already exists, nothing to do
+      return;
+    }
+
+    // Run all schema creation in a transaction for atomicity
+    db.run("BEGIN IMMEDIATE");
+
+    try {
+      db.run(`
   CREATE TABLE IF NOT EXISTS agents (
     id INTEGER PRIMARY KEY,
     name TEXT,
@@ -516,6 +644,54 @@ db.run(`
   END
 `);
 
+      // Commit all schema changes atomically
+      db.run("COMMIT");
+    } catch (schemaError) {
+      // Rollback on any error
+      try { db.run("ROLLBACK"); } catch {}
+      throw schemaError;
+    }
+  } finally {
+    // Always release lock
+    releaseInitLock();
+  }
+}
+
+// Run schema initialization at module load
+initializeSchema();
+
+// ============ Idempotent Migrations (always run) ============
+// These use IF NOT EXISTS and try-catch, so they're safe to run on every load
+
+// Migration: Add sequence_number column to matrix_messages for ordering
+try {
+  db.run(`ALTER TABLE matrix_messages ADD COLUMN sequence_number INTEGER DEFAULT 0`);
+} catch { /* Column already exists */ }
+
+// Migration: Add next_retry_at column for exponential backoff
+try {
+  db.run(`ALTER TABLE matrix_messages ADD COLUMN next_retry_at TEXT`);
+} catch { /* Column already exists */ }
+
+// Migration: Add attempted_at column for tracking last retry attempt
+try {
+  db.run(`ALTER TABLE matrix_messages ADD COLUMN attempted_at TEXT`);
+} catch { /* Column already exists */ }
+
+// Create index for ordering messages by sequence within a matrix
+db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_messages_sequence ON matrix_messages(from_matrix, sequence_number)`);
+
+// Create index for efficient retry queries
+db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_messages_retry ON matrix_messages(status, next_retry_at)`);
+
+// Sequence counter table for atomic message ordering per matrix
+db.run(`
+  CREATE TABLE IF NOT EXISTS matrix_sequence_counters (
+    matrix_id TEXT PRIMARY KEY,
+    next_sequence INTEGER DEFAULT 1
+  )
+`);
+
 // ============ Agent Functions ============
 
 export function registerAgent(id: number, paneId: string, pid: number, name?: string) {
@@ -882,7 +1058,7 @@ export interface MatrixMessageRecord {
   to_matrix: string | null;
   content: string;
   message_type: 'broadcast' | 'direct';
-  status: 'pending' | 'sent' | 'delivered' | 'failed';
+  status: 'pending' | 'sending' | 'sent' | 'delivered' | 'failed';
   retry_count: number;
   max_retries: number;
   error: string | null;
@@ -890,10 +1066,33 @@ export interface MatrixMessageRecord {
   sent_at: string | null;
   delivered_at: string | null;
   read_at: string | null;
+  sequence_number: number;
+  next_retry_at: string | null;
+  attempted_at: string | null;
 }
 
 /**
- * Save a new outgoing matrix message
+ * Get the next sequence number for a matrix atomically
+ * Uses INSERT ON CONFLICT for atomic increment
+ */
+export function getNextSequenceNumber(matrixId: string): number {
+  // Atomic upsert: insert with 1 or increment existing
+  db.run(`
+    INSERT INTO matrix_sequence_counters (matrix_id, next_sequence)
+    VALUES (?, 1)
+    ON CONFLICT(matrix_id) DO UPDATE SET next_sequence = next_sequence + 1
+  `, [matrixId]);
+
+  // Get the current value (which we just set/incremented)
+  const row = db.query(`SELECT next_sequence FROM matrix_sequence_counters WHERE matrix_id = ?`)
+    .get(matrixId) as { next_sequence: number };
+
+  return row.next_sequence;
+}
+
+/**
+ * Save a new outgoing matrix message with sequence number
+ * Returns both the row ID and sequence number for inclusion in the message payload
  */
 export function saveMatrixMessage(msg: {
   messageId: string;
@@ -902,10 +1101,13 @@ export function saveMatrixMessage(msg: {
   content: string;
   messageType: 'broadcast' | 'direct';
   maxRetries?: number;
-}): number {
+}): { rowId: number; sequenceNumber: number } {
+  // Get the next sequence number for this matrix
+  const sequenceNumber = getNextSequenceNumber(msg.fromMatrix);
+
   const result = db.run(`
-    INSERT INTO matrix_messages (message_id, from_matrix, to_matrix, content, message_type, max_retries)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO matrix_messages (message_id, from_matrix, to_matrix, content, message_type, max_retries, sequence_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `, [
     msg.messageId,
     msg.fromMatrix,
@@ -913,17 +1115,41 @@ export function saveMatrixMessage(msg: {
     msg.content,
     msg.messageType,
     msg.maxRetries || 3,
+    sequenceNumber,
   ]);
-  return Number(result.lastInsertRowid);
+  return { rowId: Number(result.lastInsertRowid), sequenceNumber };
 }
 
 /**
- * Mark message as sent (transmitted to hub)
+ * Mark message as 'sending' before transmission (two-phase commit)
+ * This prevents duplicate sends if crash occurs after ws.send but before markMessageSent
+ */
+export function markMessageSending(messageId: string): void {
+  db.run(`
+    UPDATE matrix_messages
+    SET status = 'sending', attempted_at = CURRENT_TIMESTAMP
+    WHERE message_id = ?
+  `, [messageId]);
+}
+
+/**
+ * Mark message as sent (transmitted to hub successfully)
  */
 export function markMessageSent(messageId: string): void {
   db.run(`
     UPDATE matrix_messages
     SET status = 'sent', sent_at = CURRENT_TIMESTAMP
+    WHERE message_id = ?
+  `, [messageId]);
+}
+
+/**
+ * Mark message back to pending if send failed (for retry)
+ */
+export function markMessagePending(messageId: string): void {
+  db.run(`
+    UPDATE matrix_messages
+    SET status = 'pending'
     WHERE message_id = ?
   `, [messageId]);
 }
@@ -954,25 +1180,57 @@ export function markMessageFailed(messageId: string, error: string): void {
  * Increment retry count for a message
  * Only updates pending messages to prevent duplicate sends
  */
+/**
+ * Calculate next retry time with exponential backoff and jitter
+ * Base: 10s, Multiplier: 2x, Max: 5 minutes, Jitter: 0-2s
+ */
+function calculateNextRetryTime(retryCount: number): string {
+  const BASE_DELAY_MS = 10000;    // 10 seconds
+  const MAX_DELAY_MS = 300000;    // 5 minutes
+  const JITTER_MAX_MS = 2000;     // 0-2 seconds random jitter
+
+  // Exponential backoff: 10s, 20s, 40s, 80s, 160s (capped at 5 min)
+  const exponentialDelay = Math.min(BASE_DELAY_MS * Math.pow(2, retryCount), MAX_DELAY_MS);
+
+  // Add random jitter to prevent thundering herd
+  const jitter = Math.floor(Math.random() * JITTER_MAX_MS);
+
+  const nextRetryTime = new Date(Date.now() + exponentialDelay + jitter);
+  return nextRetryTime.toISOString();
+}
+
 export function incrementMessageRetry(messageId: string): number {
+  // Get current retry count first
+  const msg = db.query(`SELECT retry_count FROM matrix_messages WHERE message_id = ?`).get(messageId) as { retry_count: number } | null;
+  const currentRetryCount = msg?.retry_count || 0;
+
+  // Calculate next retry time based on NEW retry count
+  const nextRetryAt = calculateNextRetryTime(currentRetryCount);
+
   db.run(`
     UPDATE matrix_messages
-    SET retry_count = retry_count + 1
+    SET retry_count = retry_count + 1,
+        attempted_at = CURRENT_TIMESTAMP,
+        next_retry_at = ?
     WHERE message_id = ? AND status = 'pending'
-  `, [messageId]);
-  const msg = db.query(`SELECT retry_count FROM matrix_messages WHERE message_id = ?`).get(messageId) as { retry_count: number } | null;
-  return msg?.retry_count || 0;
+  `, [nextRetryAt, messageId]);
+
+  return currentRetryCount + 1;
 }
 
 /**
- * Get pending messages that need retry
- * Note: Only gets 'pending' status - 'sent' means successfully transmitted
+ * Get pending messages that are ready for retry
+ * Returns messages where:
+ * - status is 'pending' OR 'sending' (crashed mid-send)
+ * - retry_count < maxRetries
+ * - next_retry_at is NULL (never attempted) or in the past (ready for retry)
  */
 export function getPendingMessages(maxRetries: number = 3): MatrixMessageRecord[] {
   return db.query(`
     SELECT * FROM matrix_messages
-    WHERE status = 'pending'
+    WHERE status IN ('pending', 'sending')
       AND retry_count < ?
+      AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
     ORDER BY created_at ASC
   `).all(maxRetries) as MatrixMessageRecord[];
 }
@@ -990,7 +1248,7 @@ export function getFailedMessages(limit: number = 20): MatrixMessageRecord[] {
 }
 
 /**
- * Save incoming message to inbox
+ * Save incoming message to inbox (with sequence number from source)
  */
 export function saveIncomingMessage(msg: {
   messageId: string;
@@ -998,22 +1256,24 @@ export function saveIncomingMessage(msg: {
   toMatrix?: string;
   content: string;
   messageType: 'broadcast' | 'direct';
+  sequenceNumber?: number;
 }): number {
   const result = db.run(`
-    INSERT OR IGNORE INTO matrix_messages (message_id, from_matrix, to_matrix, content, message_type, status, sent_at, delivered_at)
-    VALUES (?, ?, ?, ?, ?, 'delivered', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    INSERT OR IGNORE INTO matrix_messages (message_id, from_matrix, to_matrix, content, message_type, status, sent_at, delivered_at, sequence_number)
+    VALUES (?, ?, ?, ?, ?, 'delivered', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
   `, [
     msg.messageId,
     msg.fromMatrix,
     msg.toMatrix || null,
     msg.content,
     msg.messageType,
+    msg.sequenceNumber || 0,
   ]);
   return Number(result.lastInsertRowid);
 }
 
 /**
- * Get unread messages for a matrix
+ * Get unread messages for a matrix (ordered by sequence within each sender)
  */
 export function getUnreadMessages(matrixId: string, limit: number = 50): MatrixMessageRecord[] {
   return db.query(`
@@ -1022,13 +1282,13 @@ export function getUnreadMessages(matrixId: string, limit: number = 50): MatrixM
       AND from_matrix != ?
       AND status = 'delivered'
       AND read_at IS NULL
-    ORDER BY created_at DESC
+    ORDER BY from_matrix ASC, sequence_number ASC, created_at ASC
     LIMIT ?
   `).all(matrixId, matrixId, limit) as MatrixMessageRecord[];
 }
 
 /**
- * Get all inbox messages for a matrix
+ * Get all inbox messages for a matrix (ordered by sequence within each sender)
  */
 export function getInboxMessages(matrixId: string, limit: number = 50): MatrixMessageRecord[] {
   return db.query(`
@@ -1036,7 +1296,7 @@ export function getInboxMessages(matrixId: string, limit: number = 50): MatrixMe
     WHERE (to_matrix = ? OR to_matrix IS NULL OR message_type = 'broadcast')
       AND from_matrix != ?
       AND status = 'delivered'
-    ORDER BY created_at DESC
+    ORDER BY from_matrix ASC, sequence_number ASC, created_at ASC
     LIMIT ?
   `).all(matrixId, matrixId, limit) as MatrixMessageRecord[];
 }
@@ -1843,14 +2103,16 @@ export function extractEntities(text: string): string[] {
 export function getOrCreateEntity(name: string, type: EntityRecord['type'] = 'concept'): number {
   const normalized = name.toLowerCase().trim();
 
-  const existing = db.query(`SELECT id FROM entities WHERE name = ?`).get(normalized) as { id: number } | null;
-  if (existing) return existing.id;
-
-  const result = db.run(
-    `INSERT INTO entities (name, type) VALUES (?, ?)`,
+  // Atomic upsert - no TOCTOU race condition
+  db.run(
+    `INSERT INTO entities (name, type) VALUES (?, ?)
+     ON CONFLICT(name) DO NOTHING`,
     [normalized, type]
   );
-  return Number(result.lastInsertRowid);
+
+  // Get the ID (either newly inserted or existing)
+  const row = db.query(`SELECT id FROM entities WHERE name = ?`).get(normalized) as { id: number };
+  return row.id;
 }
 
 /**
@@ -2735,22 +2997,21 @@ export interface MatrixRecord {
 export function registerMatrix(matrixId: string, displayName?: string, metadata?: Record<string, any>): number {
   const metadataJson = metadata ? JSON.stringify(metadata) : null;
 
-  // Upsert: insert or update if exists
-  const existing = db.query(`SELECT id FROM matrix_registry WHERE matrix_id = ?`).get(matrixId) as { id: number } | null;
-
-  if (existing) {
-    db.run(
-      `UPDATE matrix_registry SET display_name = COALESCE(?, display_name), last_seen = CURRENT_TIMESTAMP, status = 'online', metadata = COALESCE(?, metadata) WHERE id = ?`,
-      [displayName || null, metadataJson, existing.id]
-    );
-    return existing.id;
-  }
-
-  const result = db.run(
-    `INSERT INTO matrix_registry (matrix_id, display_name, status, metadata) VALUES (?, ?, 'online', ?)`,
+  // Atomic upsert using INSERT ON CONFLICT (no TOCTOU race condition)
+  db.run(
+    `INSERT INTO matrix_registry (matrix_id, display_name, status, metadata, last_seen)
+     VALUES (?, ?, 'online', ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(matrix_id) DO UPDATE SET
+       display_name = COALESCE(excluded.display_name, display_name),
+       last_seen = CURRENT_TIMESTAMP,
+       status = 'online',
+       metadata = COALESCE(excluded.metadata, metadata)`,
     [matrixId, displayName || null, metadataJson]
   );
-  return Number(result.lastInsertRowid);
+
+  // Get the ID (either newly inserted or existing)
+  const row = db.query(`SELECT id FROM matrix_registry WHERE matrix_id = ?`).get(matrixId) as { id: number };
+  return row.id;
 }
 
 /**
