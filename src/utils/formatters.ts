@@ -301,6 +301,22 @@ export function formatFullContextEnhanced(ctx: FullContext | null | undefined): 
   // Start with base formatting
   const lines = formatFullContext(ctx);
 
+  // Add user messages (recent conversation context)
+  if (ctx.user_messages?.length) {
+    if (lines.length > 0) lines.push('');
+    lines.push('Last conversation:');
+    // Show last 5 messages for context
+    const recentMessages = ctx.user_messages.slice(-5);
+    for (let i = 0; i < recentMessages.length; i++) {
+      const msg = recentMessages[i];
+      const truncated = msg && msg.length > 80 ? msg.substring(0, 80) + '...' : msg;
+      lines.push(`  ${i + 1}. "${truncated}"`);
+    }
+    if (ctx.user_messages.length > 5) {
+      lines.push(`  (${ctx.user_messages.length - 5} earlier messages omitted)`);
+    }
+  }
+
   // Add mid-change state if present
   if (ctx.mid_change_state) {
     if (lines.length > 0) lines.push('');
