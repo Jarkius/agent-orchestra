@@ -64,6 +64,20 @@
 2. **File-based** (fallback) - `./data/agent_inbox/` polling at 1s
 3. **Matrix Hub** (cross-matrix) - Port 8081 for multi-project messaging
 
+## When to Use What
+
+| Need | Use | Why |
+|------|-----|-----|
+| Assign task to sub-agent | MCP `assign_task` | Local orchestration within project |
+| Get agent results | MCP `get_task_result` | Results in `./data/agent_outbox/` |
+| Share context with agents | MCP `update_shared_context` | Writes to `./data/agent_shared/` |
+| Message another project | Matrix `matrix_send` | Cross-project via hub on :8081 |
+| Coordinate across machines | Matrix Hub | LAN/remote via `MATRIX_HUB_URL` |
+
+**Rule of thumb:**
+- Same project, sub-agents → **MCP tools** (uses `./data/`)
+- Different projects/machines → **Matrix Hub** (uses WebSocket :8081)
+
 ## Storage
 
 ```

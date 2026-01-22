@@ -7,6 +7,15 @@ Spawns real Claude CLI instances as sub-agents via MCP.
 @.claude/rules/agent-patterns.md
 @.claude/rules/matrix-comms.md
 
+## MCP vs Matrix
+
+| Need | Use | Port |
+|------|-----|------|
+| Control local agents | MCP tools (`assign_task`, `get_task_result`) | stdio |
+| Message other projects | Matrix (`matrix_send`, `bun memory message`) | 8081 |
+
+**Data paths:** `./data/agent_inbox/` (tasks) → `./data/agent_outbox/` (results)
+
 ## Quick Start
 
 ```bash

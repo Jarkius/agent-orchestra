@@ -188,6 +188,8 @@ bun memory purge sessions --keep 20  # Cleanup old sessions
 
 ### Multi-Agent Orchestration
 
+> **MCP tools** control agents within this project. Tasks flow through `./data/agent_inbox/`, results return via `./data/agent_outbox/`.
+
 ```bash
 # Spawn 3 agents with worktree isolation (includes watch pane)
 ./scripts/spawn/spawn_claude_agents.sh 3
@@ -203,6 +205,8 @@ tmux attach -t claude-agents-<pid>
 ```
 
 ### Matrix Communication (Cross-Instance)
+
+> **Matrix Hub** connects different projects/machines. Use this to coordinate work across codebases, not for local agent control.
 
 ```bash
 # Quick setup - starts hub and daemon
@@ -283,6 +287,19 @@ MATRIX_HUB_URL=ws://192.168.1.100:8081 bun run src/matrix-daemon.ts start
 │  └──────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Communication Layers
+
+| Layer | Port | Purpose | Data Path |
+|-------|------|---------|-----------|
+| **MCP Tools** | stdio | Orchestrator → Local agents | `./data/agent_inbox/` |
+| **WebSocket** | 8080 | Real-time task delivery | (in-memory) |
+| **File Fallback** | - | Reliable task queue | `./data/agent_outbox/` |
+| **Matrix Hub** | 8081 | Cross-project messaging | WebSocket only |
+
+**When to use what:**
+- **MCP tools**: Control agents in *this* project (assign_task, get_task_result)
+- **Matrix Hub**: Message *other* projects/machines (matrix_send, bun memory message)
 
 ### Data Flow: Learning Loop
 
