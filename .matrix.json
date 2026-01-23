@@ -1,5 +1,5 @@
 {
-  "matrix_id": "test-spawns",
+  "matrix_id": "test-matrix2",
   "daemon_port": 37890,
   "daemon_dir": "~/.matrix-daemon-ts",
   "database": "./agents.db",
