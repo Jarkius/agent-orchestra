@@ -4,5 +4,6 @@
   "daemon_dir": "~/.matrix-daemon-ts",
   "database": "./agents.db",
   "chromadb_url": "http://localhost:8100",
-  "hub_url": "ws://localhost:8081"
+  "hub_url": "ws://localhost:8081",
+  "hub_pin": "test123"
 }
