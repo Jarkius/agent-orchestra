@@ -32,7 +32,13 @@ import {
   type UnifiedTaskStatus,
   type UnifiedTaskDomain,
 } from '../../src/db';
-import { getProjectGitHubRepo } from '../../src/utils/git-context';
+import {
+  getProjectGitHubRepo,
+  parseCommitIssueRefs,
+  detectTaskCompletion,
+  type CommitWithRefs,
+  type TaskCompletionHint,
+} from '../../src/utils/git-context';
 import { $ } from 'bun';
 
 // ANSI color codes
@@ -40,6 +46,9 @@ const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
 const CYAN = '\x1b[36m';
+const GREEN = '\x1b[32m';
+const YELLOW = '\x1b[33m';
+const RED = '\x1b[31m';
 
 const COMPONENTS = ['chromadb', 'sqlite', 'memory', 'mcp', 'agent', 'cli', 'vector', 'other'] as const;
 type Component = typeof COMPONENTS[number];
@@ -269,7 +278,8 @@ ${BOLD}Usage:${RESET}
   bun memory task:list [--domain] [--all]       List tasks by domain
   bun memory task:create "Title" --domain       Create a new task
   bun memory task:update <id> <status>          Update task status
-  bun memory task:sync                          Sync with GitHub
+  bun memory task:sync [--auto]                 Sync with GitHub + analyze commits
+  bun memory task:analyze [days] [--auto]       Analyze commits for completed tasks
   bun memory task:stats                         Show statistics
 
 ${BOLD}Domains:${RESET}
@@ -281,9 +291,14 @@ ${BOLD}Actions:${RESET}
   task:list        List tasks (default if no action specified)
   task:create      Create a new task
   task:update      Update task status/priority/notes
-  task:sync        Sync system tasks with GitHub
+  task:sync        Sync with GitHub + gap analysis (checks commits)
+  task:analyze     Analyze git commits to find completed tasks
   task:stats       Show task statistics
   task:promote     Promote project task to system
+
+${BOLD}Gap Analysis:${RESET}
+  --auto           Auto-close tasks with high-confidence commit matches
+  [days]           Number of days to look back (default: 30)
 
 ${BOLD}Examples:${RESET}
   bun memory task:create "Fix race condition" --system -c sqlite
@@ -292,7 +307,10 @@ ${BOLD}Examples:${RESET}
   bun memory task:update 5 done
   bun memory task:update 5 --priority high
   bun memory task:list --system --all
-  bun memory task:sync
+  bun memory task:sync                          # Sync + analyze
+  bun memory task:sync --auto                   # Sync + auto-close matches
+  bun memory task:analyze                       # Just analyze (no sync)
+  bun memory task:analyze 7 --auto              # Analyze last 7 days, auto-close
 `);
 }
 
@@ -515,7 +533,9 @@ export async function handleUpdate(args: string[]): Promise<void> {
   }
 }
 
-export async function handleSync(): Promise<void> {
+export async function handleSync(args: string[] = []): Promise<void> {
+  const autoClose = args.includes('--auto');
+
   console.log('\n\ud83d\udd04 Syncing with GitHub...\n');
 
   const pending = getTasksPendingSync();
@@ -528,7 +548,14 @@ export async function handleSync(): Promise<void> {
   console.log('Importing from GitHub:');
   const { imported, updated } = await syncFromGitHub();
 
-  console.log(`\n\u2713 Sync complete: ${imported} imported, ${updated} updated\n`);
+  console.log(`\n\u2713 Sync complete: ${imported} imported, ${updated} updated`);
+
+  // Run gap analysis on remaining open tasks
+  const openTasks = getUnifiedTasks({ includeCompleted: false });
+  if (openTasks.length > 0) {
+    const analysis = analyzeTasksAgainstCommits(openTasks, 30);
+    displayGapAnalysis(analysis, autoClose);
+  }
 }
 
 export async function handlePromote(args: string[]): Promise<void> {
@@ -608,6 +635,206 @@ export function handleStats(): void {
 }
 
 // ============================================================================
+// Gap Analysis Functions
+// ============================================================================
+
+interface TaskAnalysis {
+  completed: { task: UnifiedTask; evidence: CommitWithRefs[]; confidence: number }[];
+  possiblyCompleted: { task: UnifiedTask; evidence: TaskCompletionHint }[];
+  pending: UnifiedTask[];
+  autoClosedByRefs: { task: UnifiedTask; commits: CommitWithRefs[] }[];
+}
+
+function analyzeTasksAgainstCommits(tasks: UnifiedTask[], sinceDays = 30): TaskAnalysis {
+  const result: TaskAnalysis = {
+    completed: [],
+    possiblyCompleted: [],
+    pending: [],
+    autoClosedByRefs: [],
+  };
+
+  // Parse commits for explicit issue references
+  const issueRefs = parseCommitIssueRefs(sinceDays);
+
+  // Check each open task
+  for (const task of tasks) {
+    // Check for explicit issue reference (fixes #N, closes #N)
+    const ghIssue = task.github_issue_number;
+    const localId = task.id;
+
+    // Check if this task's GitHub issue was referenced
+    if (ghIssue && issueRefs.has(ghIssue)) {
+      result.autoClosedByRefs.push({
+        task,
+        commits: issueRefs.get(ghIssue)!,
+      });
+      continue;
+    }
+
+    // Check if local task ID was referenced
+    if (issueRefs.has(localId)) {
+      result.autoClosedByRefs.push({
+        task,
+        commits: issueRefs.get(localId)!,
+      });
+      continue;
+    }
+
+    // Otherwise not auto-closed by refs - will be analyzed below
+    result.pending.push(task);
+  }
+
+  // Run fuzzy matching on remaining pending tasks
+  const pendingForFuzzy = result.pending;
+  result.pending = [];
+
+  // Use detectTaskCompletion for fuzzy matching
+  const sinceDate = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+  const hints = detectTaskCompletion(
+    pendingForFuzzy.map(t => ({ description: `${t.title} ${t.description || ''}`, status: t.status })),
+    sinceDate
+  );
+
+  // Match hints back to tasks
+  const hintMap = new Map<string, TaskCompletionHint>();
+  for (const hint of hints) {
+    hintMap.set(hint.taskDescription, hint);
+  }
+
+  for (const task of pendingForFuzzy) {
+    const desc = `${task.title} ${task.description || ''}`;
+    const hint = hintMap.get(desc);
+
+    if (hint && hint.likelyCompleted && hint.confidence >= 0.8) {
+      result.completed.push({
+        task,
+        evidence: hint.evidence.map(e => {
+          const match = e.match(/^([a-f0-9]+)\s+(.+)$/i);
+          return {
+            hash: match?.[1] || '',
+            message: match?.[2] || e,
+            issueRefs: [],
+          };
+        }),
+        confidence: hint.confidence,
+      });
+    } else if (hint && hint.confidence >= 0.5) {
+      result.possiblyCompleted.push({ task, evidence: hint });
+    } else {
+      result.pending.push(task);
+    }
+  }
+
+  return result;
+}
+
+function displayGapAnalysis(analysis: TaskAnalysis, autoClose = false): number {
+  console.log(`\n${BOLD}📊 Task Gap Analysis${RESET}\n`);
+  console.log('─'.repeat(70));
+
+  let autoUpdated = 0;
+
+  // Auto-closed via explicit refs
+  if (analysis.autoClosedByRefs.length > 0) {
+    console.log(`\n${GREEN}🔗 Auto-closed via commit refs:${RESET}`);
+    for (const { task, commits } of analysis.autoClosedByRefs) {
+      const ghRef = task.github_issue_number ? ` (GH #${task.github_issue_number})` : '';
+      console.log(`  #${task.id}${ghRef} ${task.title.slice(0, 50)}`);
+      for (const commit of commits.slice(0, 2)) {
+        console.log(`    ${DIM}${commit.hash.slice(0, 7)} "${commit.message}"${RESET}`);
+      }
+      if (autoClose) {
+        updateUnifiedTask(task.id, { status: 'done' });
+        console.log(`    ${GREEN}→ Marked as done${RESET}`);
+        autoUpdated++;
+      }
+    }
+  }
+
+  // High confidence completed
+  if (analysis.completed.length > 0) {
+    console.log(`\n${GREEN}✅ Completed (high confidence):${RESET}`);
+    for (const { task, evidence, confidence } of analysis.completed) {
+      const component = task.component ? `[${task.component}]` : '';
+      console.log(`  #${task.id} ${component} ${task.title.slice(0, 50)}`);
+      console.log(`    ${DIM}Confidence: ${(confidence * 100).toFixed(0)}%${RESET}`);
+      for (const commit of evidence.slice(0, 2)) {
+        console.log(`    ${DIM}${commit.hash.slice(0, 7)} "${commit.message}"${RESET}`);
+      }
+      if (autoClose) {
+        updateUnifiedTask(task.id, { status: 'done' });
+        console.log(`    ${GREEN}→ Marked as done${RESET}`);
+        autoUpdated++;
+      }
+    }
+  }
+
+  // Medium confidence (possibly completed)
+  if (analysis.possiblyCompleted.length > 0) {
+    console.log(`\n${YELLOW}⚠️  Possibly completed (review):${RESET}`);
+    for (const { task, evidence } of analysis.possiblyCompleted) {
+      const component = task.component ? `[${task.component}]` : '';
+      console.log(`  #${task.id} ${component} ${task.title.slice(0, 50)}`);
+      console.log(`    ${DIM}Confidence: ${(evidence.confidence * 100).toFixed(0)}%${RESET}`);
+      for (const commit of evidence.evidence.slice(0, 2)) {
+        console.log(`    ${DIM}${commit}${RESET}`);
+      }
+      console.log(`    ${DIM}→ Confirm: bun memory task:update ${task.id} done${RESET}`);
+    }
+  }
+
+  // Still pending
+  if (analysis.pending.length > 0) {
+    console.log(`\n${RED}🔴 Still pending:${RESET}`);
+    for (const task of analysis.pending.slice(0, 10)) {
+      const component = task.component ? `[${task.component}]` : '';
+      const ghRef = task.github_issue_number ? ` (#${task.github_issue_number})` : '';
+      console.log(`  #${task.id} ${component} ${task.title.slice(0, 50)}${ghRef}`);
+    }
+    if (analysis.pending.length > 10) {
+      console.log(`  ${DIM}... and ${analysis.pending.length - 10} more${RESET}`);
+    }
+  }
+
+  // Summary
+  const total = analysis.autoClosedByRefs.length + analysis.completed.length +
+                analysis.possiblyCompleted.length + analysis.pending.length;
+  console.log('\n' + '─'.repeat(70));
+  console.log(`Summary: ${total} open tasks analyzed`);
+  console.log(`  ${GREEN}✓${RESET} ${analysis.autoClosedByRefs.length + analysis.completed.length} completed`);
+  console.log(`  ${YELLOW}?${RESET} ${analysis.possiblyCompleted.length} need review`);
+  console.log(`  ${RED}○${RESET} ${analysis.pending.length} still pending`);
+  if (autoUpdated > 0) {
+    console.log(`  ${GREEN}→ ${autoUpdated} tasks auto-updated${RESET}`);
+  }
+  console.log('');
+
+  return autoUpdated;
+}
+
+export async function handleAnalyze(args: string[]): Promise<void> {
+  const sinceDays = parseInt(args.find(a => /^\d+$/.test(a)) || '30');
+  const autoClose = args.includes('--auto');
+
+  console.log(`\n🔍 Analyzing commits from last ${sinceDays} days...`);
+
+  // Get all open tasks
+  const openTasks = getUnifiedTasks({ includeCompleted: false });
+
+  if (openTasks.length === 0) {
+    console.log('\n✓ No open tasks to analyze\n');
+    return;
+  }
+
+  const analysis = analyzeTasksAgainstCommits(openTasks, sinceDays);
+  const updated = displayGapAnalysis(analysis, autoClose);
+
+  if (!autoClose && (analysis.autoClosedByRefs.length > 0 || analysis.completed.length > 0)) {
+    console.log(`${DIM}Tip: Use --auto to automatically close high-confidence matches${RESET}\n`);
+  }
+}
+
+// ============================================================================
 // Main Entry Point
 // ============================================================================
 
@@ -635,13 +862,16 @@ export async function runTask(action: string | undefined, args: string[]): Promi
       await handleUpdate(args);
       break;
     case 'sync':
-      await handleSync();
+      await handleSync(args);
       break;
     case 'promote':
       await handlePromote(args);
       break;
     case 'stats':
       handleStats();
+      break;
+    case 'analyze':
+      await handleAnalyze(args);
       break;
     case 'help':
       printHelp();
@@ -668,9 +898,9 @@ if (import.meta.main) {
     await handleList([]);
   } else {
     // Check if first arg looks like an action or task ID
-    const firstArg = args[0];
+    const firstArg = args[0]!;
 
-    if (['list', 'create', 'update', 'sync', 'promote', 'stats', 'help'].includes(firstArg)) {
+    if (['list', 'create', 'update', 'sync', 'analyze', 'promote', 'stats', 'help'].includes(firstArg)) {
       await runTask(firstArg, args.slice(1));
     } else {
       // Backwards compat: treat as legacy command

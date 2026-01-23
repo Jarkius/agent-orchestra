@@ -206,6 +206,97 @@ export interface TaskCompletionHint {
 }
 
 /**
+ * Commit with parsed issue references
+ */
+export interface CommitWithRefs {
+  hash: string;
+  message: string;
+  issueRefs: number[];  // Issue numbers referenced with fix/close/resolve
+}
+
+/**
+ * Parse commits for issue references (fixes #N, closes #N, resolves #N)
+ * Returns map of issue number -> commits that reference it
+ */
+export function parseCommitIssueRefs(sinceDays = 30): Map<number, CommitWithRefs[]> {
+  const commits = getCommitsSinceDate(new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString());
+  const issueMap = new Map<number, CommitWithRefs[]>();
+
+  // Pattern: fix/fixes/fixed/close/closes/closed/resolve/resolves/resolved #N
+  const pattern = /(?:fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)\s+#(\d+)/gi;
+
+  for (const commitLine of commits) {
+    // Format: "abc1234 commit message"
+    const hashMatch = commitLine.match(/^([a-f0-9]+)\s+(.+)$/i);
+    if (!hashMatch) continue;
+
+    const hash = hashMatch[1] || '';
+    const message = hashMatch[2] || '';
+
+    // Find all issue references in this commit
+    const refs: number[] = [];
+    let match;
+    while ((match = pattern.exec(message)) !== null) {
+      const issueNum = parseInt(match[1] || '0');
+      if (issueNum > 0) refs.push(issueNum);
+    }
+    // Reset pattern for next iteration
+    pattern.lastIndex = 0;
+
+    // Also check for "#N" alone (common shorthand)
+    const hashRefs = message.match(/#(\d+)/g);
+    if (hashRefs) {
+      for (const ref of hashRefs) {
+        const num = parseInt(ref.slice(1));
+        if (num > 0 && !refs.includes(num)) {
+          // Only add if message suggests completion (feat, fix, implement, add, etc.)
+          if (/^(feat|fix|impl|add|complete|finish|done|resolve)/i.test(message)) {
+            refs.push(num);
+          }
+        }
+      }
+    }
+
+    if (refs.length > 0) {
+      const commitInfo: CommitWithRefs = { hash, message, issueRefs: refs };
+      for (const issueNum of refs) {
+        const existing = issueMap.get(issueNum) || [];
+        existing.push(commitInfo);
+        issueMap.set(issueNum, existing);
+      }
+    }
+  }
+
+  return issueMap;
+}
+
+/**
+ * Get commits with their full message for gap analysis
+ */
+export function getCommitsWithMessages(sinceDays = 30): CommitWithRefs[] {
+  const commits = getCommitsSinceDate(new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString());
+
+  return commits.map(line => {
+    const hashMatch = line.match(/^([a-f0-9]+)\s+(.+)$/i);
+    if (!hashMatch) return { hash: '', message: line, issueRefs: [] };
+
+    const hash = hashMatch[1] || '';
+    const message = hashMatch[2] || '';
+
+    // Parse issue refs
+    const pattern = /(?:fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved)\s+#(\d+)/gi;
+    const refs: number[] = [];
+    let match;
+    while ((match = pattern.exec(message)) !== null) {
+      const issueNum = parseInt(match[1] || '0');
+      if (issueNum > 0) refs.push(issueNum);
+    }
+
+    return { hash, message, issueRefs: refs };
+  });
+}
+
+/**
  * Detect if pending tasks were likely completed based on git history
  */
 export function detectTaskCompletion(

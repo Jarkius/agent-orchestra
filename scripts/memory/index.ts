@@ -229,7 +229,9 @@ Commands:
   task:list         List tasks (--system, --project, --session, --all)
   task:create       Create task (--system, --project, --session)
   task:update <id>  Update task status/priority/notes
-  task:sync         Sync system tasks with GitHub
+  task:sync         Sync with GitHub + analyze commits for completions
+  task:sync --auto  Sync + auto-close high-confidence matches
+  task:analyze      Analyze commits without syncing (gap analysis)
   task:stats        Show task statistics
   task:promote <id> Promote project task to system
   graph             List top entities in knowledge graph

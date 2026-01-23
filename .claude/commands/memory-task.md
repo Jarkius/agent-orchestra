@@ -1,6 +1,6 @@
 # Memory Task
 
-Unified task management with two domains and multi-repo GitHub sync.
+Unified task management with two domains, multi-repo GitHub sync, and git commit analysis.
 
 ## Usage
 
@@ -12,7 +12,10 @@ Unified task management with two domains and multi-repo GitHub sync.
 /task "Title" --project --github # Create project task (→ project's GitHub)
 /task <id> done                 # Complete task (closes GitHub if synced)
 /task <id> --promote            # Promote project -> system
-/task sync                      # Sync with GitHub
+/task sync                      # Sync with GitHub + analyze commits
+/task sync --auto               # Sync + auto-close high-confidence matches
+/task analyze                   # Analyze commits without syncing
+/task analyze 7 --auto          # Analyze last 7 days, auto-close matches
 ```
 
 ## Domains
@@ -38,9 +41,29 @@ Unified task management with two domains and multi-repo GitHub sync.
 # Promote project task to system (creates GitHub issue in system repo)
 /task 7 --promote
 
-# Sync with GitHub (import new issues, update status)
+# Sync with GitHub (import new issues, update status, analyze commits)
 /task sync
+
+# Sync and auto-close tasks with high-confidence commit matches
+/task sync --auto
+
+# Just analyze commits (no GitHub sync)
+/task analyze
+
+# Analyze last 7 days and auto-close matches
+/task analyze 7 --auto
 ```
+
+## Gap Analysis
+
+The sync and analyze commands check git commits to identify completed tasks:
+
+- **Auto-closed via refs**: Commits with "fixes #N", "closes #N", "resolves #N"
+- **High confidence**: Fuzzy matching finds commits that match task keywords
+- **Possibly completed**: Medium-confidence matches (review manually)
+- **Still pending**: No matching commits found
+
+Use `--auto` to automatically close high-confidence matches.
 
 ## Options
 
