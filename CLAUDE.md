@@ -58,9 +58,15 @@ bun memory task:create "Fix X" --system      # System task → GitHub
 bun memory task:create "Study Y" --project   # Local project task
 bun memory task:create "Step 1" --session    # Session-scoped task
 bun memory task:update 5 done                # Complete task
-bun memory task:sync                         # Sync with GitHub
+bun memory task:sync                         # Sync with GitHub + gap analysis
+bun memory task:sync --auto                  # Auto-close high-confidence matches
+bun memory task:analyze                      # Analyze commits for completions
 bun memory task:stats                        # Task statistics
 ```
+
+Gap analysis detects completed tasks by checking git commits for:
+- Explicit refs: `fixes #N`, `closes #N`, `resolves #N`
+- Fuzzy matches: commit messages matching task keywords
 
 ## Semantic Code Search
 
