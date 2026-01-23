@@ -1,7 +1,7 @@
 {
-  "matrix_id": "agent-orchestra",
+  "matrix_id": "test-spawns",
   "daemon_port": 37890,
-  "daemon_dir": "~/.matrix-daemon-ao",
+  "daemon_dir": "~/.matrix-daemon-ts",
   "database": "./agents.db",
   "chromadb_url": "http://localhost:8100",
   "hub_url": "ws://localhost:8081"
