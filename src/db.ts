@@ -693,7 +693,7 @@ db.run(`
 `);
 
 // ============ Unified Tasks Schema ============
-// Two domains: 'system' (auto-sync with GitHub) and 'project' (local until --promote)
+// Three domains: 'system' (auto-sync with GitHub), 'project' (local), 'session' (scoped to session)
 
 db.run(`
   CREATE TABLE IF NOT EXISTS unified_tasks (
@@ -703,8 +703,8 @@ db.run(`
     status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'done', 'blocked', 'wont_fix')),
     priority TEXT DEFAULT 'normal' CHECK(priority IN ('critical', 'high', 'normal', 'low')),
 
-    -- Domain: 'system' (auto-sync) or 'project' (local until --promote)
-    domain TEXT NOT NULL CHECK(domain IN ('system', 'project')),
+    -- Domain: 'system' (auto-sync), 'project' (local), 'session' (session-scoped)
+    domain TEXT NOT NULL CHECK(domain IN ('system', 'project', 'session')),
 
     -- GitHub sync (for domain='system' or project with --github)
     github_issue_number INTEGER,
@@ -748,6 +748,109 @@ try {
 
 // Index for github_repo (after migration adds the column)
 db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_repo ON unified_tasks(github_repo)`);
+
+// Index for session_id (for session-scoped tasks)
+db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_session ON unified_tasks(session_id)`);
+
+// Migration: Update domain constraint to include 'session'
+// SQLite doesn't allow ALTER TABLE to modify constraints, so we recreate if needed
+try {
+  // Check if 'session' domain is already valid by checking table_info
+  const tableInfo = db.query(`PRAGMA table_info(unified_tasks)`).all() as any[];
+  const domainCol = tableInfo.find((c: any) => c.name === 'domain');
+
+  // If domain column exists but doesn't allow 'session', recreate table
+  if (domainCol && !domainCol.dflt_value?.includes('session')) {
+    // Try inserting a test row - if it fails, constraint needs updating
+    try {
+      db.run(`INSERT INTO unified_tasks (title, domain, status) VALUES ('__test__', 'session', 'open')`);
+      db.run(`DELETE FROM unified_tasks WHERE title = '__test__'`);
+    } catch {
+      // Constraint rejects 'session', need to recreate table
+      db.run(`PRAGMA foreign_keys=OFF`);
+
+      db.run(`
+        CREATE TABLE unified_tasks_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'done', 'blocked', 'wont_fix')),
+          priority TEXT DEFAULT 'normal' CHECK(priority IN ('critical', 'high', 'normal', 'low')),
+          domain TEXT NOT NULL CHECK(domain IN ('system', 'project', 'session')),
+          github_issue_number INTEGER,
+          github_issue_url TEXT,
+          github_synced_at TEXT,
+          github_sync_status TEXT DEFAULT 'pending' CHECK(github_sync_status IN ('pending', 'synced', 'error', 'local_only')),
+          github_repo TEXT,
+          component TEXT,
+          repro_steps TEXT,
+          known_fix TEXT,
+          context TEXT,
+          session_id TEXT,
+          learning_id INTEGER,
+          project_path TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (session_id) REFERENCES sessions(id),
+          FOREIGN KEY (learning_id) REFERENCES learnings(id)
+        )
+      `);
+
+      db.run(`
+        INSERT INTO unified_tasks_new
+        SELECT * FROM unified_tasks
+      `);
+
+      db.run(`DROP TABLE unified_tasks`);
+      db.run(`ALTER TABLE unified_tasks_new RENAME TO unified_tasks`);
+
+      // Recreate indexes
+      db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_domain ON unified_tasks(domain)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_status ON unified_tasks(status)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_github ON unified_tasks(github_issue_number)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_component ON unified_tasks(component)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_project ON unified_tasks(project_path)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_repo ON unified_tasks(github_repo)`);
+      db.run(`CREATE INDEX IF NOT EXISTS idx_unified_tasks_session ON unified_tasks(session_id)`);
+
+      db.run(`PRAGMA foreign_keys=ON`);
+    }
+  }
+} catch { /* Migration already done or table just created */ }
+
+// Migration: Migrate session_tasks to unified_tasks
+try {
+  const sessionTasks = db.query(`SELECT * FROM session_tasks WHERE 1=1`).all() as any[];
+  if (sessionTasks.length > 0) {
+    for (const task of sessionTasks) {
+      // Map session_tasks status to unified_tasks status
+      const statusMap: Record<string, string> = {
+        'pending': 'open',
+        'in_progress': 'in_progress',
+        'done': 'done',
+        'blocked': 'blocked'
+      };
+      const status = statusMap[task.status] || 'open';
+
+      db.run(`
+        INSERT INTO unified_tasks (
+          title, description, status, priority, domain, session_id, context, created_at
+        ) VALUES (?, ?, ?, ?, 'session', ?, ?, ?)
+      `, [
+        task.description,
+        task.notes || null,
+        status,
+        task.priority || 'normal',
+        task.session_id,
+        task.notes || null,
+        task.created_at
+      ]);
+    }
+    // Clear migrated tasks
+    db.run(`DELETE FROM session_tasks`);
+    console.log(`Migrated ${sessionTasks.length} session tasks to unified_tasks`);
+  }
+} catch { /* Migration already done or no session_tasks */ }
 
 // ============ Agent Functions ============
 

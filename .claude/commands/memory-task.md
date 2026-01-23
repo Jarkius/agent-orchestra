@@ -1,57 +1,68 @@
----
-description: "List and update pending tasks across sessions. Track work items with status transitions."
----
-
 # Memory Task
 
-Manage session tasks - list pending work and update task status.
+Unified task management with two domains and multi-repo GitHub sync.
 
 ## Usage
 
 ```
-/memory-task [list|<id> <status>]
+/task                           # List pending tasks
+/task list [--system|--project] # List by domain
+/task "Title" --system          # Create system task (→ system GitHub)
+/task "Title" --project         # Create project task (local only)
+/task "Title" --project --github # Create project task (→ project's GitHub)
+/task <id> done                 # Complete task (closes GitHub if synced)
+/task <id> --promote            # Promote project -> system
+/task sync                      # Sync with GitHub
 ```
+
+## Domains
+
+- **System**: Auto-syncs with system GitHub issues. For bugs, features, test plans.
+- **Project**: Local by default. Use `--github` to sync to current project's repo.
 
 ## Examples
 
 ```bash
-# List pending tasks
-/memory-task list
+# Create system task (auto-creates GitHub issue in system repo)
+/task "Fix race condition in save" --system -c sqlite
 
-# List all tasks (including completed)
-/memory-task list --all
+# Create project task (stays local)
+/task "Study RAG patterns" --project
 
-# Update task status
-/memory-task 5 done
-/memory-task 5 in_progress
-/memory-task 5 blocked
+# Create project task with GitHub sync (→ current project's repo)
+/task "Add feature X" --project --github
 
-# Add notes to a task
-/memory-task 5 --notes "Waiting on API review"
+# Complete task (closes GitHub issue if synced)
+/task 5 done
 
-# View task details
-/memory-task 5
+# Promote project task to system (creates GitHub issue in system repo)
+/task 7 --promote
+
+# Sync with GitHub (import new issues, update status)
+/task sync
 ```
 
-## Task Statuses
+## Options
 
-| Status | Icon | Description |
-|--------|------|-------------|
-| `done` | `✓` | Completed |
-| `pending` | `○` | Not started |
-| `in_progress` | `▶` | Currently working |
-| `blocked` | `✗` | Blocked by something |
-
-## Auto-Tracking
-
-- `started_at` is auto-set when status changes to `in_progress`
-- `completed_at` is auto-set when status changes to `done`
+- `--system, -s` - System domain (auto-syncs to system GitHub repo)
+- `--project, -p` - Project domain (local by default)
+- `--github, -g` - Sync project task to current project's GitHub repo
+- `--component, -c` - Component: chromadb, sqlite, memory, mcp, agent, cli, vector, other
+- `--priority` - Priority: critical, high, normal, low
+- `--repro` - Steps to reproduce
+- `--fix` - Known fix or workaround
+- `--all` - Include completed tasks in list
 
 ## Instructions
 
-Run the task command:
+Run the unified task command:
 ```bash
-bun memory task $ARGUMENTS
+bun memory utask $ARGUMENTS
 ```
 
-If no arguments, default to `list` which shows pending tasks grouped by session.
+If no arguments provided:
+```bash
+bun memory utask
+```
+
+This will list all pending tasks. Confirm task creation or status changes to the user.

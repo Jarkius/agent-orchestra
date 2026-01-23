@@ -21,7 +21,7 @@ import {
 const HUB_PORT = parseInt(process.env.MATRIX_HUB_PORT || '8081');
 const HUB_HOST = process.env.MATRIX_HUB_HOST || 'localhost'; // Use '0.0.0.0' for LAN access
 const HUB_SECRET = process.env.MATRIX_HUB_SECRET || 'default-hub-secret-change-me';
-const TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TOKEN_EXPIRY_MS = parseInt(process.env.MATRIX_TOKEN_EXPIRY_HOURS || '2') * 60 * 60 * 1000; // Default 2 hours
 const HEARTBEAT_INTERVAL_MS = 10000; // 10 seconds
 const HEARTBEAT_TIMEOUT_MS = 30000; // 30 seconds
 
@@ -89,7 +89,7 @@ export function generateMatrixToken(matrixId: string): string {
   // Generate deterministic token based on matrix ID and secret
   // This allows reconnection with same token if matrix ID is known
   const token = createHash('sha256')
-    .update(matrixId + HUB_SECRET + Date.now())
+    .update(matrixId + HUB_SECRET)
     .digest('hex');
 
   const now = new Date();

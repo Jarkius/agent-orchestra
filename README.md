@@ -172,17 +172,18 @@ bun memory learn debugging "Fixed null pointer" --lesson "Always check for null"
 bun memory distill                   # Extract learnings from last session
 bun memory distill --all             # Extract from all sessions
 
-# Task management (legacy)
-bun memory task list                 # List pending tasks
-bun memory task 5 done               # Mark task complete
-
-# Unified task management (new - with GitHub sync)
-bun memory utask                     # List all pending tasks
-bun memory utask "Fix bug" --system  # Create → GitHub issue (system repo)
-bun memory utask "Study X" --project # Create local task
-bun memory utask "Feature" --project --github  # Create → project's GitHub
-bun memory utask 5 done              # Complete (closes GitHub if synced)
-bun memory utask sync                # Sync with GitHub
+# Task management (unified with GitHub sync)
+bun memory task                              # List all pending tasks
+bun memory task:list --system                # System tasks (GitHub synced)
+bun memory task:list --project               # Project tasks (local)
+bun memory task:list --session               # Session-scoped tasks
+bun memory task:create "Fix bug" --system    # Create system task → GitHub
+bun memory task:create "Study X" --project   # Create local project task
+bun memory task:create "Step 1" --session    # Create session task
+bun memory task:update 5 done                # Complete (closes GitHub if synced)
+bun memory task:sync                         # Sync with GitHub
+bun memory task:stats                        # Task statistics
+bun memory task:promote 5                    # Promote project → system
 
 # Knowledge graph
 bun memory graph                     # Explore all entities

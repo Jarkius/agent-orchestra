@@ -30,12 +30,15 @@ bun memory init                              # Start hub + daemon
 ## Task Management
 
 ```bash
-bun memory utask                             # List pending tasks
-bun memory utask "Fix X" --system            # System task → GitHub
-bun memory utask "Study Y" --project         # Local task
-bun memory utask "Feature Z" --project --github  # Project → its GitHub
-bun memory utask 5 done                      # Complete task
-bun memory utask sync                        # Sync with GitHub
+bun memory task                              # List all pending tasks
+bun memory task:list --system                # System tasks only
+bun memory task:list --session               # Session tasks only
+bun memory task:create "Fix X" --system      # System task → GitHub
+bun memory task:create "Study Y" --project   # Local project task
+bun memory task:create "Step 1" --session    # Session-scoped task
+bun memory task:update 5 done                # Complete task
+bun memory task:sync                         # Sync with GitHub
+bun memory task:stats                        # Task statistics
 ```
 
 ## Matrix Setup (Cross-Machine)

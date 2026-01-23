@@ -34,7 +34,19 @@ function parseGlobalFlags(): { agentId?: number; args: string[] } {
 }
 
 const { agentId, args } = parseGlobalFlags();
-const command = args[0];
+
+// Parse colon-separated commands (e.g., task:list -> baseCommand=task, action=list)
+function parseCommand(cmd: string | undefined): { baseCommand: string | undefined; action: string | undefined } {
+  if (!cmd) return { baseCommand: undefined, action: undefined };
+  if (cmd.includes(':')) {
+    const [base, ...rest] = cmd.split(':');
+    return { baseCommand: base, action: rest.join(':') };
+  }
+  return { baseCommand: cmd, action: undefined };
+}
+
+const { baseCommand, action } = parseCommand(args[0]);
+const command = baseCommand;
 const arg = args[1];
 
 // Store agent ID globally for subcommands
@@ -110,15 +122,14 @@ async function main() {
       break;
 
     case 'task':
-      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
-      await import('./task-update');
+    case 'utask': {
+      // Unified task management with colon sub-actions
+      // task:list, task:create, task:update, task:sync, task:stats, task:promote
+      // utask is aliased to task for backwards compatibility
+      const { runTask } = await import('./task');
+      await runTask(action, args.slice(1));
       break;
-
-    case 'utask':
-      // Unified task management (system + project with GitHub sync)
-      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
-      await import('./unified-task');
-      break;
+    }
 
     case 'issue':
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
@@ -190,10 +201,13 @@ Commands:
   stats             Show session and learning statistics
   list [type]       List recent sessions or learnings
   context [query]   Get context bundle for new session
-  task list         List pending tasks across sessions
-  task <id> <status> Update task status (done/pending/blocked/in_progress)
-  utask             Unified tasks with GitHub sync (system + project domains)
-  utask sync        Sync tasks with GitHub issues
+  task              List all pending tasks (system, project, session)
+  task:list         List tasks (--system, --project, --session, --all)
+  task:create       Create task (--system, --project, --session)
+  task:update <id>  Update task status/priority/notes
+  task:sync         Sync system tasks with GitHub
+  task:stats        Show task statistics
+  task:promote <id> Promote project task to system
   graph             List top entities in knowledge graph
   graph "entity"    Show related entities and learnings
   graph "A" "B"     Find path between two entities

@@ -59,37 +59,52 @@ function formatUnifiedTask(task: UnifiedTask): string {
 function displayUnifiedTasks(): void {
   const systemTasks = getUnifiedTasks({ domain: 'system', limit: 10 });
   const projectTasks = getUnifiedTasks({ domain: 'project', limit: 10 });
+  const sessionTasks = getUnifiedTasks({ domain: 'session', limit: 10 });
 
-  if (systemTasks.length === 0 && projectTasks.length === 0) {
+  if (systemTasks.length === 0 && projectTasks.length === 0 && sessionTasks.length === 0) {
     return; // No tasks to show
   }
 
   // System tasks (GitHub synced)
   if (systemTasks.length > 0) {
-    console.log('\n' + '─'.repeat(40));
+    console.log('\n' + '\u2500'.repeat(40));
     console.log(`  SYSTEM TASKS (${systemTasks.length} open)`);
-    console.log('─'.repeat(40));
+    console.log('\u2500'.repeat(40));
     for (const task of systemTasks.slice(0, 5)) {
       console.log(`  ${formatUnifiedTask(task)}`);
     }
     if (systemTasks.length > 5) {
       console.log(`  ... and ${systemTasks.length - 5} more`);
     }
-    console.log('  \x1b[2mUse: bun memory utask <id> done | utask sync\x1b[0m');
+    console.log('  \x1b[2mUse: bun memory task:update <id> done | task:sync\x1b[0m');
   }
 
   // Project tasks (local)
   if (projectTasks.length > 0) {
-    console.log('\n' + '─'.repeat(40));
+    console.log('\n' + '\u2500'.repeat(40));
     console.log(`  PROJECT TASKS (${projectTasks.length} open)`);
-    console.log('─'.repeat(40));
+    console.log('\u2500'.repeat(40));
     for (const task of projectTasks.slice(0, 5)) {
       console.log(`  ${formatUnifiedTask(task)}`);
     }
     if (projectTasks.length > 5) {
       console.log(`  ... and ${projectTasks.length - 5} more`);
     }
-    console.log('  \x1b[2mUse: bun memory utask <id> --promote | utask list\x1b[0m');
+    console.log('  \x1b[2mUse: bun memory task:promote <id> | task:list --project\x1b[0m');
+  }
+
+  // Session tasks (session-scoped)
+  if (sessionTasks.length > 0) {
+    console.log('\n' + '\u2500'.repeat(40));
+    console.log(`  SESSION TASKS (${sessionTasks.length} open)`);
+    console.log('\u2500'.repeat(40));
+    for (const task of sessionTasks.slice(0, 5)) {
+      console.log(`  ${formatUnifiedTask(task)}`);
+    }
+    if (sessionTasks.length > 5) {
+      console.log(`  ... and ${sessionTasks.length - 5} more`);
+    }
+    console.log('  \x1b[2mUse: bun memory task:update <id> done | task:list --session\x1b[0m');
   }
 }
 
