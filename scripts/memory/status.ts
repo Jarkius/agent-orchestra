@@ -5,13 +5,35 @@
 
 import { db } from '../../src/db';
 import { execSync } from 'child_process';
-import { basename } from 'path';
+import { basename, join } from 'path';
+import { existsSync, readFileSync } from 'fs';
 
 function getMatrixId(): string {
+  // Prefer .matrix.json config if it exists
   try {
     const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
+    const configPath = join(gitRoot, '.matrix.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf8'));
+      if (config.matrix_id) {
+        return config.matrix_id;
+      }
+    }
+    // Fall back to folder name
     return basename(gitRoot);
   } catch {
+    // Check cwd for .matrix.json
+    const cwdConfig = join(process.cwd(), '.matrix.json');
+    if (existsSync(cwdConfig)) {
+      try {
+        const config = JSON.parse(readFileSync(cwdConfig, 'utf8'));
+        if (config.matrix_id) {
+          return config.matrix_id;
+        }
+      } catch {
+        // Invalid JSON, fall through
+      }
+    }
     return basename(process.cwd());
   }
 }
