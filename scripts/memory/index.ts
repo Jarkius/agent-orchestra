@@ -175,6 +175,21 @@ async function main() {
       await import('./init');
       break;
 
+    case 'index':
+    case 'code': {
+      // Code indexing commands: once, start, status, search
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./code-index');
+      break;
+    }
+
+    case 'map': {
+      // Generate codebase map from indexed data
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./map');
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -225,6 +240,12 @@ Commands:
   validate          Run search validation tests (feedback loop)
   evaluate          Full search evaluation (vector vs FTS vs hybrid)
   consolidate       Find and merge duplicate learnings (--apply to execute)
+  index once        Full semantic index of codebase
+  index start       Start file watcher for auto-indexing
+  index status      Show code index statistics
+  index search "q"  Search indexed code semantically
+  map               Generate codebase map from indexed data
+  map --update      Update CLAUDE.md with codebase map
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing

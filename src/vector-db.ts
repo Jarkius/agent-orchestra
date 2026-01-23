@@ -301,6 +301,7 @@ interface VectorCollections {
   sessionTasks: Collection;
   knowledge: Collection;  // Dual-collection: raw facts/observations
   lessons: Collection;    // Dual-collection: problem→solution→outcome
+  codebase: Collection;   // Code indexing for semantic code search
 }
 
 let collections: VectorCollections | null = null;
@@ -385,9 +386,14 @@ export async function initVectorDB(): Promise<void> {
         metadata: hnswMetadata,
         embeddingFunction: embedFn,
       }),
+      codebase: await chromaClient.getOrCreateCollection({
+        name: `${prefix}_codebase`,
+        metadata: hnswMetadata,
+        embeddingFunction: embedFn,
+      }),
     };
     initialized = true;
-    console.error(`[VectorDB] Initialized with 10 collections (prefix: ${prefix})`);
+    console.error(`[VectorDB] Initialized with 11 collections (prefix: ${prefix})`);
   } catch (error) {
     console.error("[VectorDB] Failed to initialize:", error);
     throw error;
@@ -1865,4 +1871,162 @@ export async function rebuildFromSqlite(options?: {
 
   console.error('[VectorDB] Rebuild complete:', progress);
   return progress;
+}
+
+// ============ CODE INDEXING ============
+
+/**
+ * Embed a code file for semantic search
+ * Uses adaptive chunking based on file type
+ */
+export async function embedCodeFile(
+  fileId: string,
+  content: string,
+  metadata: {
+    file_path: string;
+    language: string;
+    file_name: string;
+    functions?: string[];
+    classes?: string[];
+    imports?: string[];
+    exports?: string[];
+    line_count?: number;
+    indexed_at: string;
+  }
+): Promise<void> {
+  const cols = ensureInitialized();
+
+  // Use code-appropriate chunking
+  const chunks = chunkContent(content, 300, 50);
+
+  await writeQueue.add(async () => {
+    // Delete existing entries for this file first (in case of re-index)
+    try {
+      const existingIds = chunks.map((_, i) => `${fileId}:chunk:${i}`);
+      await cols.codebase.delete({ ids: existingIds });
+    } catch {
+      // Ignore delete errors (entries may not exist)
+    }
+
+    // Add all chunks
+    const ids: string[] = [];
+    const documents: string[] = [];
+    const metadatas: Record<string, string | number | boolean>[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      if (!chunk.trim()) continue;
+
+      ids.push(`${fileId}:chunk:${i}`);
+      documents.push(chunk);
+      metadatas.push({
+        file_path: metadata.file_path,
+        file_id: fileId,
+        language: metadata.language,
+        file_name: metadata.file_name,
+        chunk_index: i,
+        total_chunks: chunks.length,
+        functions: JSON.stringify(metadata.functions || []),
+        classes: JSON.stringify(metadata.classes || []),
+        imports: JSON.stringify(metadata.imports || []),
+        exports: JSON.stringify(metadata.exports || []),
+        line_count: metadata.line_count || 0,
+        indexed_at: metadata.indexed_at,
+      });
+    }
+
+    if (ids.length > 0) {
+      await withRetry(
+        () => cols.codebase.add({ ids, documents, metadatas }),
+        `embed code file ${fileId}`
+      );
+    }
+  });
+}
+
+/**
+ * Search indexed code semantically
+ */
+export async function searchCodeVector(
+  query: string,
+  options?: {
+    limit?: number;
+    language?: string;
+    filePath?: string;
+  }
+): Promise<{
+  ids: string[][];
+  documents: (string | null)[][];
+  distances: (number | null)[][] | null;
+  metadatas: (Record<string, unknown> | null)[][] | null;
+}> {
+  const cols = ensureInitialized();
+  const { limit = 10, language, filePath } = options || {};
+
+  const where: Where = {};
+  if (language) where.language = language;
+  if (filePath) where.file_path = filePath;
+
+  const results = await cols.codebase.query({
+    queryTexts: [query],
+    nResults: limit,
+    where: Object.keys(where).length > 0 ? where : undefined,
+  });
+
+  return {
+    ids: results.ids,
+    documents: results.documents || [[]],
+    distances: results.distances,
+    metadatas: results.metadatas,
+  };
+}
+
+/**
+ * Delete a file from the code index
+ */
+export async function deleteCodeFile(fileId: string): Promise<void> {
+  const cols = ensureInitialized();
+
+  await writeQueue.add(async () => {
+    // Query to find all chunks for this file
+    const results = await cols.codebase.get({
+      where: { file_id: fileId },
+    });
+
+    if (results.ids.length > 0) {
+      await withRetry(
+        () => cols.codebase.delete({ ids: results.ids }),
+        `delete code file ${fileId}`
+      );
+    }
+  });
+}
+
+/**
+ * Get statistics about indexed code
+ */
+export async function getCodeIndexStats(): Promise<{
+  totalDocuments: number;
+  languages: Record<string, number>;
+}> {
+  const cols = ensureInitialized();
+
+  const count = await cols.codebase.count();
+
+  // Get a sample to estimate language distribution
+  const sample = await cols.codebase.get({
+    limit: 1000,
+    include: ['metadatas'],
+  });
+
+  const languages: Record<string, number> = {};
+  for (const meta of sample.metadatas || []) {
+    const lang = (meta?.language as string) || 'unknown';
+    languages[lang] = (languages[lang] || 0) + 1;
+  }
+
+  return {
+    totalDocuments: count,
+    languages,
+  };
 }

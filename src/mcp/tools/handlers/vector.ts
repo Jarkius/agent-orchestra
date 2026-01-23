@@ -15,6 +15,8 @@ import {
   initVectorDB,
   getHealthStatus,
   reconnectVectorDB,
+  searchCodeVector,
+  getCodeIndexStats,
 } from '../../../vector-db';
 import type { ToolDefinition, ToolHandler } from '../../types';
 
@@ -37,6 +39,13 @@ const SearchSchema = z.object({
   include_tasks: z.boolean().optional(),
   include_results: z.boolean().optional(),
   include_messages: z.boolean().optional(),
+});
+
+const CodeSearchSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().min(1).max(50).optional(),
+  language: z.string().optional(),
+  file_path: z.string().optional(),
 });
 
 // ============ Tool Definitions ============
@@ -68,6 +77,20 @@ export const vectorTools: ToolDefinition[] = [
       properties: {
         reconnect: { type: 'boolean', description: 'Reconnect to ChromaDB (use after reindex)' },
       },
+    },
+  },
+  {
+    name: 'search_code',
+    description: 'Semantic code search - find code by meaning, not just keywords. Reduces grep/glob overhead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Semantic query (e.g., "authentication middleware", "database connection handling")' },
+        limit: { type: 'number', description: 'Max results (default: 10, max: 50)' },
+        language: { type: 'string', description: 'Filter by language (typescript, python, go, etc.)' },
+        file_path: { type: 'string', description: 'Filter by file path pattern' },
+      },
+      required: ['query'],
     },
   },
 ];
@@ -211,9 +234,85 @@ async function handleHealthCheck(args: unknown) {
   }
 }
 
+async function handleSearchCode(args: unknown) {
+  await ensureVectorDB();
+  const input = CodeSearchSchema.parse(args);
+  const { query, limit = 10, language, file_path } = input;
+
+  try {
+    const results = await searchCodeVector(query, {
+      limit,
+      language,
+      filePath: file_path,
+    });
+
+    // Group results by file for cleaner output
+    const byFile: Record<string, Array<{
+      chunk_index: number;
+      content: string;
+      relevance: number;
+    }>> = {};
+
+    for (let i = 0; i < (results.ids[0]?.length || 0); i++) {
+      const id = results.ids[0][i];
+      const metadata = results.metadatas?.[0]?.[i] as Record<string, unknown> | null;
+      const filePath = (metadata?.file_path as string) || id.split(':chunk:')[0];
+      const distance = results.distances?.[0]?.[i];
+      const relevance = distance != null ? 1 - distance : 0;
+
+      if (!byFile[filePath]) {
+        byFile[filePath] = [];
+      }
+
+      byFile[filePath].push({
+        chunk_index: (metadata?.chunk_index as number) || 0,
+        content: results.documents[0]?.[i] || '',
+        relevance,
+      });
+    }
+
+    // Sort files by max relevance
+    const sortedFiles = Object.entries(byFile)
+      .map(([path, chunks]) => ({
+        file_path: path,
+        language: (results.metadatas?.[0]?.find(
+          (m: Record<string, unknown> | null) => m?.file_path === path
+        ) as Record<string, unknown> | null)?.language as string || 'unknown',
+        chunks: chunks.sort((a, b) => a.chunk_index - b.chunk_index),
+        max_relevance: Math.max(...chunks.map(c => c.relevance)),
+      }))
+      .sort((a, b) => b.max_relevance - a.max_relevance);
+
+    // Get index stats for context
+    const stats = await getCodeIndexStats();
+
+    return jsonResponse({
+      query,
+      total_results: results.ids[0]?.length || 0,
+      files_matched: sortedFiles.length,
+      index_stats: {
+        total_documents: stats.totalDocuments,
+        languages: stats.languages,
+      },
+      results: sortedFiles.map(f => ({
+        file_path: f.file_path,
+        language: f.language,
+        relevance: Math.round(f.max_relevance * 100),
+        snippets: f.chunks.slice(0, 3).map(c => ({
+          content: c.content.slice(0, 500) + (c.content.length > 500 ? '...' : ''),
+          relevance: Math.round(c.relevance * 100),
+        })),
+      })),
+    });
+  } catch (error) {
+    return errorResponse(`Code search failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 // ============ Export Handlers Map ============
 
 export const vectorHandlers: Record<string, ToolHandler> = {
   search: handleSearch,
   health_check: handleHealthCheck,
+  search_code: handleSearchCode,
 };

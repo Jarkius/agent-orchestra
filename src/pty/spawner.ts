@@ -76,6 +76,10 @@ export class AgentSpawner implements IAgentSpawner {
     };
 
     // Spawn PTY for agent
+    // Get shared task list ID for multi-agent visibility (Ctrl+T to see all agent tasks)
+    const sharedTaskListId = process.env.CLAUDE_CODE_TASK_LIST_ID ||
+      `${process.env.PROJECT_NAME || 'agent-orchestra'}-shared`;
+
     const ptyHandle = await this.ptyManager.spawn(agentId, {
       cwd: cfg.cwd,
       env: {
@@ -83,6 +87,8 @@ export class AgentSpawner implements IAgentSpawner {
         AGENT_ROLE: cfg.role!,
         AGENT_MODEL: cfg.model!,
         AGENT_SYSTEM_PROMPT: cfg.systemPrompt || ROLE_PROMPTS[cfg.role!],
+        // Share task list across all agents for visibility
+        CLAUDE_CODE_TASK_LIST_ID: sharedTaskListId,
       },
       shell: cfg.shell,
       cols: cfg.cols,
