@@ -99,6 +99,11 @@ interface DaemonStatus {
   hub_url: string;
   queued: number;
   inbox: number;
+  // Auth failure tracking
+  authFailureCount?: number;
+  lastAuthError?: string | null;
+  authStopped?: boolean;
+  nextRetryIn?: number | null;
 }
 
 interface IndexerStatus {
@@ -185,8 +190,21 @@ async function main() {
   // Check daemon
   const daemon = await checkDaemon(daemonPort);
   if (daemon) {
-    const connStatus = daemon.connected ? '✅ Connected' : '⚠️  Disconnected';
-    console.log(`  Daemon:  ${connStatus}`);
+    if (daemon.authStopped) {
+      // Auth stopped - max failures reached
+      console.log(`  Daemon:  ❌ Auth stopped (${daemon.authFailureCount || 0} failures)`);
+      console.log(`           ${daemon.lastAuthError || 'PIN authentication failed'}`);
+      console.log(`           Fix PIN: bun run src/matrix-daemon.ts start --pin <PIN>`);
+    } else if (daemon.authFailureCount && daemon.authFailureCount > 0) {
+      // Auth failing but still retrying
+      const retryIn = daemon.nextRetryIn ? `${daemon.nextRetryIn}s` : 'soon';
+      console.log(`  Daemon:  ⚠️  Auth failed (${daemon.authFailureCount}/5) - wrong PIN?`);
+      console.log(`           Next retry in ${retryIn}`);
+    } else if (daemon.connected) {
+      console.log(`  Daemon:  ✅ Connected`);
+    } else {
+      console.log(`  Daemon:  ⚠️  Disconnected (reconnecting...)`);
+    }
   } else {
     console.log(`  Daemon:  ❌ Not running`);
     console.log(`           Start: bun run src/matrix-daemon.ts start`);

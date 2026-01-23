@@ -2,9 +2,13 @@
 /**
  * /memory-init - Single command to set up all services
  *
- * 1. Start hub if not running
- * 2. Start daemon if not running
- * 3. Verify connection
+ * Usage:
+ *   bun memory init              # Start all services
+ *   bun memory init --pin <PIN>  # Start with specific PIN
+ *
+ * 1. Start hub if not running (with PIN if provided)
+ * 2. Start daemon if not running (with same PIN)
+ * 3. Verify connection (prompt for PIN if auth fails)
  * 4. Start indexer if not running
  * 5. Show status
  */
@@ -12,11 +16,32 @@
 import { spawn, execSync } from 'child_process';
 import { basename, join } from 'path';
 import { readFileSync, existsSync } from 'fs';
+import { createInterface } from 'readline';
 
 interface MatrixConfig {
   matrix_id?: string;
   daemon_port?: number;
   hub_url?: string;
+  hub_pin?: string;
+}
+
+// Parse --pin flag from CLI args
+function parseArgs(): { pin: string | null } {
+  const args = process.argv.slice(2);
+  const pinIdx = args.indexOf('--pin');
+  const pin = pinIdx !== -1 && args[pinIdx + 1] ? args[pinIdx + 1] : null;
+  return { pin };
+}
+
+// Prompt user for PIN interactively
+async function promptForPin(message: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise(resolve => {
+    rl.question(message, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
 }
 
 function loadMatrixConfig(): MatrixConfig {
@@ -77,11 +102,15 @@ async function checkIndexer(port: string): Promise<boolean> {
 
 async function main() {
   const config = loadMatrixConfig();
+  const { pin: cliPin } = parseArgs();
   const hubPort = process.env.MATRIX_HUB_PORT || '8081';
   const daemonPort = process.env.MATRIX_DAEMON_PORT || config.daemon_port?.toString() || '37888';
   const indexerPort = process.env.INDEXER_DAEMON_PORT || '37889';
   const matrixId = config.matrix_id || getMatrixId();
   const projectRoot = process.cwd();
+
+  // PIN priority: CLI > env > config
+  let pin = cliPin || process.env.MATRIX_HUB_PIN || config.hub_pin || null;
 
   console.log('\n🚀 Initializing Matrix Communication\n');
 
@@ -90,12 +119,17 @@ async function main() {
   let hubRunning = await checkHub(hubPort);
 
   if (!hubRunning) {
-    // Start hub in background
+    // Start hub in background with PIN if provided
     const hubScript = join(projectRoot, 'src/matrix-hub.ts');
+    const hubEnv = { ...process.env };
+    if (pin) {
+      hubEnv.MATRIX_HUB_PIN = pin;
+    }
     const hub = spawn('bun', ['run', hubScript], {
       detached: true,
       stdio: 'ignore',
       cwd: projectRoot,
+      env: hubEnv,
     });
     hub.unref();
 
@@ -116,9 +150,13 @@ async function main() {
   let daemonRunning = await checkDaemon(daemonPort);
 
   if (!daemonRunning) {
-    // Start daemon
+    // Start daemon with PIN if provided
     const daemonScript = join(projectRoot, 'src/matrix-daemon.ts');
-    const daemon = spawn('bun', ['run', daemonScript, 'start'], {
+    const daemonArgs = ['run', daemonScript, 'start'];
+    if (pin) {
+      daemonArgs.push('--pin', pin);
+    }
+    const daemon = spawn('bun', daemonArgs, {
       detached: true,
       stdio: 'ignore',
       cwd: projectRoot,
@@ -139,19 +177,72 @@ async function main() {
 
   // Step 3: Verify connection
   process.stdout.write('  3. Connection... ');
-  const connected = await waitFor(async () => {
+
+  interface DaemonStatus {
+    connected: boolean;
+    authFailureCount?: number;
+    authStopped?: boolean;
+    lastAuthError?: string;
+  }
+
+  let connected = false;
+  let authFailed = false;
+
+  // Check connection with auth failure detection
+  for (let attempt = 0; attempt < 10; attempt++) {
     try {
       const response = await fetch(`http://localhost:${daemonPort}/status`, { signal: AbortSignal.timeout(2000) });
       if (response.ok) {
-        const status = await response.json() as { connected: boolean };
-        return status.connected;
+        const status = await response.json() as DaemonStatus;
+        if (status.connected) {
+          connected = true;
+          break;
+        }
+        // Check if auth is failing
+        if (status.authFailureCount && status.authFailureCount > 0) {
+          authFailed = true;
+          break;
+        }
       }
     } catch {}
-    return false;
-  }, 10, 500);
+    await new Promise(r => setTimeout(r, 500));
+  }
 
   if (connected) {
     console.log('✅ Connected');
+  } else if (authFailed) {
+    console.log('❌ Auth failed - wrong PIN');
+    // Prompt for PIN
+    console.log('\n  Hub requires PIN authentication.');
+    const newPin = await promptForPin('  Enter hub PIN (shown in hub console): ');
+    if (newPin) {
+      console.log('  Retrying with new PIN...');
+      // Reset daemon auth and retry with new PIN
+      try {
+        await fetch(`http://localhost:${daemonPort}/auth-reset`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: newPin }),
+          signal: AbortSignal.timeout(5000),
+        });
+        // Wait for reconnection
+        connected = await waitFor(async () => {
+          const response = await fetch(`http://localhost:${daemonPort}/status`, { signal: AbortSignal.timeout(2000) });
+          if (response.ok) {
+            const status = await response.json() as DaemonStatus;
+            return status.connected;
+          }
+          return false;
+        }, 10, 500);
+        if (connected) {
+          console.log('  ✅ Connected with new PIN');
+        } else {
+          console.log('  ⚠️  Still not connected. Check PIN and try again.');
+        }
+      } catch {
+        console.log('  ⚠️  Failed to reset auth');
+      }
+    }
   } else {
     console.log('⚠️  Not connected to hub');
   }

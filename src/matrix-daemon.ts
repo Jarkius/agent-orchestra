@@ -73,6 +73,14 @@ let retryInterval: ReturnType<typeof setInterval> | null = null;
 let httpServer: Server | null = null;
 let connectingPromise: Promise<boolean> | null = null; // Prevent double connection attempts
 
+// Auth failure tracking
+let authFailureCount = 0;
+let lastAuthError: string | null = null;
+let nextRetryAt: Date | null = null;
+let authStopped = false; // True when max auth failures reached
+const MAX_AUTH_FAILURES = 5;
+const AUTH_BACKOFF_BASE = 5000; // 5s base, doubles each failure (max 60s)
+
 const messageQueue: Array<{ type: 'broadcast' | 'direct'; content: string; to?: string; id?: string }> = [];
 const receivedMessages: Array<{ from: string; content: string; timestamp: string; type: string; id?: string }> = [];
 
@@ -82,7 +90,13 @@ const sseClients = new Set<ServerResponse>();
 
 // ============ Hub Connection ============
 
-async function getToken(): Promise<string | null> {
+interface TokenResult {
+  token: string | null;
+  authFailed: boolean;
+  error?: string;
+}
+
+async function getToken(): Promise<TokenResult> {
   try {
     const httpUrl = HUB_URL.replace('ws://', 'http://').replace('wss://', 'https://');
     const params = new URLSearchParams({
@@ -100,22 +114,23 @@ async function getToken(): Promise<string | null> {
 
     if (response.status === 401) {
       const data = await response.json() as { error: string; hint?: string };
-      console.error(`[Daemon] ❌ Hub rejected connection: ${data.error}`);
-      if (data.hint) console.error(`[Daemon]    ${data.hint}`);
-      console.error(`[Daemon]    Set MATRIX_HUB_PIN in env, .matrix.json, or use --pin flag`);
-      return null;
+      const errorMsg = data.error || 'Invalid or missing PIN';
+      return { token: null, authFailed: true, error: errorMsg };
     }
 
     if (!response.ok) {
-      console.error(`[Daemon] Failed to get token: ${response.status}`);
-      return null;
+      return { token: null, authFailed: false, error: `HTTP ${response.status}` };
     }
 
     const data = await response.json() as { token: string };
-    return data.token;
+    // Reset auth failure count on successful auth
+    authFailureCount = 0;
+    lastAuthError = null;
+    authStopped = false;
+    return { token: data.token, authFailed: false };
   } catch (error) {
-    console.error(`[Daemon] Token request failed:`, error);
-    return null;
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return { token: null, authFailed: false, error: errorMsg };
   }
 }
 
@@ -128,14 +143,52 @@ async function connectToHub(): Promise<boolean> {
 
   if (ws && connected) return true;
 
+  // Check if auth stopped due to too many failures
+  if (authStopped) {
+    console.log('[Daemon] Auth stopped - too many failures. Restart with correct PIN.');
+    return false;
+  }
+
   // Create the connection promise and store it
   connectingPromise = (async (): Promise<boolean> => {
     try {
-      token = await getToken();
-      if (!token) {
+      const result = await getToken();
+
+      if (result.authFailed) {
+        // Track auth failures separately
+        authFailureCount++;
+        lastAuthError = result.error || 'Unknown auth error';
+
+        if (authFailureCount >= MAX_AUTH_FAILURES) {
+          authStopped = true;
+          console.error(`[Daemon] ❌ AUTH FAILED: Stopped after ${MAX_AUTH_FAILURES} attempts`);
+          console.error(`[Daemon]    Last error: ${lastAuthError}`);
+          console.error(`[Daemon]    Fix PIN and restart: bun run src/matrix-daemon.ts start --pin <PIN>`);
+          return false;
+        }
+
+        // Calculate exponential backoff (5s, 10s, 20s, 40s, 60s max)
+        const backoffMs = Math.min(AUTH_BACKOFF_BASE * Math.pow(2, authFailureCount - 1), 60000);
+        const backoffSec = Math.round(backoffMs / 1000);
+        nextRetryAt = new Date(Date.now() + backoffMs);
+
+        console.error(`[Daemon] ❌ AUTH FAILED (${authFailureCount}/${MAX_AUTH_FAILURES}): ${lastAuthError}`);
+        console.error(`[Daemon]    Hub PIN shown at hub startup console`);
+        console.error(`[Daemon]    Set via: --pin <PIN>, MATRIX_HUB_PIN env, or .matrix.json hub_pin`);
+        console.error(`[Daemon]    Retrying in ${backoffSec} seconds...`);
+
+        scheduleReconnect(backoffMs);
+        return false;
+      }
+
+      if (!result.token) {
+        // Network error, not auth failure - use normal reconnect interval
+        console.error(`[Daemon] Connection failed: ${result.error || 'Unknown error'}`);
         scheduleReconnect();
         return false;
       }
+
+      token = result.token;
 
       return new Promise((resolve) => {
         try {
@@ -198,14 +251,19 @@ async function connectToHub(): Promise<boolean> {
   return connectingPromise;
 }
 
-function scheduleReconnect(): void {
+function scheduleReconnect(delayMs?: number): void {
   if (reconnectTimeout) return;
+  if (authStopped) return; // Don't schedule if auth stopped
+
+  const delay = delayMs || RECONNECT_INTERVAL;
+  nextRetryAt = new Date(Date.now() + delay);
 
   reconnectTimeout = setTimeout(async () => {
     reconnectTimeout = null;
+    nextRetryAt = null;
     console.log('[Daemon] Attempting reconnection...');
     await connectToHub();
-  }, RECONNECT_INTERVAL);
+  }, delay);
 }
 
 function startHeartbeat(): void {
@@ -452,6 +510,12 @@ function startHttpServer(): void {
         hubUrl: HUB_URL,
         queuedMessages: messageQueue.length,
         receivedMessages: receivedMessages.length,
+        // Auth failure tracking
+        authFailureCount,
+        lastAuthError,
+        authStopped,
+        nextRetryAt: nextRetryAt?.toISOString() || null,
+        nextRetryIn: nextRetryAt ? Math.max(0, Math.round((nextRetryAt.getTime() - Date.now()) / 1000)) : null,
       }));
       return;
     }
@@ -551,6 +615,36 @@ function startHttpServer(): void {
       const count = getUnreadCount(MATRIX_ID);
       res.writeHead(200);
       res.end(JSON.stringify({ unread: count }));
+      return;
+    }
+
+    // Reset auth failures and retry connection
+    if (url.pathname === '/auth-reset' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', async () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          // Optionally update PIN from request
+          if (data.pin) {
+            HUB_PIN = data.pin;
+            console.log(`[Daemon] PIN updated via auth-reset`);
+          }
+          // Reset auth state
+          authFailureCount = 0;
+          lastAuthError = null;
+          authStopped = false;
+          nextRetryAt = null;
+          console.log('[Daemon] Auth state reset, attempting reconnection...');
+          // Try to connect immediately
+          const success = await connectToHub();
+          res.writeHead(200);
+          res.end(JSON.stringify({ reset: true, connected: success }));
+        } catch (e) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
       return;
     }
 
