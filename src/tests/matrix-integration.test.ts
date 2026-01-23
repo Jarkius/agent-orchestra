@@ -3,24 +3,57 @@
  * Tests hub, client, and message flow
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import { startHub, stopHub } from '../matrix-hub';
 import * as client from '../matrix-client';
 
 const TEST_PORT = 18081; // Use different port to avoid conflicts
 const TEST_HUB_URL = `ws://localhost:${TEST_PORT}`;
 
+/**
+ * Wait for hub to be ready by polling health endpoint
+ */
+async function waitForHubReady(port: number, timeoutMs = 5000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetch(`http://localhost:${port}/health`);
+      if (response.ok) return true;
+    } catch {
+      // Hub not ready yet
+    }
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return false;
+}
+
+/**
+ * Wait for a condition to be true
+ */
+async function waitFor(condition: () => Promise<boolean> | boolean, timeoutMs = 2000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await condition()) return true;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  return false;
+}
+
+// Single hub instance for all tests
+beforeAll(async () => {
+  // Start test hub with PIN disabled for testing
+  startHub({ port: TEST_PORT, disablePin: true });
+  // Wait for hub to be ready
+  const ready = await waitForHubReady(TEST_PORT);
+  if (!ready) throw new Error('Hub failed to start');
+});
+
+afterAll(() => {
+  // Stop test hub
+  stopHub();
+});
+
 describe('Matrix Communication', () => {
-  beforeAll(() => {
-    // Start test hub with PIN disabled for testing
-    startHub({ port: TEST_PORT, disablePin: true });
-  });
-
-  afterAll(() => {
-    // Stop test hub
-    stopHub();
-  });
-
   afterEach(() => {
     // Disconnect client after each test
     client.disconnect();
@@ -140,13 +173,10 @@ describe('Matrix Communication', () => {
 describe('Multi-Client Communication', () => {
   // For multi-client tests, we need to create separate client modules
   // This is a simplified test that verifies the hub handles multiple connections
+  // Note: Uses the shared hub instance from top-level beforeAll
 
-  beforeAll(() => {
-    startHub({ port: TEST_PORT, disablePin: true });
-  });
-
-  afterAll(() => {
-    stopHub();
+  afterEach(() => {
+    client.disconnect();
   });
 
   it('should handle multiple matrix registrations', async () => {
@@ -165,18 +195,22 @@ describe('Multi-Client Communication', () => {
 
   it('should track connected matrices in health endpoint', async () => {
     // Connect a client
-    client.setMatrixId(`health-test-matrix-${Date.now()}`);
+    const matrixId = `health-test-matrix-${Date.now()}`;
+    client.setMatrixId(matrixId);
     await client.connectToHub(TEST_HUB_URL);
 
-    // Give it a moment to register
-    await new Promise(r => setTimeout(r, 100));
+    // Wait for hub to register the connection
+    const registered = await waitFor(async () => {
+      const response = await fetch(`http://localhost:${TEST_PORT}/health`);
+      const data = await response.json() as { connectedMatrices: number };
+      return data.connectedMatrices >= 1;
+    });
+    expect(registered).toBe(true);
 
     // Check health
     const response = await fetch(`http://localhost:${TEST_PORT}/health`);
     const data = await response.json() as { connectedMatrices: number; online: string[] };
 
     expect(data.connectedMatrices).toBeGreaterThanOrEqual(1);
-
-    client.disconnect();
   });
 });
