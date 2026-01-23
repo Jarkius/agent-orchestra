@@ -18,9 +18,80 @@ import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
 import { recall, type RecallResult, type SessionWithContext, type LearningWithContext } from '../../src/services/recall-service';
-import { type SessionTask, getLearningEntities, getRelatedEntities, updateSessionTaskStatus } from '../../src/db';
+import {
+  type SessionTask,
+  getLearningEntities,
+  getRelatedEntities,
+  updateSessionTaskStatus,
+  getUnifiedTasks,
+  getUnifiedTaskStats,
+  type UnifiedTask,
+} from '../../src/db';
 import { formatFullContext, formatFullContextEnhanced, getStatusIcon, getConfidenceBadge, truncate } from '../../src/utils/formatters';
 import { getGitStatus, getChangesSinceCommit, getLastCommitHash, detectTaskCompletion, type TaskCompletionHint } from '../../src/utils/git-context';
+
+// ============ Unified Tasks Display ============
+
+const TASK_STATUS_ICONS: Record<string, string> = {
+  open: '○',
+  in_progress: '◐',
+  done: '●',
+  blocked: '⊘',
+  wont_fix: '✗',
+};
+
+const TASK_PRIORITY_ICONS: Record<string, string> = {
+  critical: '🔴',
+  high: '🟠',
+  normal: '🟡',
+  low: '🟢',
+};
+
+function formatUnifiedTask(task: UnifiedTask): string {
+  const status = TASK_STATUS_ICONS[task.status] || '○';
+  const priority = TASK_PRIORITY_ICONS[task.priority] || '';
+  const ghRef = task.github_issue_number ? ` #${task.github_issue_number}` : '';
+  const component = task.component ? `[${task.component}]` : '';
+  const title = task.title.length > 50 ? task.title.slice(0, 47) + '...' : task.title;
+  return `${status} ${priority}${ghRef} ${component} ${title}`;
+}
+
+function displayUnifiedTasks(): void {
+  const systemTasks = getUnifiedTasks({ domain: 'system', limit: 10 });
+  const projectTasks = getUnifiedTasks({ domain: 'project', limit: 10 });
+
+  if (systemTasks.length === 0 && projectTasks.length === 0) {
+    return; // No tasks to show
+  }
+
+  // System tasks (GitHub synced)
+  if (systemTasks.length > 0) {
+    console.log('\n' + '─'.repeat(40));
+    console.log(`  SYSTEM TASKS (${systemTasks.length} open)`);
+    console.log('─'.repeat(40));
+    for (const task of systemTasks.slice(0, 5)) {
+      console.log(`  ${formatUnifiedTask(task)}`);
+    }
+    if (systemTasks.length > 5) {
+      console.log(`  ... and ${systemTasks.length - 5} more`);
+    }
+    console.log('  \x1b[2mUse: bun memory utask <id> done | utask sync\x1b[0m');
+  }
+
+  // Project tasks (local)
+  if (projectTasks.length > 0) {
+    console.log('\n' + '─'.repeat(40));
+    console.log(`  PROJECT TASKS (${projectTasks.length} open)`);
+    console.log('─'.repeat(40));
+    for (const task of projectTasks.slice(0, 5)) {
+      console.log(`  ${formatUnifiedTask(task)}`);
+    }
+    if (projectTasks.length > 5) {
+      console.log(`  ... and ${projectTasks.length - 5} more`);
+    }
+    console.log('  \x1b[2mUse: bun memory utask <id> --promote | utask list\x1b[0m');
+  }
+}
 
 // ============ Enhanced Resume Context ============
 
@@ -212,7 +283,10 @@ function displayResumeContext(result: RecallResult) {
   console.log('  RESUME SESSION');
   console.log('═'.repeat(60));
 
-  // Show recent plan files first (actionable)
+  // Show unified tasks first (most actionable)
+  displayUnifiedTasks();
+
+  // Show recent plan files (actionable)
   const recentPlans = getRecentPlanFiles();
   if (recentPlans.length > 0) {
     console.log('\n' + '─'.repeat(40));

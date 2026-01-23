@@ -27,6 +27,28 @@ export interface GitChangesSince {
 }
 
 /**
+ * Get the current project's GitHub repo (e.g., "User/Repo")
+ * Returns null if not a GitHub repo or can't parse remote URL
+ */
+export function getProjectGitHubRepo(): string | null {
+  try {
+    const remote = execSync('git remote get-url origin 2>/dev/null', { encoding: 'utf-8' }).trim();
+    if (!remote) return null;
+
+    // Parse: git@github.com:User/Repo.git or https://github.com/User/Repo.git
+    const sshMatch = remote.match(/github\.com:([^/]+\/[^/.]+)/);
+    if (sshMatch) return sshMatch[1]?.replace(/\.git$/, '') || null;
+
+    const httpsMatch = remote.match(/github\.com\/([^/]+\/[^/.]+)/);
+    if (httpsMatch) return httpsMatch[1]?.replace(/\.git$/, '') || null;
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Capture current git context for session saving
  */
 export function captureGitContext(): GitContext | null {

@@ -114,6 +114,12 @@ async function main() {
       await import('./task-update');
       break;
 
+    case 'utask':
+      // Unified task management (system + project with GitHub sync)
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./unified-task');
+      break;
+
     case 'issue':
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./issue');
@@ -186,6 +192,8 @@ Commands:
   context [query]   Get context bundle for new session
   task list         List pending tasks across sessions
   task <id> <status> Update task status (done/pending/blocked/in_progress)
+  utask             Unified tasks with GitHub sync (system + project domains)
+  utask sync        Sync tasks with GitHub issues
   graph             List top entities in knowledge graph
   graph "entity"    Show related entities and learnings
   graph "A" "B"     Find path between two entities

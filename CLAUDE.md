@@ -27,6 +27,17 @@ bun memory watch                             # Live message feed
 bun memory init                              # Start hub + daemon
 ```
 
+## Task Management
+
+```bash
+bun memory utask                             # List pending tasks
+bun memory utask "Fix X" --system            # System task → GitHub
+bun memory utask "Study Y" --project         # Local task
+bun memory utask "Feature Z" --project --github  # Project → its GitHub
+bun memory utask 5 done                      # Complete task
+bun memory utask sync                        # Sync with GitHub
+```
+
 ## Matrix Setup (Cross-Machine)
 
 ```bash
