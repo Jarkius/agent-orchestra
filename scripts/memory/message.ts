@@ -15,6 +15,36 @@ import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConne
 import { execSync } from 'child_process';
 import { basename, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
+import { homedir } from 'os';
+
+// Read actual daemon port from PID file (daemon may use different port if default is busy)
+// PID file is per-matrix: daemon-{matrix_id}.pid, respects daemon_dir from config
+function getDaemonPort(): string | null {
+  const matrixId = getMatrixId();
+  const daemonDir = matrixConfig.daemon_dir
+    ? String(matrixConfig.daemon_dir).replace('~', homedir())
+    : join(homedir(), '.matrix-daemon');
+  const pidFile = join(daemonDir, `daemon-${matrixId}.pid`);
+  if (existsSync(pidFile)) {
+    try {
+      const content = readFileSync(pidFile, 'utf-8').trim().split('\n');
+      const pid = parseInt(content[0] || '0');
+      const port = content[1] || null;
+      // Verify process is still running
+      if (pid > 0 && port) {
+        try {
+          process.kill(pid, 0); // Check if process exists
+          return port;
+        } catch {
+          // Process not running
+        }
+      }
+    } catch {
+      // Can't read PID file
+    }
+  }
+  return null;
+}
 
 // Load .matrix.json config if it exists
 function loadMatrixConfig(): Record<string, any> {
@@ -180,7 +210,8 @@ async function main() {
 
   // Try delivery: Daemon first → Direct hub fallback → SQLite persistence
   let delivered = false;
-  const daemonPort = process.env.MATRIX_DAEMON_PORT || matrixConfig.daemon_port || '37888';
+  // Prefer actual daemon port from PID file, fall back to config/env
+  const daemonPort = getDaemonPort() || process.env.MATRIX_DAEMON_PORT || matrixConfig.daemon_port || '37888';
   const hubUrl = process.env.MATRIX_HUB_URL || matrixConfig.hub_url || 'ws://localhost:8081';
 
   // Try 1: Daemon API (persistent connection)

@@ -47,16 +47,17 @@ const MAX_RETRIES = 3;
 const ENABLE_BELL = process.env.MATRIX_BELL !== 'false'; // Terminal bell
 const ENABLE_MACOS_NOTIFY = process.env.MATRIX_MACOS_NOTIFY === 'true'; // macOS notification center
 
+// Determine matrix ID from config or project path (needed early for per-matrix PID file)
+const PROJECT_PATH = process.cwd();
+const MATRIX_ID = matrixConfig.matrix_id || PROJECT_PATH.replace(/.*\//, ''); // Last path component
+
 // Use home directory for persistence across reboots
+// PID file is per-matrix to allow multiple daemons on one machine
 const DEFAULT_DAEMON_DIR = join(process.env.HOME || '/tmp', '.matrix-daemon');
 const DAEMON_DIR = process.env.MATRIX_DAEMON_DIR ||
   (matrixConfig.daemon_dir ? matrixConfig.daemon_dir.replace('~', process.env.HOME || '') : DEFAULT_DAEMON_DIR);
-const PID_FILE = join(DAEMON_DIR, 'daemon.pid');
-const SOCKET_FILE = join(DAEMON_DIR, 'daemon.sock');
-
-// Determine matrix ID from config or project path
-const PROJECT_PATH = process.cwd();
-const MATRIX_ID = matrixConfig.matrix_id || PROJECT_PATH.replace(/.*\//, ''); // Last path component
+const PID_FILE = join(DAEMON_DIR, `daemon-${MATRIX_ID}.pid`);
+const SOCKET_FILE = join(DAEMON_DIR, `daemon-${MATRIX_ID}.sock`);
 
 // Hub PIN for authentication (parsed later from CLI args if provided)
 let HUB_PIN = process.env.MATRIX_HUB_PIN || matrixConfig.hub_pin || '';
@@ -625,11 +626,16 @@ function startHttpServer(): void {
 // ============ Daemon Lifecycle ============
 
 function writePidFile(): void {
-  const pidDir = dirname(PID_FILE);
-  if (!existsSync(pidDir)) {
-    mkdirSync(pidDir, { recursive: true });
+  try {
+    const pidDir = dirname(PID_FILE);
+    if (!existsSync(pidDir)) {
+      mkdirSync(pidDir, { recursive: true });
+    }
+    writeFileSync(PID_FILE, `${process.pid}\n${DAEMON_PORT}\n${MATRIX_ID}`);
+    console.log(`[Daemon] PID file: ${PID_FILE}`);
+  } catch (e) {
+    console.error(`[Daemon] Failed to write PID file: ${e}`);
   }
-  writeFileSync(PID_FILE, `${process.pid}\n${DAEMON_PORT}\n${MATRIX_ID}`);
 }
 
 function removePidFile(): void {

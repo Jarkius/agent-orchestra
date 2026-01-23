@@ -7,6 +7,55 @@ import { db } from '../../src/db';
 import { execSync } from 'child_process';
 import { basename, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
+import { homedir } from 'os';
+
+// Load .matrix.json config
+function loadMatrixConfig(): Record<string, unknown> {
+  try {
+    const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
+    const configPath = join(gitRoot, '.matrix.json');
+    if (existsSync(configPath)) {
+      return JSON.parse(readFileSync(configPath, 'utf8'));
+    }
+  } catch {}
+  const cwdConfig = join(process.cwd(), '.matrix.json');
+  if (existsSync(cwdConfig)) {
+    try {
+      return JSON.parse(readFileSync(cwdConfig, 'utf8'));
+    } catch {}
+  }
+  return {};
+}
+
+// Read actual daemon port from PID file (daemon may use different port if default is busy)
+// PID file is per-matrix: daemon-{matrix_id}.pid
+function getDaemonPort(): string | null {
+  const matrixId = getMatrixId();
+  const config = loadMatrixConfig();
+  const daemonDir = config.daemon_dir
+    ? String(config.daemon_dir).replace('~', homedir())
+    : join(homedir(), '.matrix-daemon');
+  const pidFile = join(daemonDir, `daemon-${matrixId}.pid`);
+  if (existsSync(pidFile)) {
+    try {
+      const content = readFileSync(pidFile, 'utf-8').trim().split('\n');
+      const pid = parseInt(content[0] || '0');
+      const port = content[1] || null;
+      // Verify process is still running
+      if (pid > 0 && port) {
+        try {
+          process.kill(pid, 0); // Check if process exists
+          return port;
+        } catch {
+          // Process not running
+        }
+      }
+    } catch {
+      // Can't read PID file
+    }
+  }
+  return null;
+}
 
 function getMatrixId(): string {
   // Prefer .matrix.json config if it exists
@@ -114,7 +163,8 @@ function getUnreadCount(): number {
 
 async function main() {
   const hubPort = process.env.MATRIX_HUB_PORT || '8081';
-  const daemonPort = process.env.MATRIX_DAEMON_PORT || '37888';
+  // Prefer actual daemon port from PID file, fall back to env
+  const daemonPort = getDaemonPort() || process.env.MATRIX_DAEMON_PORT || '37888';
   const indexerPort = process.env.INDEXER_DAEMON_PORT || '37889';
   const matrixId = getMatrixId();
 
