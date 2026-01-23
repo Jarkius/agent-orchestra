@@ -17,6 +17,26 @@ Spawns real Claude CLI instances as sub-agents via MCP.
 
 **Data paths:** `./data/agent_inbox/` (tasks) → `./data/agent_outbox/` (results)
 
+## Task Linking (Traceability)
+
+Link agent work to business requirements for cost tracking and learning attribution:
+
+```bash
+# Create requirement
+bun memory task "Implement feature X" --project
+
+# Assign with link (via MCP)
+assign_task(agent_id, task, unified_task_id=5)  # Links to requirement #5
+
+# Query lineage
+getTaskLineage(5)  # Returns: requirement, missions, tasks, learnings, stats
+```
+
+**Auto-behaviors:**
+- `assign_task` with `unified_task_id` → marks requirement "in_progress"
+- All linked tasks complete → auto-marks requirement "done"
+- `harvestFromMission` → links learnings to source task/mission/requirement
+
 ## Quick Start
 
 ```bash
@@ -121,11 +141,15 @@ MATRIX_HUB_URL=ws://192.168.1.x:8081 bun run src/matrix-daemon.ts start
 │   │   ├── status.ts
 │   │   ├── task.ts
 │   │   └── validate-search.ts
-│   ├── tests/ (5 files)
+│   ├── tests/ (9 files)
 │   │   ├── agent.test.ts
+│   │   ├── db-functions.test.ts
 │   │   ├── integration.test.ts
 │   │   ├── matrix.test.ts
 │   │   ├── memory.test.ts
+│   │   ├── task-linking.test.ts
+│   │   ├── task-linking-integration.test.ts
+│   │   ├── task-linking-flow-stress.test.ts
 │   │   └── test-utils.ts
 │   ├── download-embedding-model.ts
 │   ├── migrate-collections.ts

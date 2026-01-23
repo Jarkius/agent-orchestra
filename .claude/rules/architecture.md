@@ -87,9 +87,11 @@
 ```
 SQLite (agents.db)
 ├── agents          # Agent registry + stats
-├── tasks           # Task history + results
+├── agent_tasks     # Task history + results + linking
+├── unified_tasks   # Business requirements (system/project/session)
+├── missions        # Orchestration queue + dependencies
 ├── sessions        # Session recordings
-├── learnings       # Knowledge base
+├── learnings       # Knowledge base + source links
 ├── lessons         # Past solutions
 ├── events          # Agent lifecycle events
 ├── messages        # Inbox/outbox logs
@@ -101,3 +103,32 @@ ChromaDB (vector embeddings)
 ├── lessons         # Similar problem lookup
 └── code_index      # Semantic code search
 ```
+
+## Task Linking (Intelligence Bridge)
+
+Three task systems are linked for full traceability:
+
+```
+unified_tasks (requirements)
+       │
+       ├──► missions (orchestration)
+       │         │
+       │         └──► agent_tasks (execution)
+       │                    │
+       └──────────────────► learnings (knowledge)
+```
+
+**Linking columns:**
+- `agent_tasks.unified_task_id` → Links work to business requirement
+- `agent_tasks.parent_mission_id` → Links to orchestration mission
+- `missions.unified_task_id` → Links mission to requirement
+- `learnings.source_task_id` → Links learning to task that generated it
+- `learnings.source_mission_id` → Links to orchestration context
+- `learnings.source_unified_task_id` → Links to business requirement
+
+**Intelligence enabled:**
+- Cost accounting per requirement (token usage, duration)
+- Failure pattern correlation across tasks
+- Learning source traceability
+- Sibling task discovery for parallel work
+- Auto-sync unified_task status on completion
