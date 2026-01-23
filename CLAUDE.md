@@ -6,6 +6,7 @@ Spawns real Claude CLI instances as sub-agents via MCP.
 @.claude/rules/memory-first.md
 @.claude/rules/agent-patterns.md
 @.claude/rules/matrix-comms.md
+@.claude/rules/search-strategy.md
 
 ## MCP vs Matrix
 
@@ -40,6 +41,21 @@ bun memory task:update 5 done                # Complete task
 bun memory task:sync                         # Sync with GitHub
 bun memory task:stats                        # Task statistics
 ```
+
+## Semantic Code Search
+
+Use `search_code` MCP tool or CLI for code-related queries:
+
+```bash
+bun memory index once                        # Index codebase (run first)
+bun memory index search "authentication"     # Semantic search
+bun memory index search "api" --lang ts      # Filter by language
+bun memory index status                      # Check index health
+bun memory indexer start                     # Start auto-update daemon
+bun memory map --update                      # Refresh codebase map below
+```
+
+Prefer semantic search over grep/glob for code. See @.claude/rules/search-strategy.md.
 
 ## Matrix Setup (Cross-Machine)
 

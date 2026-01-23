@@ -4,8 +4,14 @@ Before suggesting workflows, patterns, or tools - search for proven learnings.
 
 ## Search First
 
+For **knowledge/learnings**:
 ```bash
 bun memory recall "topic keywords"
+```
+
+For **code** (see @.claude/rules/search-strategy.md):
+```bash
+bun memory index search "implementation pattern"
 ```
 
 **When to search:**

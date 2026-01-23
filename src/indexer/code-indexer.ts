@@ -424,15 +424,20 @@ export class CodeIndexer {
       language: options?.language,
     });
 
-    return results.ids[0].map((id, i) => ({
-      file_path: id,
-      content: results.documents[0][i] || '',
-      language: (results.metadatas?.[0]?.[i]?.language as string) || 'unknown',
-      relevance: results.distances?.[0]?.[i]
-        ? 1 - results.distances[0][i]
-        : 0,
-      metadata: results.metadatas?.[0]?.[i] || {},
-    }));
+    return results.ids[0].map((id, i) => {
+      const metadata = results.metadatas?.[0]?.[i] || {};
+      // Use metadata.file_path if available, otherwise extract from ID (remove :chunk:N suffix)
+      const filePath = (metadata.file_path as string) || id.split(':chunk:')[0];
+      return {
+        file_path: filePath,
+        content: results.documents[0][i] || '',
+        language: (metadata.language as string) || 'unknown',
+        relevance: results.distances?.[0]?.[i]
+          ? 1 - results.distances[0][i]
+          : 0,
+        metadata,
+      };
+    });
   }
 
   /**

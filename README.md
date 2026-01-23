@@ -61,6 +61,7 @@ Agent Orchestra provides:
 - **Semantic Search** - Find relevant sessions and learnings by meaning, not keywords
 - **Task Tracking** - Track pending tasks across sessions with auto-completion detection
 - **Knowledge Graph** - Entity extraction and relationship mapping
+- **Semantic Code Search** - Vector-based code understanding across languages
 
 ### Self-Evolving Knowledge
 - **Learning Loop** - Automatic distillation from sessions to learnings
@@ -189,6 +190,15 @@ bun memory task:promote 5                    # Promote project → system
 bun memory graph                     # Explore all entities
 bun memory graph "chromadb"          # Find related learnings
 
+# Semantic code search
+bun memory index once                # Full codebase index
+bun memory index search "auth"       # Search by meaning
+bun memory index search "api" --lang ts  # Filter by language
+bun memory index status              # Check index health
+bun memory indexer start             # Start auto-update daemon
+bun memory map                       # Generate codebase map
+bun memory map --update              # Update CLAUDE.md map
+
 # Maintenance
 bun memory stats                     # View statistics
 bun memory reindex                   # Rebuild vector index
@@ -251,6 +261,9 @@ MATRIX_HUB_URL=ws://192.168.1.100:8081 bun run src/matrix-daemon.ts start
 /memory-stats         # View statistics
 /matrix-connect       # Start matrix daemon for cross-project messaging
 /matrix-watch         # Open tmux pane with live matrix message feed
+
+# Code search (via MCP)
+search_code           # Semantic code search
 ```
 
 ---
@@ -406,6 +419,45 @@ if (status.stale) {
 
 ---
 
+## Semantic Code Search
+
+Find code by meaning, not just keywords:
+
+```bash
+# One-time index (required first)
+bun memory index once
+
+# Search code semantically
+bun memory index search "database connection handling"
+bun memory index search "error middleware" --lang typescript
+
+# Keep index fresh automatically
+bun memory indexer start              # Start daemon
+bun memory indexer status             # Check daemon
+bun memory indexer stop               # Stop daemon
+
+# Generate codebase map
+bun memory map                        # Show map
+bun memory map --update               # Update CLAUDE.md
+```
+
+**Benefits:**
+- Understands code meaning, not just text matches
+- Works across languages (TypeScript, Python, Go, etc.)
+- Finds conceptually related code automatically
+- Auto-updates when files change (with daemon)
+
+**When to Use:**
+| Need | Tool |
+|------|------|
+| Find implementations | `search_code` |
+| Locate patterns | `search_code` |
+| Similar code | `search_code` |
+| Exact strings | `grep` |
+| File names | `glob` |
+
+---
+
 ## Agent Roles
 
 | Role | Model | Purpose |
@@ -467,6 +519,7 @@ Tools are consolidated with `action` parameters for efficiency.
 | `recall_learnings` | Search learnings by query |
 | `consolidate_learnings` | Merge duplicate learnings |
 | `search` | Semantic search across all collections |
+| `search_code` | Semantic code search across indexed codebase |
 | `get_context_bundle` | Get relevant context for new session |
 | `export_learnings` | Export to LEARNINGS.md |
 | `stats` | System statistics |
@@ -577,6 +630,7 @@ agent-orchestra/
 | [PTY Orchestration](docs/pty-orchestration.md) | Agent spawning and management |
 | [Worktree Isolation](docs/worktree-isolation.md) | Git worktree integration |
 | [Session Snapshot](docs/SESSION_SNAPSHOT.md) | Session capture and recovery |
+| [Semantic Search](docs/semantic-search.md) | Code search and indexing |
 
 ---
 

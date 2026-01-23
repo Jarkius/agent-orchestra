@@ -13,6 +13,8 @@
 | Learning Loop | `src/learning/loop.ts` | Knowledge extraction from tasks |
 | Distill Engine | `src/learning/distill-engine.ts` | Smart code/doc learning |
 | Code Analyzer | `src/learning/code-analyzer.ts` | Deep learning from repos |
+| Code Indexer | `src/indexer/code-indexer.ts` | Semantic code search |
+| Indexer Daemon | `src/indexer/indexer-daemon.ts` | Auto-update file watcher |
 | Matrix Hub | `src/matrix-hub.ts` | Cross-matrix WebSocket server |
 | Matrix Daemon | `src/matrix-daemon.ts` | Persistent hub connection |
 | Matrix Client | `src/matrix-client.ts` | Client library |
@@ -25,7 +27,8 @@
 | `./data/agent_inbox/{id}/` | Task queue (persistent) |
 | `./data/agent_outbox/{id}/` | Results (persistent) |
 | `./data/agent_shared/` | Shared context |
-| `~/.matrix-daemon/` | Daemon PID/socket |
+| `~/.matrix-daemon/` | Matrix daemon PID/socket |
+| `~/.indexer-daemon/` | Indexer daemon PID file |
 
 **Note:** Agent paths moved from `/tmp/` to `./data/` for persistence across reboots.
 
@@ -36,6 +39,7 @@
 | 8080 | WebSocket server (agent comm) | `WS_PORT` |
 | 8081 | Matrix Hub (cross-matrix) | `MATRIX_HUB_PORT` |
 | 37888 | Matrix Daemon HTTP API | `MATRIX_DAEMON_PORT` |
+| 37889 | Indexer Daemon HTTP API | `INDEXER_DAEMON_PORT` |
 
 ## Data Flow
 
@@ -94,5 +98,6 @@ SQLite (agents.db)
 ChromaDB (vector embeddings)
 ├── sessions        # Session semantic search
 ├── learnings       # Learning retrieval
-└── lessons         # Similar problem lookup
+├── lessons         # Similar problem lookup
+└── code_index      # Semantic code search
 ```

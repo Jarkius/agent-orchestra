@@ -30,6 +30,18 @@ interface DaemonStatus {
   inbox: number;
 }
 
+interface IndexerStatus {
+  status: string;
+  watcherActive: boolean;
+  stats: {
+    indexedFiles: number;
+    totalDocuments?: number;
+  };
+  vectorStats?: {
+    totalDocuments: number;
+  };
+}
+
 async function checkHub(port: string): Promise<HubHealth | null> {
   try {
     const response = await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(2000) });
@@ -54,6 +66,18 @@ async function checkDaemon(port: string): Promise<DaemonStatus | null> {
   return null;
 }
 
+async function checkIndexer(port: string): Promise<IndexerStatus | null> {
+  try {
+    const response = await fetch(`http://localhost:${port}/status`, { signal: AbortSignal.timeout(2000) });
+    if (response.ok) {
+      return await response.json() as IndexerStatus;
+    }
+  } catch {
+    // Indexer daemon not running
+  }
+  return null;
+}
+
 function getUnreadCount(): number {
   const matrixPath = process.cwd();
   const rows = db.query(`
@@ -69,9 +93,10 @@ function getUnreadCount(): number {
 async function main() {
   const hubPort = process.env.MATRIX_HUB_PORT || '8081';
   const daemonPort = process.env.MATRIX_DAEMON_PORT || '37888';
+  const indexerPort = process.env.INDEXER_DAEMON_PORT || '37889';
   const matrixId = getMatrixId();
 
-  console.log('\n📊 Matrix Status\n');
+  console.log('\n📊 System Status\n');
   console.log('─'.repeat(40));
 
   // Check hub
@@ -91,6 +116,17 @@ async function main() {
   } else {
     console.log(`  Daemon:  ❌ Not running`);
     console.log(`           Start: bun run src/matrix-daemon.ts start`);
+  }
+
+  // Check indexer daemon
+  const indexer = await checkIndexer(indexerPort);
+  if (indexer) {
+    const watcherStatus = indexer.watcherActive ? '✅ Watching' : '⚠️  Idle';
+    const docCount = indexer.vectorStats?.totalDocuments || indexer.stats?.indexedFiles || 0;
+    console.log(`  Indexer: ${watcherStatus} (${docCount} docs)`);
+  } else {
+    console.log(`  Indexer: ❌ Not running`);
+    console.log(`           Start: bun memory indexer start`);
   }
 
   // Matrix info
@@ -122,6 +158,9 @@ async function main() {
   // Quick start hint if nothing running
   if (!hub && !daemon) {
     console.log(`\n  💡 Quick start: bun memory init`);
+  }
+  if (!indexer) {
+    console.log(`  💡 For code search: bun memory indexer start --initial`);
   }
 
   console.log();

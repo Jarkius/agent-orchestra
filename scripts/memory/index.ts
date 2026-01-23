@@ -183,6 +183,15 @@ async function main() {
       break;
     }
 
+    case 'indexer': {
+      // Indexer daemon commands: start, stop, status
+      const daemonCmd = args[1] || 'status';
+      const daemonArgs = args.slice(2);
+      process.argv = [process.argv[0]!, process.argv[1]!, daemonCmd, ...daemonArgs];
+      await import('../../src/indexer/indexer-daemon');
+      break;
+    }
+
     case 'map': {
       // Generate codebase map from indexed data
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
@@ -244,6 +253,9 @@ Commands:
   index start       Start file watcher for auto-indexing
   index status      Show code index statistics
   index search "q"  Search indexed code semantically
+  indexer start     Start indexer daemon (background file watcher)
+  indexer stop      Stop indexer daemon
+  indexer status    Check indexer daemon status
   map               Generate codebase map from indexed data
   map --update      Update CLAUDE.md with codebase map
 
