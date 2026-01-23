@@ -624,7 +624,7 @@ db.run(`
     to_matrix TEXT,
     content TEXT NOT NULL,
     message_type TEXT DEFAULT 'broadcast' CHECK(message_type IN ('broadcast', 'direct')),
-    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'sent', 'delivered', 'failed')),
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'sending', 'sent', 'delivered', 'failed')),
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 3,
     error TEXT,
