@@ -474,6 +474,20 @@ try {
 // Create index for task-session queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id)`);
 
+// ============ Task Linking Schema (Phases 2-4) ============
+
+// Add unified_task_id to link agent work back to business requirements
+try {
+  db.run(`ALTER TABLE agent_tasks ADD COLUMN unified_task_id INTEGER REFERENCES unified_tasks(id)`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_unified ON agent_tasks(unified_task_id)`);
+
+// Add mission_id to link sub-tasks to their parent orchestration mission
+try {
+  db.run(`ALTER TABLE agent_tasks ADD COLUMN parent_mission_id TEXT`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_parent_mission ON agent_tasks(parent_mission_id)`);
+
 // ============ Phase 1: Per-Agent Memory Schema ============
 
 // Add agent_id column to sessions table (nullable, NULL = orchestrator)
@@ -517,6 +531,24 @@ try {
 try {
   db.run(`ALTER TABLE learnings ADD COLUMN source_url TEXT`);
 } catch { /* Column already exists */ }
+
+// Add source_task_id to link learnings back to the task that generated them
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN source_task_id TEXT`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_task ON learnings(source_task_id)`);
+
+// Add source_mission_id to link learnings back to their orchestration mission
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN source_mission_id TEXT`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_mission ON learnings(source_mission_id)`);
+
+// Add source_unified_task_id to link learnings to business requirements
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN source_unified_task_id INTEGER`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_unified ON learnings(source_unified_task_id)`);
 
 // Create indexes for agent-scoped queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`);
@@ -964,15 +996,29 @@ export function createTask(
   agentId: number,
   prompt: string,
   context?: string,
-  priority = 'normal'
+  priority = 'normal',
+  options?: {
+    unified_task_id?: number;
+    parent_mission_id?: string;
+    session_id?: string;
+  }
 ) {
   db.run(
-    `INSERT INTO agent_tasks (id, agent_id, prompt, context, priority, status, created_at)
-     VALUES (?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP)`,
-    [taskId, agentId, prompt, context || null, priority]
+    `INSERT INTO agent_tasks (id, agent_id, prompt, context, priority, status, created_at, unified_task_id, parent_mission_id, session_id)
+     VALUES (?, ?, ?, ?, ?, 'queued', CURRENT_TIMESTAMP, ?, ?, ?)`,
+    [
+      taskId,
+      agentId,
+      prompt,
+      context || null,
+      priority,
+      options?.unified_task_id || null,
+      options?.parent_mission_id || null,
+      options?.session_id || null
+    ]
   );
   logMessage(agentId, 'inbound', `Task queued: ${prompt.substring(0, 100)}...`, 'task', 'orchestrator');
-  logEvent(agentId, 'task_queued', { task_id: taskId, priority });
+  logEvent(agentId, 'task_queued', { task_id: taskId, priority, unified_task_id: options?.unified_task_id });
 }
 
 export function startTask(taskId: string) {
@@ -1006,6 +1052,23 @@ export function completeTask(
     logMessage(task.agent_id, 'outbound', `Task completed: ${result.substring(0, 100)}...`, 'result', `agent-${task.agent_id}`);
     incrementAgentStats(task.agent_id, true, durationMs);
     logEvent(task.agent_id, 'task_completed', { task_id: taskId, duration_ms: durationMs });
+
+    // Sync unified_task status if linked
+    if (task.unified_task_id) {
+      // Check if all tasks for this unified_task are complete
+      const pending = db.query(`
+        SELECT COUNT(*) as count FROM agent_tasks
+        WHERE unified_task_id = ? AND status NOT IN ('completed', 'cancelled', 'failed')
+      `).get(task.unified_task_id) as any;
+
+      if (pending.count === 0) {
+        // All tasks complete - mark unified_task as done
+        db.run(
+          `UPDATE unified_tasks SET status = 'done', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          [task.unified_task_id]
+        );
+      }
+    }
   }
 }
 
@@ -1072,6 +1135,101 @@ export function cancelTask(taskId: string) {
   return false;
 }
 
+// ============ Task Linking Functions ============
+
+/**
+ * Link an agent_task to a unified_task (business requirement)
+ */
+export function linkTaskToUnified(agentTaskId: string, unifiedTaskId: number): void {
+  db.run(
+    `UPDATE agent_tasks SET unified_task_id = ? WHERE id = ?`,
+    [unifiedTaskId, agentTaskId]
+  );
+}
+
+/**
+ * Link an agent_task to its parent mission
+ */
+export function linkTaskToMission(agentTaskId: string, missionId: string): void {
+  db.run(
+    `UPDATE agent_tasks SET parent_mission_id = ? WHERE id = ?`,
+    [missionId, agentTaskId]
+  );
+}
+
+/**
+ * Get all agent_tasks linked to a unified_task
+ */
+export function getLinkedTasks(unifiedTaskId: number): any[] {
+  return db.query(
+    `SELECT * FROM agent_tasks WHERE unified_task_id = ? ORDER BY created_at DESC`
+  ).all(unifiedTaskId);
+}
+
+/**
+ * Get full task lineage: unified_task -> agent_tasks -> learnings
+ */
+export function getTaskLineage(unifiedTaskId: number): {
+  unified_task: any;
+  agent_tasks: any[];
+  learnings: any[];
+  stats: { total_duration_ms: number; total_tokens: number; task_count: number };
+} {
+  const unified_task = db.query(
+    `SELECT * FROM unified_tasks WHERE id = ?`
+  ).get(unifiedTaskId);
+
+  const agent_tasks = db.query(
+    `SELECT * FROM agent_tasks WHERE unified_task_id = ? ORDER BY created_at`
+  ).all(unifiedTaskId);
+
+  const learnings = db.query(
+    `SELECT * FROM learnings WHERE source_unified_task_id = ? ORDER BY created_at`
+  ).all(unifiedTaskId);
+
+  // Calculate stats
+  const stats = db.query(`
+    SELECT
+      COALESCE(SUM(duration_ms), 0) as total_duration_ms,
+      COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) as total_tokens,
+      COUNT(*) as task_count
+    FROM agent_tasks
+    WHERE unified_task_id = ?
+  `).get(unifiedTaskId) as any;
+
+  return { unified_task, agent_tasks, learnings, stats };
+}
+
+/**
+ * Get learnings that originated from a specific agent_task
+ */
+export function getLearningsByTask(taskId: string): any[] {
+  return db.query(
+    `SELECT * FROM learnings WHERE source_task_id = ? ORDER BY created_at DESC`
+  ).all(taskId);
+}
+
+/**
+ * Get learnings that originated from a specific mission
+ */
+export function getLearningsByMission(missionId: string): any[] {
+  return db.query(
+    `SELECT * FROM learnings WHERE source_mission_id = ? ORDER BY created_at DESC`
+  ).all(missionId);
+}
+
+/**
+ * Find tasks that share the same unified_task as a given agent_task
+ */
+export function getSiblingTasks(taskId: string): any[] {
+  const task = getTask(taskId);
+  if (!task?.unified_task_id) return [];
+
+  return db.query(
+    `SELECT * FROM agent_tasks WHERE unified_task_id = ? AND id != ? ORDER BY created_at`
+  ).all(task.unified_task_id, taskId);
+}
+
 // ============ Mission Persistence Functions ============
 
 export interface MissionRecord {
@@ -1110,14 +1268,15 @@ export function saveMission(mission: {
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
+  unified_task_id?: number;
 }): void {
   const dependsOnJson = mission.dependsOn ? JSON.stringify(mission.dependsOn) : null;
   const errorJson = mission.error ? JSON.stringify(mission.error) : null;
   const resultJson = mission.result ? JSON.stringify(mission.result) : null;
 
   db.run(`
-    INSERT INTO agent_tasks (id, prompt, context, priority, type, status, timeout_ms, max_retries, retry_count, depends_on, assigned_to, error, result, created_at, started_at, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agent_tasks (id, prompt, context, priority, type, status, timeout_ms, max_retries, retry_count, depends_on, assigned_to, error, result, created_at, started_at, completed_at, unified_task_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
       retry_count = excluded.retry_count,
@@ -1125,7 +1284,8 @@ export function saveMission(mission: {
       error = excluded.error,
       result = excluded.result,
       started_at = excluded.started_at,
-      completed_at = excluded.completed_at
+      completed_at = excluded.completed_at,
+      unified_task_id = excluded.unified_task_id
   `, [
     mission.id,
     mission.prompt,
@@ -1143,6 +1303,7 @@ export function saveMission(mission: {
     mission.createdAt.toISOString(),
     mission.startedAt?.toISOString() || null,
     mission.completedAt?.toISOString() || null,
+    mission.unified_task_id || null,
   ]);
 }
 
@@ -1818,12 +1979,16 @@ export interface LearningRecord {
   lesson?: string;
   prevention?: string;
   project_path?: string;  // Git root path for project/matrix scoping
+  // Task linking fields
+  source_task_id?: string;  // Link to agent_tasks that generated this
+  source_mission_id?: string;  // Link to mission that generated this
+  source_unified_task_id?: number;  // Link to business requirement
 }
 
 export function createLearning(learning: LearningRecord): number {
   const result = db.run(
-    `INSERT INTO learnings (category, title, description, context, source_session_id, source_url, confidence, agent_id, visibility, what_happened, lesson, prevention, project_path)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO learnings (category, title, description, context, source_session_id, source_url, confidence, agent_id, visibility, what_happened, lesson, prevention, project_path, source_task_id, source_mission_id, source_unified_task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       learning.category,
       learning.title,
@@ -1838,6 +2003,9 @@ export function createLearning(learning: LearningRecord): number {
       learning.lesson || null,
       learning.prevention || null,
       learning.project_path || null,
+      learning.source_task_id || null,
+      learning.source_mission_id || null,
+      learning.source_unified_task_id || null,
     ]
   );
   return Number(result.lastInsertRowid);
@@ -3437,6 +3605,16 @@ export function updateUnifiedTask(id: number, data: UnifiedTaskUpdate): UnifiedT
   );
 
   return getUnifiedTaskById(id);
+}
+
+/**
+ * Simple helper to update just the status of a unified task
+ */
+export function updateUnifiedTaskStatus(id: number, status: 'open' | 'in_progress' | 'blocked' | 'done'): void {
+  db.run(
+    `UPDATE unified_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [status, id]
+  );
 }
 
 /**

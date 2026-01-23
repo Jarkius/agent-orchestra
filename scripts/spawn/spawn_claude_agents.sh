@@ -188,16 +188,22 @@ tmux send-keys -t "$SESSION:0.0" "clear && cat << 'EOF'
 Session: $SESSION
 Agents: $NUM_AGENTS
 ChromaDB: ${CHROMA_URL:-embedded mode}
+Task List: ${CLAUDE_CODE_TASK_LIST_ID:-not shared}
 
 Press Ctrl+C to exit this info panel.
 EOF
 " Enter
 
-# Start agent watchers in each pane (with CHROMA_URL if set)
+# Build environment variables to pass to agents
+ENV_VARS=""
+[ -n "$CHROMA_URL" ] && ENV_VARS="CHROMA_URL='$CHROMA_URL' "
+[ -n "$CLAUDE_CODE_TASK_LIST_ID" ] && ENV_VARS="${ENV_VARS}CLAUDE_CODE_TASK_LIST_ID='$CLAUDE_CODE_TASK_LIST_ID' "
+
+# Start agent watchers in each pane (with shared env vars)
 for i in $(seq 1 $NUM_AGENTS); do
     pane=$i
-    if [ -n "$CHROMA_URL" ]; then
-        tmux send-keys -t "$SESSION:0.$pane" "cd '$PROJECT_ROOT' && CHROMA_URL='$CHROMA_URL' bun run src/agent-watcher.ts $i" Enter
+    if [ -n "$ENV_VARS" ]; then
+        tmux send-keys -t "$SESSION:0.$pane" "cd '$PROJECT_ROOT' && ${ENV_VARS}bun run src/agent-watcher.ts $i" Enter
     else
         tmux send-keys -t "$SESSION:0.$pane" "cd '$PROJECT_ROOT' && bun run src/agent-watcher.ts $i" Enter
     fi

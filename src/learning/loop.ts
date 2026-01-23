@@ -84,6 +84,9 @@ export class LearningLoop implements ILearningLoop {
         description: insight,
         confidence: 'low',
         agent_id: mission.assignedTo,
+        // Link learning to its source task/mission
+        source_mission_id: mission.id,
+        source_unified_task_id: mission.unified_task_id,
       });
 
       const learning = getLearningById(learningId);

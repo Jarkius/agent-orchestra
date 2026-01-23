@@ -34,6 +34,7 @@ export interface Mission {
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
+  unified_task_id?: number; // Link to unified_tasks for traceability
 }
 
 export interface MissionResult {

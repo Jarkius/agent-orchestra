@@ -22,6 +22,8 @@ import {
   linkTaskToSession,
   getRecentSessions,
   getHighConfidenceLearnings,
+  createTask as dbCreateTask,
+  updateUnifiedTaskStatus,
   type SessionRecord,
   type LearningRecord,
 } from '../../../db';
@@ -93,6 +95,7 @@ export const taskTools: ToolDefinition[] = [
         session_id: { type: "string" },
         include_context_bundle: { type: "boolean" },
         auto_save_session: { type: "boolean" },
+        unified_task_id: { type: "number", description: "Link to unified_tasks for traceability" },
       },
       required: ["agent_id", "task"],
     },
@@ -115,7 +118,7 @@ export const taskTools: ToolDefinition[] = [
 
 async function assignTask(args: unknown) {
   const input = AssignTaskSchema.parse(args) as AssignTaskInput;
-  const { agent_id, task, context, priority, session_id, include_context_bundle, auto_save_session } = input;
+  const { agent_id, task, context, priority, session_id, include_context_bundle, auto_save_session, unified_task_id } = input;
 
   const taskId = generateTaskId();
 
@@ -128,13 +131,27 @@ async function assignTask(args: unknown) {
     }
   }
 
-  // Create task data
+  // Create task in database with linking
+  dbCreateTask(taskId, agent_id, task, enhancedContext || undefined, priority || 'normal', {
+    unified_task_id: unified_task_id,
+    session_id: session_id,
+  });
+
+  // Update unified_task status to 'in_progress' if linked
+  if (unified_task_id) {
+    try {
+      updateUnifiedTaskStatus(unified_task_id, 'in_progress');
+    } catch { /* Best effort - unified task may not exist */ }
+  }
+
+  // Create task data for delivery
   const taskData = {
     id: taskId,
     prompt: task,
     context: enhancedContext || undefined,
     priority,
     session_id,
+    unified_task_id,
     auto_save_session: auto_save_session || priority === 'high',
     assigned_at: new Date().toISOString(),
   };
@@ -158,7 +175,7 @@ async function assignTask(args: unknown) {
 
   sendMessage("orchestrator", String(agent_id), `Assigned task: ${taskId}`);
 
-  // Link task to session if provided
+  // Link task to session if provided (for backwards compatibility)
   if (session_id) {
     linkTaskToSession(taskId, session_id);
   }
@@ -166,10 +183,11 @@ async function assignTask(args: unknown) {
   const deliveryInfo = deliveryMethod === 'websocket' ? '\nDelivery: WebSocket (instant)' : '\nDelivery: File inbox (polling)';
   const contextInfo = include_context_bundle ? '\nContext bundle: included' : '';
   const sessionInfo = session_id ? `\nLinked to session: ${session_id}` : '';
+  const unifiedInfo = unified_task_id ? `\nLinked to unified task: ${unified_task_id}` : '';
   const autoSaveInfo = taskData.auto_save_session ? '\nAuto-save session: enabled' : '';
 
   return successResponse(
-    `Task assigned to Agent ${agent_id}\nTask ID: ${taskId}\nPriority: ${priority}${deliveryInfo}${contextInfo}${sessionInfo}${autoSaveInfo}`
+    `Task assigned to Agent ${agent_id}\nTask ID: ${taskId}\nPriority: ${priority}${deliveryInfo}${contextInfo}${sessionInfo}${unifiedInfo}${autoSaveInfo}`
   );
 }
 

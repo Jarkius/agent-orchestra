@@ -23,6 +23,7 @@ export const AssignTaskSchema = z.object({
   session_id: z.string().optional(),
   include_context_bundle: z.boolean().default(false),
   auto_save_session: z.boolean().default(false),
+  unified_task_id: z.number().int().positive().optional(), // Link to unified_tasks for traceability
 });
 
 export const BroadcastTaskSchema = z.object({

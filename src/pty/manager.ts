@@ -83,10 +83,24 @@ export class PTYManager implements IPTYManager {
       throw new Error(`Failed to create pane for agent ${agentId}: ${error}`);
     }
 
+    // Build environment variables string for agent
+    const envVars: string[] = [];
+    if (process.env.CHROMA_URL) {
+      envVars.push(`CHROMA_URL='${process.env.CHROMA_URL}'`);
+    }
+    if (process.env.CLAUDE_CODE_TASK_LIST_ID) {
+      envVars.push(`CLAUDE_CODE_TASK_LIST_ID='${process.env.CLAUDE_CODE_TASK_LIST_ID}'`);
+    }
+    // Add any custom env vars from config
+    for (const [key, value] of Object.entries(cfg.env || {})) {
+      envVars.push(`${key}='${value}'`);
+    }
+    const envPrefix = envVars.length > 0 ? envVars.join(' ') + ' ' : '';
+
     // Start agent watcher in the pane with worktree cwd
     const cmd = cfg.cwd && cfg.cwd !== process.cwd()
-      ? `cd ${cfg.cwd} && bun run src/agent-watcher.ts ${agentId}`
-      : `bun run src/agent-watcher.ts ${agentId}`;
+      ? `cd ${cfg.cwd} && ${envPrefix}bun run src/agent-watcher.ts ${agentId}`
+      : `${envPrefix}bun run src/agent-watcher.ts ${agentId}`;
     debug(`Sending command: ${cmd}`);
     try {
       // Use pane ID directly (not session:paneId format - pane IDs are global)

@@ -165,9 +165,52 @@ export function createTempDb(): Database {
       result TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       started_at TEXT,
-      completed_at TEXT
+      completed_at TEXT,
+      unified_task_id INTEGER
     )
   `);
+
+  // Agent tasks table (task history)
+  tempDb.run(`
+    CREATE TABLE IF NOT EXISTS agent_tasks (
+      id TEXT PRIMARY KEY,
+      agent_id INTEGER NOT NULL,
+      prompt TEXT NOT NULL,
+      context TEXT,
+      priority TEXT DEFAULT 'normal',
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+      result TEXT,
+      error TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      duration_ms INTEGER,
+      tokens_used INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      session_id TEXT,
+      unified_task_id INTEGER,
+      parent_mission_id TEXT
+    )
+  `);
+
+  // Add indexes for task linking
+  tempDb.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_unified ON agent_tasks(unified_task_id)`);
+  tempDb.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_mission ON agent_tasks(parent_mission_id)`);
+  tempDb.run(`CREATE INDEX IF NOT EXISTS idx_missions_unified ON missions(unified_task_id)`);
+
+  // Add task linking columns to learnings (if not present via default schema)
+  try {
+    tempDb.run(`ALTER TABLE learnings ADD COLUMN source_task_id TEXT`);
+  } catch { /* Column may already exist */ }
+  try {
+    tempDb.run(`ALTER TABLE learnings ADD COLUMN source_mission_id TEXT`);
+  } catch { /* Column may already exist */ }
+  try {
+    tempDb.run(`ALTER TABLE learnings ADD COLUMN source_unified_task_id INTEGER`);
+  } catch { /* Column may already exist */ }
+
+  tempDb.run(`CREATE INDEX IF NOT EXISTS idx_learnings_task ON learnings(source_task_id)`);
+  tempDb.run(`CREATE INDEX IF NOT EXISTS idx_learnings_mission ON learnings(source_mission_id)`);
+  tempDb.run(`CREATE INDEX IF NOT EXISTS idx_learnings_unified ON learnings(source_unified_task_id)`);
 
   return tempDb;
 }
@@ -417,6 +460,23 @@ export interface TestMission {
   assigned_to?: number;
   depends_on?: string[];
   retry_count?: number;
+  unified_task_id?: number;
+}
+
+export interface TestAgentTask {
+  id?: string;
+  agent_id: number;
+  prompt: string;
+  context?: string;
+  priority?: string;
+  status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  result?: string;
+  error?: string;
+  duration_ms?: number;
+  tokens_used?: number;
+  session_id?: string;
+  unified_task_id?: number;
+  parent_mission_id?: string;
 }
 
 /**
@@ -454,11 +514,12 @@ export function createTestMission(db: Database, data: Partial<TestMission> = {})
     assigned_to: data.assigned_to,
     depends_on: data.depends_on,
     retry_count: data.retry_count ?? 0,
+    unified_task_id: data.unified_task_id,
   };
 
-  const result = db.run(
-    `INSERT INTO missions (id, prompt, priority, type, status, assigned_to, depends_on, retry_count)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  db.run(
+    `INSERT INTO missions (id, prompt, priority, type, status, assigned_to, depends_on, retry_count, unified_task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       mission.id,
       mission.prompt,
@@ -468,10 +529,107 @@ export function createTestMission(db: Database, data: Partial<TestMission> = {})
       mission.assigned_to ?? null,
       mission.depends_on ? JSON.stringify(mission.depends_on) : null,
       mission.retry_count,
+      mission.unified_task_id ?? null,
     ]
   );
 
   return mission;
+}
+
+/**
+ * Create a test agent task
+ */
+export function createTestAgentTask(db: Database, data: Partial<TestAgentTask> = {}): TestAgentTask {
+  const task: TestAgentTask = {
+    id: data.id ?? `task_${Date.now()}_${randomString(6)}`,
+    agent_id: data.agent_id ?? 1,
+    prompt: data.prompt ?? "Test task prompt",
+    context: data.context,
+    priority: data.priority ?? "normal",
+    status: data.status ?? "pending",
+    result: data.result,
+    error: data.error,
+    duration_ms: data.duration_ms,
+    tokens_used: data.tokens_used,
+    session_id: data.session_id,
+    unified_task_id: data.unified_task_id,
+    parent_mission_id: data.parent_mission_id,
+  };
+
+  db.run(
+    `INSERT INTO agent_tasks (id, agent_id, prompt, context, priority, status, result, error, duration_ms, tokens_used, session_id, unified_task_id, parent_mission_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      task.id,
+      task.agent_id,
+      task.prompt,
+      task.context ?? null,
+      task.priority,
+      task.status,
+      task.result ?? null,
+      task.error ?? null,
+      task.duration_ms ?? null,
+      task.tokens_used ?? null,
+      task.session_id ?? null,
+      task.unified_task_id ?? null,
+      task.parent_mission_id ?? null,
+    ]
+  );
+
+  return task;
+}
+
+/**
+ * Update agent task status (simulates completion)
+ */
+export function completeTestAgentTask(
+  db: Database,
+  taskId: string,
+  result: string,
+  durationMs = 1000
+): void {
+  db.run(
+    `UPDATE agent_tasks SET status = 'completed', result = ?, duration_ms = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [result, durationMs, taskId]
+  );
+}
+
+/**
+ * Create a test learning with task linking
+ */
+export function createTestLinkedLearning(
+  db: Database,
+  data: Partial<TestLearning> & {
+    source_task_id?: string;
+    source_mission_id?: string;
+    source_unified_task_id?: number;
+  } = {}
+): TestLearning & { source_task_id?: string; source_mission_id?: string; source_unified_task_id?: number } {
+  const learning = {
+    category: data.category || "testing",
+    title: data.title || "Test learning",
+    description: data.description || "Test description",
+    confidence: data.confidence || "low",
+    source_task_id: data.source_task_id,
+    source_mission_id: data.source_mission_id,
+    source_unified_task_id: data.source_unified_task_id,
+  };
+
+  const result = db.run(
+    `INSERT INTO learnings (category, title, description, confidence, source_task_id, source_mission_id, source_unified_task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      learning.category,
+      learning.title,
+      learning.description,
+      learning.confidence,
+      learning.source_task_id ?? null,
+      learning.source_mission_id ?? null,
+      learning.source_unified_task_id ?? null,
+    ]
+  );
+
+  return { ...learning, id: Number(result.lastInsertRowid) };
 }
 
 /**

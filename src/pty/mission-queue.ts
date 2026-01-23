@@ -406,6 +406,7 @@ export class MissionQueue implements IMissionQueue {
       createdAt: mission.createdAt,
       startedAt: mission.startedAt,
       completedAt: mission.completedAt,
+      unified_task_id: mission.unified_task_id,
     });
   }
 

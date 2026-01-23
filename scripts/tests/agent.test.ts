@@ -755,6 +755,80 @@ describe("Agent Edge Cases", () => {
 });
 
 // ============================================================================
+// PTY Environment Variable Tests
+// ============================================================================
+
+describe("PTY Environment Variables", () => {
+  // Helper to simulate buildEnvPrefix logic from PTYManager
+  function buildEnvPrefix(env: Record<string, string | undefined>, config?: Record<string, string>): string {
+    const envVars: string[] = [];
+    if (env.CHROMA_URL) {
+      envVars.push(`CHROMA_URL='${env.CHROMA_URL}'`);
+    }
+    if (env.CLAUDE_CODE_TASK_LIST_ID) {
+      envVars.push(`CLAUDE_CODE_TASK_LIST_ID='${env.CLAUDE_CODE_TASK_LIST_ID}'`);
+    }
+    // Add any custom env vars from config
+    for (const [key, value] of Object.entries(config || {})) {
+      envVars.push(`${key}='${value}'`);
+    }
+    return envVars.length > 0 ? envVars.join(' ') + ' ' : '';
+  }
+
+  it("includes CLAUDE_CODE_TASK_LIST_ID when set", () => {
+    const prefix = buildEnvPrefix({ CLAUDE_CODE_TASK_LIST_ID: "agent-orchestra" });
+    expect(prefix).toBe("CLAUDE_CODE_TASK_LIST_ID='agent-orchestra' ");
+  });
+
+  it("includes CHROMA_URL when set", () => {
+    const prefix = buildEnvPrefix({ CHROMA_URL: "http://localhost:8100" });
+    expect(prefix).toBe("CHROMA_URL='http://localhost:8100' ");
+  });
+
+  it("includes both env vars when both set", () => {
+    const prefix = buildEnvPrefix({
+      CHROMA_URL: "http://localhost:8100",
+      CLAUDE_CODE_TASK_LIST_ID: "agent-orchestra",
+    });
+    expect(prefix).toContain("CHROMA_URL='http://localhost:8100'");
+    expect(prefix).toContain("CLAUDE_CODE_TASK_LIST_ID='agent-orchestra'");
+  });
+
+  it("returns empty string when no env vars set", () => {
+    const prefix = buildEnvPrefix({});
+    expect(prefix).toBe("");
+  });
+
+  it("ignores undefined env vars", () => {
+    const prefix = buildEnvPrefix({
+      CHROMA_URL: undefined,
+      CLAUDE_CODE_TASK_LIST_ID: "test",
+    });
+    expect(prefix).toBe("CLAUDE_CODE_TASK_LIST_ID='test' ");
+    expect(prefix).not.toContain("CHROMA_URL");
+  });
+
+  it("includes custom config env vars", () => {
+    const prefix = buildEnvPrefix({}, { MY_CUSTOM_VAR: "custom-value" });
+    expect(prefix).toBe("MY_CUSTOM_VAR='custom-value' ");
+  });
+
+  it("combines process env and config env vars", () => {
+    const prefix = buildEnvPrefix(
+      { CLAUDE_CODE_TASK_LIST_ID: "orchestra" },
+      { CUSTOM_VAR: "value" }
+    );
+    expect(prefix).toContain("CLAUDE_CODE_TASK_LIST_ID='orchestra'");
+    expect(prefix).toContain("CUSTOM_VAR='value'");
+  });
+
+  it("handles special characters in values", () => {
+    const prefix = buildEnvPrefix({ CLAUDE_CODE_TASK_LIST_ID: "my-project_v2" });
+    expect(prefix).toBe("CLAUDE_CODE_TASK_LIST_ID='my-project_v2' ");
+  });
+});
+
+// ============================================================================
 // Performance Tests
 // ============================================================================
 

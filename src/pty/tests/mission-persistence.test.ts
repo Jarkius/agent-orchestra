@@ -11,7 +11,7 @@ describe('Mission Persistence', () => {
 
   afterEach(() => {
     // Clean up test missions
-    db.run(`DELETE FROM tasks WHERE id LIKE 'test_mission_%'`);
+    db.run(`DELETE FROM missions WHERE id LIKE 'test_mission_%'`);
   });
 
   describe('saveMission', () => {
