@@ -26,8 +26,9 @@ const HEARTBEAT_INTERVAL_MS = 10000; // 10 seconds
 const HEARTBEAT_TIMEOUT_MS = 30000; // 30 seconds
 
 // PIN Authentication - like WiFi password for the hub
-const PIN_DISABLED = process.env.MATRIX_HUB_PIN === 'disabled';
-const HUB_PIN = PIN_DISABLED ? '' : (process.env.MATRIX_HUB_PIN || generateRandomPin());
+// These are read at startup but can be overridden by startHub config for testing
+let pinDisabled = process.env.MATRIX_HUB_PIN === 'disabled';
+let hubPin = pinDisabled ? '' : (process.env.MATRIX_HUB_PIN || generateRandomPin());
 
 function generateRandomPin(): string {
   // Generate 6-character alphanumeric PIN (uppercase for readability)
@@ -63,6 +64,7 @@ type HubToMatrixMessage =
 type MatrixToHubMessage =
   | { type: 'message'; to?: string; content: string; metadata?: Record<string, any> }  // to=undefined for broadcast
   | { type: 'pong'; matrix_id: string }
+  | { type: 'ping' }  // Client-initiated heartbeat (hub responds with ping)
   | { type: 'presence'; status: 'online' | 'away' };
 
 // ============ State ============
@@ -206,10 +208,30 @@ function notifyPresenceChange(matrixId: string, status: MatrixStatus, displayNam
 
 // ============ WebSocket Hub Server ============
 
+export interface HubConfig {
+  port?: number;
+  hostname?: string;
+  disablePin?: boolean; // For testing - disable PIN authentication
+}
+
 /**
  * Start the matrix hub server
  */
-export function startHub(port = HUB_PORT, hostname = HUB_HOST): void {
+export function startHub(portOrConfig?: number | HubConfig, hostname?: string): void {
+  // Handle both legacy (port, hostname) and new (config) signatures
+  let port = HUB_PORT;
+  let host = HUB_HOST;
+
+  if (typeof portOrConfig === 'object') {
+    port = portOrConfig.port ?? HUB_PORT;
+    host = portOrConfig.hostname ?? HUB_HOST;
+    if (portOrConfig.disablePin) {
+      pinDisabled = true;
+    }
+  } else if (typeof portOrConfig === 'number') {
+    port = portOrConfig;
+    host = hostname ?? HUB_HOST;
+  }
   if (server) {
     console.log('[Hub] Server already running');
     return;
@@ -217,7 +239,7 @@ export function startHub(port = HUB_PORT, hostname = HUB_HOST): void {
 
   server = Bun.serve({
     port,
-    hostname,
+    hostname: host,
 
     fetch(req, server) {
       const url = new URL(req.url);
@@ -247,8 +269,8 @@ export function startHub(port = HUB_PORT, hostname = HUB_HOST): void {
         const pin = url.searchParams.get('pin');
 
         // Validate PIN if enabled
-        if (!PIN_DISABLED) {
-          if (!pin || pin !== HUB_PIN) {
+        if (!pinDisabled) {
+          if (!pin || pin !== hubPin) {
             return new Response(JSON.stringify({
               error: 'Invalid or missing PIN',
               hint: 'Check the hub console for the PIN, or set MATRIX_HUB_PIN in your environment'
@@ -367,6 +389,11 @@ export function startHub(port = HUB_PORT, hostname = HUB_HOST): void {
           switch (message.type) {
             case 'pong':
               // Heartbeat response, already handled above
+              break;
+
+            case 'ping':
+              // Client-initiated ping, respond with ping
+              sendToMatrix(matrixId, { type: 'ping' });
               break;
 
             case 'presence':
@@ -533,12 +560,12 @@ if (import.meta.main) {
   }
 
   // Display PIN authentication info
-  if (PIN_DISABLED) {
+  if (pinDisabled) {
     console.log();
     console.log('  ⚠️  PIN authentication DISABLED (open hub)');
   } else {
     console.log();
-    console.log(`  🔐 Hub PIN: ${HUB_PIN}`);
+    console.log(`  🔐 Hub PIN: ${hubPin}`);
     console.log(`     Share this PIN with matrices that need to connect.`);
     console.log(`     Set MATRIX_HUB_PIN=disabled for open access.`);
   }

@@ -163,8 +163,10 @@ function getUnreadCount(): number {
 
 async function main() {
   const hubPort = process.env.MATRIX_HUB_PORT || '8081';
-  // Prefer actual daemon port from PID file, fall back to env
-  const daemonPort = getDaemonPort() || process.env.MATRIX_DAEMON_PORT || '37888';
+  // Prefer actual daemon port from PID file, fall back to config/env
+  const config = loadMatrixConfig();
+  const configDaemonPort = config.daemon_port ? String(config.daemon_port) : (process.env.MATRIX_DAEMON_PORT || '37888');
+  const daemonPort = getDaemonPort() || configDaemonPort;
   const indexerPort = process.env.INDEXER_DAEMON_PORT || '37889';
   const matrixId = getMatrixId();
 

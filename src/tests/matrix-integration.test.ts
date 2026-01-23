@@ -12,8 +12,8 @@ const TEST_HUB_URL = `ws://localhost:${TEST_PORT}`;
 
 describe('Matrix Communication', () => {
   beforeAll(() => {
-    // Start test hub
-    startHub(TEST_PORT);
+    // Start test hub with PIN disabled for testing
+    startHub({ port: TEST_PORT, disablePin: true });
   });
 
   afterAll(() => {
@@ -142,7 +142,7 @@ describe('Multi-Client Communication', () => {
   // This is a simplified test that verifies the hub handles multiple connections
 
   beforeAll(() => {
-    startHub(TEST_PORT);
+    startHub({ port: TEST_PORT, disablePin: true });
   });
 
   afterAll(() => {
