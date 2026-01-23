@@ -76,15 +76,26 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 // ============ Token Management ============
 
+// Grace period for old tokens during reconnection (30 seconds)
+const TOKEN_GRACE_PERIOD_MS = 30000;
+
 /**
  * Generate a token for a matrix to connect
  * Token is derived from matrix_id + hub secret for deterministic auth
  */
 export function generateMatrixToken(matrixId: string): string {
-  // Revoke any existing token for this matrix
-  for (const [token, data] of matrixTokens.entries()) {
+  const now = new Date();
+
+  // Keep old tokens valid for grace period instead of immediate deletion
+  // This helps with reconnection race conditions
+  for (const [existingToken, data] of matrixTokens.entries()) {
     if (data.matrixId === matrixId) {
-      matrixTokens.delete(token);
+      const tokenAge = now.getTime() - data.createdAt.getTime();
+      if (tokenAge > TOKEN_GRACE_PERIOD_MS) {
+        // Old token - delete it
+        matrixTokens.delete(existingToken);
+      }
+      // Recent tokens kept valid during grace period
     }
   }
 
@@ -94,7 +105,6 @@ export function generateMatrixToken(matrixId: string): string {
     .update(matrixId + HUB_SECRET)
     .digest('hex');
 
-  const now = new Date();
   matrixTokens.set(token, {
     token,
     matrixId,
@@ -338,12 +348,21 @@ export function startHub(portOrConfig?: number | HubConfig, hostname?: string): 
       open(ws) {
         const { matrixId, displayName } = ws.data as { matrixId: string; displayName?: string };
 
-        // Close existing connection for this matrix
+        // Close existing connection for this matrix with grace period
         const existing = connectedMatrices.get(matrixId);
-        if (existing) {
-          try {
-            existing.ws.close(1000, 'Replaced by new connection');
-          } catch {}
+        if (existing && existing.ws !== ws) {
+          // Grace period: wait 2 seconds before closing old connection
+          // This allows reconnection attempts to stabilize
+          console.log(`[Hub] Matrix ${matrixId} reconnecting, closing old connection after grace period`);
+          const oldWs = existing.ws;
+          setTimeout(() => {
+            try {
+              // Only close if this old connection is still around
+              if (oldWs.readyState === 1) { // OPEN
+                oldWs.close(1000, 'Replaced by new connection');
+              }
+            } catch {}
+          }, 2000);
         }
 
         const now = new Date();

@@ -71,6 +71,7 @@ let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let retryInterval: ReturnType<typeof setInterval> | null = null;
 let httpServer: Server | null = null;
+let connectingPromise: Promise<boolean> | null = null; // Prevent double connection attempts
 
 const messageQueue: Array<{ type: 'broadcast' | 'direct'; content: string; to?: string; id?: string }> = [];
 const receivedMessages: Array<{ from: string; content: string; timestamp: string; type: string; id?: string }> = [];
@@ -119,66 +120,82 @@ async function getToken(): Promise<string | null> {
 }
 
 async function connectToHub(): Promise<boolean> {
-  if (ws && connected) return true;
-
-  token = await getToken();
-  if (!token) {
-    scheduleReconnect();
-    return false;
+  // Prevent double connection attempts - return existing promise if connecting
+  if (connectingPromise) {
+    console.log('[Daemon] Connection already in progress, waiting...');
+    return connectingPromise;
   }
 
-  return new Promise((resolve) => {
+  if (ws && connected) return true;
+
+  // Create the connection promise and store it
+  connectingPromise = (async (): Promise<boolean> => {
     try {
-      ws = new WebSocket(`${HUB_URL}?token=${token}`);
-
-      ws.on('open', () => {
-        console.log(`[Daemon] Connected to hub at ${HUB_URL}`);
-        connected = true;
-        startHeartbeat();
-        startRetryLoop();
-        flushMessageQueue();
-        retryPendingMessages(); // Retry any pending from DB immediately
-        resolve(true);
-      });
-
-      ws.on('message', (data) => {
-        try {
-          const msg = JSON.parse(data.toString());
-          console.log(`[Daemon] WS received: ${msg.type} from ${msg.from || 'hub'}`);
-          handleMessage(msg);
-        } catch (e) {
-          console.error('[Daemon] Invalid message:', e);
-        }
-      });
-
-      ws.on('close', (code, reason) => {
-        console.log(`[Daemon] Disconnected: ${code} ${reason}`);
-        connected = false;
-        ws = null;
-        stopHeartbeat();
-        stopRetryLoop();
+      token = await getToken();
+      if (!token) {
         scheduleReconnect();
-      });
+        return false;
+      }
 
-      ws.on('error', (error) => {
-        console.error('[Daemon] WebSocket error:', error);
-        connected = false;
-      });
+      return new Promise((resolve) => {
+        try {
+          ws = new WebSocket(`${HUB_URL}?token=${token}`);
 
-      // Timeout for connection
-      setTimeout(() => {
-        if (!connected) {
-          ws?.close();
+          ws.on('open', () => {
+            console.log(`[Daemon] Connected to hub at ${HUB_URL}`);
+            connected = true;
+            startHeartbeat();
+            startRetryLoop();
+            flushMessageQueue();
+            retryPendingMessages(); // Retry any pending from DB immediately
+            resolve(true);
+          });
+
+          ws.on('message', (data) => {
+            try {
+              const msg = JSON.parse(data.toString());
+              console.log(`[Daemon] WS received: ${msg.type} from ${msg.from || 'hub'}`);
+              handleMessage(msg);
+            } catch (e) {
+              console.error('[Daemon] Invalid message:', e);
+            }
+          });
+
+          ws.on('close', (code, reason) => {
+            console.log(`[Daemon] Disconnected: ${code} ${reason}`);
+            connected = false;
+            ws = null;
+            stopHeartbeat();
+            stopRetryLoop();
+            scheduleReconnect();
+          });
+
+          ws.on('error', (error) => {
+            console.error('[Daemon] WebSocket error:', error);
+            connected = false;
+          });
+
+          // Timeout for connection
+          setTimeout(() => {
+            if (!connected) {
+              ws?.close();
+              resolve(false);
+            }
+          }, 10000);
+
+        } catch (error) {
+          console.error('[Daemon] Connection failed:', error);
+          scheduleReconnect();
           resolve(false);
         }
-      }, 10000);
-
-    } catch (error) {
-      console.error('[Daemon] Connection failed:', error);
-      scheduleReconnect();
-      resolve(false);
+      });
+    } finally {
+      // Clear the promise when done (success or failure)
+      connectingPromise = null;
     }
-  });
+  })();
+
+  return connectingPromise;
 }
 
 function scheduleReconnect(): void {
