@@ -50,3 +50,184 @@ MATRIX_HUB_HOST=0.0.0.0 bun run src/matrix-hub.ts
 # Client (Machine B)
 MATRIX_HUB_URL=ws://192.168.1.x:8081 bun run src/matrix-daemon.ts start
 ```
+
+## Codebase Map
+
+> Auto-generated from semantic index. Run `bun memory map --update` to refresh.
+
+### Overview
+
+- **Files indexed**: 114
+- **Total chunks**: 11482
+- **Top languages**: typescript (608), markdown (284), json (108)
+
+### Directory Structure
+
+```
+├── docs/ (10 files)
+│   ├── codebase-evolution-plan.md
+│   ├── learning-loop.md
+│   ├── LEARNING.md
+│   ├── LEARNINGS-2026-01-21.md
+│   ├── memory-system.md
+│   ├── pty-orchestration.md
+│   ├── SESSION_SNAPSHOT.md
+│   ├── SESSION-2026-01-21-SSE-DUPLEX.md
+│   ├── SYSTEM_ASSESSMENT_2026-01.md
+│   └── worktree-isolation.md
+├── plans/ (2 files)
+│   ├── 2026-01-19_knowledge-graph-support.md
+│   └── 2026-01-22_test-matrix-mcp-communication.md
+├── scripts/ (42 files)
+│   ├── memory/ (25 files)
+│   │   ├── absorb.ts
+│   │   ├── capture-context.ts
+│   │   ├── code-index.ts
+│   │   ├── consolidate.ts
+│   │   ├── context.ts
+│   │   ├── distill.ts
+│   │   ├── evaluate-search.ts
+│   │   ├── export.ts
+│   │   ├── graph.ts
+│   │   ├── index.ts
+│   │   ├── init.ts
+│   │   ├── issue.ts
+│   │   ├── learn.ts
+│   │   ├── list.ts
+│   │   ├── message.ts
+│   │   ├── migrate-dual-collection.ts
+│   │   ├── migrate-issues-to-tasks.ts
+│   │   ├── purge.ts
+│   │   ├── recall.ts
+│   │   ├── reindex.ts
+│   │   ├── reset.ts
+│   │   ├── stats.ts
+│   │   ├── status.ts
+│   │   ├── task.ts
+│   │   └── validate-search.ts
+│   ├── tests/ (5 files)
+│   │   ├── agent.test.ts
+│   │   ├── integration.test.ts
+│   │   ├── matrix.test.ts
+│   │   ├── memory.test.ts
+│   │   └── test-utils.ts
+│   ├── download-embedding-model.ts
+│   ├── migrate-collections.ts
+│   ├── ralph-learning-loop.ts
+│   ├── save-session.ts
+│   ├── stress-test-with-oracle.ts
+│   ├── test-concurrent-init.ts
+│   ├── test-consolidation.ts
+│   ├── test-embeddings.ts
+│   ├── test-integration.ts
+│   ├── test-learning-loop.ts
+│   ├── test-message-ordering.ts
+│   └── test-semantic-search.ts
+├── src/ (54 files)
+│   ├── embeddings/ (2 files)
+│   │   ├── index.ts
+│   │   └── transformers-provider.ts
+│   ├── indexer/ (1 files)
+│   │   └── code-indexer.ts
+│   ├── interfaces/ (5 files)
+│   │   ├── index.ts
+│   │   ├── learning.ts
+│   │   ├── mission.ts
+│   │   ├── pty.ts
+│   │   └── spawner.ts
+│   ├── learning/ (8 files)
+│   │   ├── tests/ (1 files)
+│   │   │   └── integration.test.ts
+│   │   ├── code-analyzer.ts
+│   │   ├── consolidation.ts
+│   │   ├── content-router.ts
+│   │   ├── context-router.ts
+│   │   ├── distill-engine.ts
+│   │   ├── loop.ts
+│   │   └── search-validation.ts
+│   ├── mcp/ (8 files)
+│   │   ├── tools/ (3 files)
+│   │   │   ├── handlers/ (2 files)
+│   │   │   │   ├── task.ts
+│   │   │   │   └── vector.ts
+│   │   │   └── index.ts
+│   │   ├── utils/ (2 files)
+│   │   │   ├── response.ts
+│   │   │   └── validation.ts
+│   │   ├── config.ts
+│   │   ├── server.ts
+│   │   └── types.ts
+│   ├── oracle/ (3 files)
+│   │   ├── tests/ (1 files)
+│   │   │   └── orchestrator.test.ts
+│   │   ├── index.ts
+│   │   └── orchestrator.ts
+│   ├── pty/ (11 files)
+│   │   ├── tests/ (6 files)
+│   │   │   ├── integration.test.ts
+│   │   │   ├── mission-persistence.test.ts
+│   │   │   ├── mission-queue.test.ts
+│   │   │   ├── pty-manager.test.ts
+│   │   │   ├── spawner.test.ts
+│   │   │   └── worktree-manager.test.ts
+│   │   ├── index.ts
+│   │   ├── manager.ts
+│   │   ├── mission-queue.ts
+│   │   ├── spawner.ts
+│   │   └── worktree-manager.ts
+│   ├── services/ (2 files)
+│   │   ├── agent-memory-service.ts
+│   │   └── recall-service.ts
+│   ├── tests/ (2 files)
+│   │   ├── e2e-flow.test.ts
+│   │   └── matrix-integration.test.ts
+│   ├── utils/ (2 files)
+│   │   ├── formatters.ts
+│   │   └── git-context.ts
+│   ├── agent-report.ts
+│   ├── agent-watcher.ts
+│   ├── claude-agent.ts
+│   ├── db.ts
+│   ├── matrix-client.ts
+│   ├── matrix-daemon.ts
+│   ├── matrix-hub.ts
+│   ├── matrix-watch.ts
+│   ├── orchestrator.ts
+│   └── ws-server.ts
+├── tests/ (1 files)
+│   └── structured-learnings.test.ts
+├── CLAUDE.md
+├── package.json
+├── PROMPT.md
+├── README.md
+└── tsconfig.json
+```
+
+### Key Files
+
+**Entry Points:**
+- `src/mcp/server.ts`
+- `src/mcp/tools/index.ts`
+- `src/interfaces/index.ts`
+- `src/embeddings/index.ts`
+- `src/pty/index.ts`
+
+**Core Modules (most exports):**
+- `src/db.ts` - db, registerAgent, updateAgentStatus...
+- `src/mcp/utils/validation.ts` - AgentIdSchema, TaskIdSchema, LimitSchema...
+- `scripts/tests/test-utils.ts` - createTempDb, getTempDb, getTempDbPath...
+- `src/services/agent-memory-service.ts` - AgentSessionInput, AgentLearningInput, SessionWithLinks...
+- `src/matrix-client.ts` - connectToHub, waitForFlush, disconnect...
+- `src/services/recall-service.ts` - clearQueryCache, mmrRerank, QueryType...
+- `src/learning/search-validation.ts` - SearchFeedback, SearchMetrics, WeightRecommendation...
+- `src/learning/distill-engine.ts` - ParsedItem, ParsedSection, ExtractedMetric...
+
+**Key Classes:**
+- `src/indexer/code-indexer.ts`: extraction, CodeIndexer
+- `src/learning/loop.ts`: LearningLoop
+- `src/learning/code-analyzer.ts`: names
+- `src/utils/git-context.ts`: names
+- `src/embeddings/transformers-provider.ts`: TransformersEmbeddingFunction
+- `src/pty/worktree-manager.ts`: WorktreeManager
+- `src/pty/manager.ts`: PTYManager
+- `src/pty/spawner.ts`: AgentSpawner
