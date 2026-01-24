@@ -1,9 +1,0 @@
-{
-  "matrix_id": "test-matrix2",
-  "daemon_port": 37890,
-  "daemon_dir": "~/.matrix-daemon-ts",
-  "database": "./agents.db",
-  "chromadb_url": "http://localhost:8100",
-  "hub_url": "ws://localhost:8081",
-  "hub_pin": "test123"
-}

@@ -165,6 +165,7 @@ fi
 DAEMON_PORT="${MATRIX_DAEMON_PORT:-37888}"
 MATRIX_ID="$(basename "$(pwd)")"
 CONFIG_FILE=".matrix.json"
+HUB_PIN="${MATRIX_HUB_PIN:-}"
 
 # Check if we already have a config with a daemon running
 if [ -f "$CONFIG_FILE" ]; then
@@ -185,7 +186,19 @@ else
     done
 
     # Create/update .matrix.json with our settings
-    cat > "$CONFIG_FILE" << EOF
+    if [ -n "$HUB_PIN" ]; then
+        cat > "$CONFIG_FILE" << EOF
+{
+  "matrix_id": "$MATRIX_ID",
+  "daemon_port": $DAEMON_PORT,
+  "daemon_dir": "~/.matrix-daemon-$MATRIX_ID",
+  "database": "./agents.db",
+  "hub_url": "ws://localhost:$HUB_PORT",
+  "hub_pin": "$HUB_PIN"
+}
+EOF
+    else
+        cat > "$CONFIG_FILE" << EOF
 {
   "matrix_id": "$MATRIX_ID",
   "daemon_port": $DAEMON_PORT,
@@ -194,6 +207,7 @@ else
   "hub_url": "ws://localhost:$HUB_PORT"
 }
 EOF
+    fi
     echo "Created $CONFIG_FILE (daemon port: $DAEMON_PORT)"
 
     echo "Starting Matrix Daemon..."
