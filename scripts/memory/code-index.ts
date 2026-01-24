@@ -317,6 +317,119 @@ async function main() {
       break;
     }
 
+    case 'grep':
+    case 'smart-grep': {
+      // Smart grep: SQLite narrows files, then grep searches content
+      if (!query) {
+        console.error('Usage: bun memory index grep "pattern" [--in "file-filter"]');
+        process.exit(1);
+      }
+
+      const startTime = Date.now();
+
+      // Optional file filter (--in "matrix" to search only matrix-related files)
+      const fileFilter = args.includes('--in')
+        ? args[args.indexOf('--in') + 1]
+        : undefined;
+
+      const langFilter = args.includes('--lang')
+        ? args[args.indexOf('--lang') + 1]
+        : undefined;
+
+      // Step 1: Get candidate files from SQLite
+      let files: string[];
+      if (fileFilter) {
+        const matches = findIndexedFiles(fileFilter, { language: langFilter, limit: 100 });
+        files = matches.map(f => f.file_path);
+      } else if (langFilter) {
+        // Get all files of this language
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+
+        const result = await execAsync(
+          `sqlite3 agents.db "SELECT file_path FROM code_files WHERE language = '${langFilter}'"`
+        );
+        files = result.stdout.trim().split('\n').filter(Boolean);
+      } else {
+        // Get all indexed files
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+
+        const result = await execAsync(
+          `sqlite3 agents.db "SELECT file_path FROM code_files"`
+        );
+        files = result.stdout.trim().split('\n').filter(Boolean);
+      }
+
+      const sqliteTime = Date.now() - startTime;
+
+      if (files.length === 0) {
+        console.log('No indexed files match the filter.');
+        console.log('Tip: Run "bun memory index once" to index your codebase first.');
+        break;
+      }
+
+      // Step 2: Run grep on just those files
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+
+      const grepStart = Date.now();
+      const escapedQuery = query.replace(/"/g, '\\"');
+
+      try {
+        // Run grep on the specific files
+        const fileList = files.join(' ');
+        const { stdout } = await execAsync(
+          `grep -Hn "${escapedQuery}" ${fileList} 2>/dev/null || true`,
+          { maxBuffer: 10 * 1024 * 1024 }
+        );
+
+        const grepTime = Date.now() - grepStart;
+        const totalTime = Date.now() - startTime;
+
+        const lines = stdout.trim().split('\n').filter(Boolean);
+
+        console.log(`\n🔍 Smart grep for: "${query}"\n`);
+        console.log(`⚡ SQLite: ${sqliteTime}ms (${files.length} files) → grep: ${grepTime}ms`);
+        console.log(`📊 Total: ${totalTime}ms | Found: ${lines.length} matches\n`);
+
+        if (lines.length === 0) {
+          console.log('No matches found in indexed files.');
+        } else {
+          // Group by file
+          const byFile: Record<string, string[]> = {};
+          for (const line of lines) {
+            const colonIdx = line.indexOf(':');
+            const secondColon = line.indexOf(':', colonIdx + 1);
+            if (colonIdx > 0 && secondColon > colonIdx) {
+              const file = line.substring(0, colonIdx);
+              const lineNum = line.substring(colonIdx + 1, secondColon);
+              const content = line.substring(secondColon + 1).trim();
+              if (!byFile[file]) byFile[file] = [];
+              byFile[file].push(`  ${lineNum}: ${content.slice(0, 100)}${content.length > 100 ? '...' : ''}`);
+            }
+          }
+
+          for (const [file, matches] of Object.entries(byFile)) {
+            console.log(`📄 ${file} (${matches.length} matches)`);
+            for (const match of matches.slice(0, 5)) {
+              console.log(match);
+            }
+            if (matches.length > 5) {
+              console.log(`  ... and ${matches.length - 5} more`);
+            }
+            console.log('');
+          }
+        }
+      } catch (error) {
+        console.error('Grep failed:', error);
+      }
+      break;
+    }
+
     default:
       printHelp();
       break;
@@ -335,6 +448,7 @@ Commands:
   status            Show index statistics
   search "query"    Search indexed code semantically
   find "pattern"    Fast file/symbol lookup (SQLite, no model needed)
+  grep "pattern"    Smart grep - SQLite narrows files, then grep searches
   files             List all indexed files by language
   health            Check sync between SQLite and ChromaDB
   hybrid "query"    Smart search - auto-routes to best method
@@ -343,6 +457,7 @@ Options:
   --force           Re-index all files (with 'once')
   --initial         Index existing files before watching (with 'start')
   --lang <lang>     Filter by language
+  --in <filter>     Filter files by name/path (with 'grep')
   --limit <n>       Limit results (default: 10-20)
 
 Examples:
@@ -363,6 +478,11 @@ Examples:
   # Hybrid (auto-picks best method)
   bun memory index hybrid "WebSocket"        # Exact match → SQLite
   bun memory index hybrid "how to retry"     # Conceptual → Semantic
+
+  # Smart grep (SQLite + grep = fast exact search)
+  bun memory index grep "connectToHub"       # Search all indexed files
+  bun memory index grep "TODO" --in matrix   # Search only matrix-related files
+  bun memory index grep "import" --lang ts   # Search only TypeScript files
 
 Supported Languages:
   TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Swift,
