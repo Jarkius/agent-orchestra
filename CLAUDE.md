@@ -68,20 +68,42 @@ Gap analysis detects completed tasks by checking git commits for:
 - Explicit refs: `fixes #N`, `closes #N`, `resolves #N`
 - Fuzzy matches: commit messages matching task keywords
 
-## Semantic Code Search
+## Hybrid Code Search (Superpower!)
 
-Use `search_code` MCP tool or CLI for code-related queries:
+**SQLite + ChromaDB hybrid search** - auto-routes to fastest method:
+
+| Query Type | Tool | Speed | vs grep |
+|------------|------|-------|---------|
+| File/function name | `find` | <2ms | 400x faster |
+| Exact string in code | `grep` | ~26ms | 12x faster |
+| Conceptual "how does X" | `search` | ~400ms | smarter |
 
 ```bash
-bun memory index once                        # Index codebase (run first)
-bun memory index search "authentication"     # Semantic search
-bun memory index search "api" --lang ts      # Filter by language
-bun memory index status                      # Check index health
+# Setup (run once)
+bun memory index once                        # Index codebase
+
+# Fast lookups (SQLite, no model load)
+bun memory index find "daemon"               # Find files by name (<2ms)
+bun memory index find "connectToHub"         # Find by function name
+
+# Smart grep (SQLite narrows files, then grep)
+bun memory index grep "WebSocket"            # Search all files (26ms vs 300ms)
+bun memory index grep "TODO" --in matrix     # Search only matrix files
+bun memory index grep "import" --lang ts     # Search only TypeScript
+
+# Semantic search (conceptual queries)
+bun memory index search "authentication"     # How does auth work?
+bun memory index hybrid "error handling"     # Auto-route to best method
+
+# Maintenance
+bun memory index health                      # Check SQLite ↔ ChromaDB sync
+bun memory index files                       # List indexed files by language
 bun memory indexer start                     # Start auto-update daemon
-bun memory map --update                      # Refresh codebase map below
 ```
 
-Prefer semantic search over grep/glob for code. See @.claude/rules/search-strategy.md.
+**MCP tool `search_code`** also uses hybrid search automatically.
+
+See @.claude/rules/search-strategy.md for when to use each.
 
 ## Matrix Setup (Cross-Machine)
 

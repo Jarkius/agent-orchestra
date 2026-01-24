@@ -1,63 +1,92 @@
 # Search Strategy
 
-When searching for code, prefer semantic search over text-based tools.
+Use hybrid search - it auto-routes to the fastest method for each query type.
 
-## Semantic Code Search First
+## Quick Reference
 
-For code-related queries, use the `search_code` MCP tool or `bun memory index search`:
+| Need | Command | Speed |
+|------|---------|-------|
+| Find file by name | `bun memory index find "daemon"` | <2ms |
+| Find function/class | `bun memory index find "connectToHub"` | <2ms |
+| Exact string in code | `bun memory index grep "pattern"` | ~26ms |
+| Conceptual search | `bun memory index search "how auth works"` | ~400ms |
+| Auto-route (best) | `bun memory index hybrid "query"` | varies |
 
-| Task | Tool | Why |
-|------|------|-----|
-| Find implementations | `search_code` | Understands code meaning |
-| Locate similar code | `search_code` | Vector similarity |
-| Find patterns/concepts | `search_code` | Semantic matching |
-| Architecture exploration | `search_code` | Cross-file understanding |
-| Config/exact strings | `grep` | Literal text matching |
-| File discovery | `glob` | Pattern matching |
+## Hybrid Search (Recommended)
 
-## Usage
+The `search_code` MCP tool and `hybrid` CLI command auto-route:
 
 ```bash
-# Via CLI
-bun memory index search "authentication middleware"
-bun memory index search "database connection" --lang ts
-bun memory index search "error handling" --limit 20
-
-# Via MCP tool
-search_code("authentication middleware", { limit: 10 })
-search_code("api endpoints", { language: "typescript" })
+# These auto-pick the best method:
+bun memory index hybrid "connectToHub"       # → SQLite (exact match)
+bun memory index hybrid "authentication"     # → Semantic (conceptual)
 ```
 
-## When to Use grep/glob Instead
+## Smart Grep (12x Faster Than Regular Grep)
 
-- **Exact string matches**: Looking for specific function name `handleAuth`
-- **Non-code files**: Searching markdown, config, JSON
-- **Regex patterns**: Complex text patterns
-- **Quick filename lookup**: When you know the file pattern
+SQLite narrows files first, then grep searches only those:
 
-## Search Flow
+```bash
+# Search all indexed files (no node_modules noise!)
+bun memory index grep "WebSocket"
 
-1. **Code question?** → Try `search_code` first
-2. **No results?** → Check if index exists (`bun memory index status`)
-3. **Need exact match?** → Fall back to `grep`
-4. **Finding files?** → Use `glob`
+# Filter by file name/path
+bun memory index grep "TODO" --in matrix
+
+# Filter by language
+bun memory index grep "import" --lang typescript
+```
+
+**Performance:** 26ms vs 300ms for regular grep (12x faster)
+
+## Fast File Lookup (400x Faster Than Glob)
+
+SQLite-indexed file and symbol search:
+
+```bash
+bun memory index find "daemon"           # Files with 'daemon' in path
+bun memory index find "connectToHub"     # Files containing this function
+bun memory index files --lang typescript # List all TS files
+```
+
+**Performance:** <2ms vs 800ms for glob (400x faster)
+
+## Semantic Search (Conceptual)
+
+For "how does X work" type questions:
+
+```bash
+bun memory index search "authentication middleware"
+bun memory index search "error handling patterns"
+```
+
+## Decision Flow
+
+```
+┌─────────────────────────────────────────────────────┐
+│  What are you looking for?                          │
+└─────────────────────┬───────────────────────────────┘
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+   File/Symbol    Exact String   Concept
+        │             │             │
+        ▼             ▼             ▼
+   index find    index grep    index search
+     (<2ms)        (~26ms)       (~400ms)
+```
+
+## When to Still Use Regular Grep
+
+- Searching non-indexed files (node_modules, generated)
+- Complex regex patterns
+- Files not yet indexed
 
 ## Index Maintenance
 
 ```bash
-# Index codebase (run once or after major changes)
-bun memory index once
-
-# Check index status
-bun memory index status
-
-# Auto-update daemon (keeps index fresh)
-bun memory indexer start
+bun memory index once              # Full index (first time)
+bun memory index once --force      # Re-index all files
+bun memory index health            # Check SQLite ↔ ChromaDB sync
+bun memory indexer start           # Auto-update on file changes
 ```
-
-## Why Semantic Search
-
-- Finds conceptually related code, not just keyword matches
-- Understands function purpose, not just names
-- Works across languages (TypeScript, Python, Go, etc.)
-- Handles synonyms and variations naturally
