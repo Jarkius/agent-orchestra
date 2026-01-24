@@ -2,6 +2,23 @@
 
 Spawns real Claude CLI instances as sub-agents via MCP.
 
+## ⚡ FIRST: Check System Health
+
+**New session? Run this NOW before doing anything else:**
+
+```bash
+bun memory status
+```
+
+If anything shows ❌ or this is a fresh clone:
+```bash
+bun memory init          # Quick fix for most issues
+./scripts/setup.sh       # Full setup (fresh clone)
+```
+
+---
+
+@.claude/rules/startup.md
 @.claude/rules/architecture.md
 @.claude/rules/memory-first.md
 @.claude/rules/agent-patterns.md

@@ -8,6 +8,23 @@
 
 ---
 
+## 🚀 TL;DR - Get Running in 60 Seconds
+
+```bash
+# Fresh clone? Run setup (installs deps, starts services, indexes codebase)
+./scripts/setup.sh
+
+# Already set up? Just check status
+bun memory status
+
+# Something broken? Quick fix
+bun memory init
+```
+
+**For Claude sessions:** Always run `bun memory status` first. If anything shows ❌, run `bun memory init`.
+
+---
+
 ## Why Agent Orchestra?
 
 ### The Problem

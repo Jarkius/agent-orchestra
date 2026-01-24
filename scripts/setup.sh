@@ -80,6 +80,13 @@ echo ""
 echo -e "${YELLOW}Installing dependencies...${NC}"
 bun install
 echo -e "${GREEN}✓${NC} Dependencies installed"
+
+# Fix native dependencies for Apple Silicon (sharp library)
+if [[ "$(uname -m)" == "arm64" && "$(uname -s)" == "Darwin" ]]; then
+    echo -e "${YELLOW}Fixing native dependencies for Apple Silicon...${NC}"
+    bun install --force sharp @img/sharp-libvips-darwin-arm64 > /dev/null 2>&1 || true
+    echo -e "${GREEN}✓${NC} Native dependencies fixed"
+fi
 echo ""
 
 # Start ChromaDB - shared container, project isolation via collection prefixes
@@ -132,10 +139,27 @@ bun memory stats > /dev/null 2>&1 || true
 echo -e "${GREEN}✓${NC} SQLite database initialized"
 echo ""
 
-# Build vector index
+# Pre-download embedding model (avoids 9+ second delay on first use)
+echo -e "${YELLOW}Pre-downloading embedding model...${NC}"
+bun -e "
+const { TransformersEmbeddingFunction } = await import('./src/embeddings/transformers-provider.ts');
+const ef = new TransformersEmbeddingFunction();
+await ef.generate(['warmup']);
+console.log('Model ready');
+" 2>&1 | grep -E "(Model|ready|Initializing)" || echo "Model initialized"
+echo -e "${GREEN}✓${NC} Embedding model cached"
+echo ""
+
+# Build vector index for sessions/learnings
 echo -e "${YELLOW}Building vector index...${NC}"
 bun memory reindex 2>&1 | tail -5
 echo -e "${GREEN}✓${NC} Vector index built"
+echo ""
+
+# Index codebase for semantic code search
+echo -e "${YELLOW}Indexing codebase for semantic search...${NC}"
+bun memory index once 2>&1 | tail -3
+echo -e "${GREEN}✓${NC} Codebase indexed"
 echo ""
 
 # Initialize Matrix Communication System

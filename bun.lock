@@ -7,6 +7,7 @@
       "dependencies": {
         "@anthropic-ai/tokenizer": "^0.0.4",
         "@huggingface/transformers": "^3.8.1",
+        "@img/sharp-libvips-darwin-arm64": "^1.2.4",
         "@modelcontextprotocol/sdk": "^1.25.2",
         "chokidar": "^5.0.0",
         "chromadb": "^3.2.2",
@@ -15,6 +16,7 @@
         "glob": "^13.0.0",
         "gray-matter": "^4.0.3",
         "p-queue": "^9.1.0",
+        "sharp": "^0.34.5",
         "zod": "^4.3.5",
       },
       "devDependencies": {

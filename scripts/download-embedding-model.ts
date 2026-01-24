@@ -6,40 +6,24 @@
  * Usage: bun run download-model
  */
 
-import { EmbeddingModel, FlagEmbedding } from "fastembed";
+import { TransformersEmbeddingFunction } from "../src/embeddings/transformers-provider";
 
 async function main() {
-  const modelName = process.env.FASTEMBED_MODEL || "BGESmallENV15";
-
-  const modelMap: Record<string, EmbeddingModel> = {
-    "BGESmallENV15": EmbeddingModel.BGESmallENV15,
-    "BGESmallEN": EmbeddingModel.BGESmallEN,
-    "BGEBaseEN": EmbeddingModel.BGEBaseEN,
-    "BGEBaseENV15": EmbeddingModel.BGEBaseENV15,
-    "AllMiniLML6V2": EmbeddingModel.AllMiniLML6V2,
-  };
-
-  const selectedModel = modelMap[modelName] || EmbeddingModel.BGESmallENV15;
+  const modelName = process.env.EMBEDDING_MODEL || "nomic-embed-text-v1.5";
 
   console.log(`Downloading embedding model: ${modelName}`);
-  console.log("This may take a moment on first run (~33MB for bge-small-en-v1.5)...\n");
+  console.log("This may take a moment on first run (~250MB for nomic-embed-text-v1.5)...\n");
 
   const startTime = Date.now();
 
-  const model = await FlagEmbedding.init({
-    model: selectedModel as EmbeddingModel.BGESmallENV15,
-    cacheDir: process.env.FASTEMBED_CACHE_DIR ?? undefined,
-  });
+  const embeddingFunction = new TransformersEmbeddingFunction();
 
   // Test embedding to verify model works
-  const testEmbedding: number[][] = [];
-  for await (const batch of model.embed(["hello world"])) {
-    testEmbedding.push(...batch);
-  }
+  const testEmbedding = await embeddingFunction.generate(["hello world"]);
 
   const duration = Date.now() - startTime;
 
-  console.log(`Model downloaded and verified in ${duration}ms`);
+  console.log(`\nModel downloaded and verified in ${duration}ms`);
   console.log(`Embedding dimensions: ${testEmbedding[0]!.length}`);
   console.log("\nReady for use!");
 }
