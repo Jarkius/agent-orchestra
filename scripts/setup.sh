@@ -249,18 +249,88 @@ EOF
 fi
 echo ""
 
-# Verify installation
-echo -e "${YELLOW}Verifying installation...${NC}"
+# ============================================
+# FINAL VERIFICATION - All systems must pass
+# ============================================
+echo -e "${YELLOW}Running final health check...${NC}"
 echo ""
 
-# Check stats
-echo "System Statistics:"
-bun memory stats 2>/dev/null | head -20
+HEALTH_FAILED=0
+
+# Check 1: ChromaDB
+if curl -s "http://localhost:$CHROMA_PORT/api/v2/heartbeat" &> /dev/null; then
+    echo -e "  ${GREEN}✓${NC} ChromaDB: healthy"
+else
+    echo -e "  ${RED}✗${NC} ChromaDB: not responding"
+    HEALTH_FAILED=1
+fi
+
+# Check 2: Matrix Hub
+if curl -s "http://localhost:$HUB_PORT/health" &> /dev/null; then
+    echo -e "  ${GREEN}✓${NC} Matrix Hub: running"
+else
+    echo -e "  ${YELLOW}⚠${NC} Matrix Hub: not running (optional)"
+fi
+
+# Check 3: Matrix Daemon
+if curl -s "http://localhost:$DAEMON_PORT/status" &> /dev/null; then
+    echo -e "  ${GREEN}✓${NC} Matrix Daemon: connected"
+else
+    echo -e "  ${YELLOW}⚠${NC} Matrix Daemon: not running (optional)"
+fi
+
+# Check 4: SQLite database exists
+if [ -f "agents.db" ]; then
+    echo -e "  ${GREEN}✓${NC} SQLite: agents.db exists"
+else
+    echo -e "  ${RED}✗${NC} SQLite: agents.db missing"
+    HEALTH_FAILED=1
+fi
+
+# Check 5: Code index has files
+INDEX_COUNT=$(bun -e "
+const db = require('better-sqlite3')('agents.db');
+try { console.log(db.prepare('SELECT COUNT(*) as c FROM code_index').get()?.c || 0); }
+catch { console.log(0); }
+" 2>/dev/null || echo "0")
+
+if [ "$INDEX_COUNT" -gt 0 ]; then
+    echo -e "  ${GREEN}✓${NC} Code Index: $INDEX_COUNT files indexed"
+else
+    echo -e "  ${YELLOW}⚠${NC} Code Index: empty (run 'bun memory index once')"
+fi
+
+# Check 6: Embedding model works (quick test)
+echo -n "  Testing embedding model... "
+EMBED_TEST=$(bun -e "
+const { TransformersEmbeddingFunction } = await import('./src/embeddings/transformers-provider.ts');
+const ef = new TransformersEmbeddingFunction();
+const result = await ef.generate(['test']);
+console.log(result[0]?.length > 0 ? 'ok' : 'fail');
+" 2>/dev/null || echo "fail")
+
+if [ "$EMBED_TEST" = "ok" ]; then
+    echo -e "${GREEN}✓${NC} working"
+else
+    echo -e "${RED}✗${NC} failed"
+    HEALTH_FAILED=1
+fi
+
 echo ""
 
-# Success message
+# Final verdict
+if [ $HEALTH_FAILED -eq 1 ]; then
+    echo -e "${RED}╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║           Setup INCOMPLETE - See errors above            ║${NC}"
+    echo -e "${RED}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "Try running: bun memory init"
+    exit 1
+fi
+
+# All checks passed
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║                  Setup Complete!                         ║${NC}"
+echo -e "${GREEN}║              ✓ Setup Complete - All Systems Go!          ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "Next steps:"
