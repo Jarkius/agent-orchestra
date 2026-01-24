@@ -11,6 +11,9 @@
  */
 
 import { CodeIndexer, getDefaultIndexer } from '../../src/indexer/code-indexer';
+import { getCodeFileStats, findIndexedFiles, findFilesBySymbol } from '../../src/db';
+import { hybridSearch, fastSearch, getIndexHealth } from '../../src/indexer/hybrid-search';
+import { initVectorDB } from '../../src/vector-db';
 
 const args = process.argv.slice(2);
 const subcommand = args[0];
@@ -153,6 +156,167 @@ async function main() {
       break;
     }
 
+    case 'files': {
+      // List all indexed files with optional language filter
+      const langFilter = args.includes('--lang')
+        ? args[args.indexOf('--lang') + 1]
+        : undefined;
+
+      const stats = getCodeFileStats();
+      console.log(`\nIndexed Files: ${stats.totalFiles}\n`);
+
+      if (langFilter) {
+        console.log(`Filtering by language: ${langFilter}\n`);
+      }
+
+      console.log('Language Distribution:');
+      const sortedLangs = Object.entries(stats.byLanguage)
+        .sort(([, a], [, b]) => b - a);
+
+      for (const [lang, count] of sortedLangs) {
+        if (!langFilter || lang === langFilter) {
+          console.log(`  ${lang}: ${count} files`);
+        }
+      }
+
+      if (stats.externalFiles > 0) {
+        console.log(`\nExternal files (symlinked): ${stats.externalFiles}`);
+      }
+
+      if (stats.lastIndexed) {
+        console.log(`\nLast indexed: ${stats.lastIndexed}`);
+      }
+      break;
+    }
+
+    case 'find': {
+      // Fast SQLite-based file search (no embedding model needed)
+      if (!query) {
+        console.error('Usage: bun memory index find "pattern"');
+        process.exit(1);
+      }
+
+      const startTime = Date.now();
+      const langFilter = args.includes('--lang')
+        ? args[args.indexOf('--lang') + 1]
+        : undefined;
+
+      const limit = args.includes('--limit')
+        ? parseInt(args[args.indexOf('--limit') + 1] || '20')
+        : 20;
+
+      // Search by file path/name
+      const fileResults = findIndexedFiles(query, {
+        language: langFilter,
+        limit,
+      });
+
+      // Also search by symbol name
+      const symbolResults = findFilesBySymbol(query, { limit: 10 });
+
+      const queryTime = Date.now() - startTime;
+      console.log(`\nFast search for: "${query}" (${queryTime}ms)\n`);
+
+      if (fileResults.length === 0 && symbolResults.length === 0) {
+        console.log('No files found matching that pattern.');
+        console.log('Tip: Run "bun memory index once" to index your codebase first.');
+        break;
+      }
+
+      if (fileResults.length > 0) {
+        console.log('Files matching path/name:');
+        for (const file of fileResults) {
+          console.log(`  ${file.file_path} (${file.language || 'unknown'}, ${file.line_count} lines)`);
+        }
+      }
+
+      if (symbolResults.length > 0) {
+        console.log('\nFiles containing symbol:');
+        for (const file of symbolResults) {
+          const funcs = file.functions ? JSON.parse(file.functions).slice(0, 5) : [];
+          const classes = file.classes ? JSON.parse(file.classes).slice(0, 3) : [];
+          const symbols = [...funcs, ...classes].join(', ');
+          console.log(`  ${file.file_path}`);
+          if (symbols) {
+            console.log(`    Symbols: ${symbols}`);
+          }
+        }
+      }
+      break;
+    }
+
+    case 'health': {
+      // Check sync between SQLite and ChromaDB
+      console.log('\nIndex Health Check\n');
+
+      try {
+        await initVectorDB();
+        const health = await getIndexHealth();
+
+        console.log('SQLite Index:');
+        console.log(`  Total files: ${health.sqlite.totalFiles}`);
+        console.log(`  External files: ${health.sqlite.externalFiles}`);
+        console.log(`  Last indexed: ${health.sqlite.lastIndexed || 'never'}`);
+
+        console.log('\nChromaDB Index:');
+        console.log(`  Total documents: ${health.chromadb.totalDocuments}`);
+
+        console.log('\nSync Status:');
+        if (health.inSync) {
+          console.log('  ✅ Indexes appear in sync');
+        } else {
+          console.log(`  ⚠️  Drift detected: ~${health.drift} files`);
+          console.log('  Tip: Run "bun memory index once --force" to resync');
+        }
+      } catch (error) {
+        console.error('Error checking health:', error);
+        console.log('Tip: Ensure ChromaDB is running and indexed');
+      }
+      break;
+    }
+
+    case 'hybrid': {
+      // Hybrid search - auto-routes to best method
+      if (!query) {
+        console.error('Usage: bun memory index hybrid "query"');
+        process.exit(1);
+      }
+
+      await initVectorDB();
+      console.log(`Hybrid search for: "${query}"\n`);
+
+      const langFilter = args.includes('--lang')
+        ? args[args.indexOf('--lang') + 1]
+        : undefined;
+
+      const limit = args.includes('--limit')
+        ? parseInt(args[args.indexOf('--limit') + 1] || '10')
+        : 10;
+
+      const result = await hybridSearch(query, {
+        language: langFilter,
+        limit,
+      });
+
+      console.log(`Search method: ${result.source} (${result.query_time_ms}ms)`);
+      console.log(`Found ${result.total_results} results:\n`);
+
+      for (const item of result.results) {
+        const relevance = item.relevance ? `[${item.relevance}%]` : '';
+        console.log(`${relevance} ${item.file_path} (${item.language || 'unknown'})`);
+
+        if (item.functions?.length) {
+          console.log(`    Functions: ${item.functions.slice(0, 5).join(', ')}`);
+        }
+        if (item.snippets && item.snippets.length > 0 && item.snippets[0]) {
+          const snippet = item.snippets[0].content.slice(0, 150).replace(/\n/g, ' ');
+          console.log(`    ${snippet}...`);
+        }
+        console.log('');
+      }
+      break;
+    }
+
     default:
       printHelp();
       break;
@@ -161,7 +325,7 @@ async function main() {
 
 function printHelp() {
   console.log(`
-Code Indexer - Semantic code search
+Code Indexer - Hybrid code search (SQLite + Semantic)
 
 Usage: bun memory index <command> [options]
 
@@ -170,21 +334,35 @@ Commands:
   start             Start file watcher for automatic indexing
   status            Show index statistics
   search "query"    Search indexed code semantically
+  find "pattern"    Fast file/symbol lookup (SQLite, no model needed)
+  files             List all indexed files by language
+  health            Check sync between SQLite and ChromaDB
+  hybrid "query"    Smart search - auto-routes to best method
 
 Options:
   --force           Re-index all files (with 'once')
   --initial         Index existing files before watching (with 'start')
-  --lang <lang>     Filter by language (with 'search')
-  --limit <n>       Limit results (with 'search', default: 10)
+  --lang <lang>     Filter by language
+  --limit <n>       Limit results (default: 10-20)
 
 Examples:
   bun memory index once                      # Index entire codebase
   bun memory index once --force              # Re-index all files
-  bun memory index start                     # Watch for changes
   bun memory index start --initial           # Index then watch
   bun memory index status                    # Show statistics
-  bun memory index search "authentication"   # Search for auth code
-  bun memory index search "api" --lang ts    # Search TypeScript only
+
+  # Semantic search (conceptual queries)
+  bun memory index search "authentication"   # How does auth work?
+  bun memory index search "error handling"   # Find error patterns
+
+  # Fast lookup (exact matches, no model load)
+  bun memory index find "daemon"             # Find files named daemon
+  bun memory index find "connectToHub"       # Find function by name
+  bun memory index files --lang typescript   # List all TS files
+
+  # Hybrid (auto-picks best method)
+  bun memory index hybrid "WebSocket"        # Exact match → SQLite
+  bun memory index hybrid "how to retry"     # Conceptual → Semantic
 
 Supported Languages:
   TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Swift,

@@ -18,6 +18,8 @@ import {
   searchCodeVector,
   getCodeIndexStats,
 } from '../../../vector-db';
+import { hybridSearch } from '../../../indexer/hybrid-search';
+import { getCodeFileStats } from '../../../db';
 import type { ToolDefinition, ToolHandler } from '../../types';
 
 // ============ Ensure VectorDB is ready ============
@@ -237,70 +239,38 @@ async function handleHealthCheck(args: unknown) {
 async function handleSearchCode(args: unknown) {
   await ensureVectorDB();
   const input = CodeSearchSchema.parse(args);
-  const { query, limit = 10, language, file_path } = input;
+  const { query, limit = 10, language } = input;
 
   try {
-    const results = await searchCodeVector(query, {
+    // Use hybrid search - auto-routes to SQLite (exact) or semantic
+    const result = await hybridSearch(query, {
       limit,
       language,
-      filePath: file_path,
     });
 
-    // Group results by file for cleaner output
-    const byFile: Record<string, Array<{
-      chunk_index: number;
-      content: string;
-      relevance: number;
-    }>> = {};
-
-    for (let i = 0; i < (results.ids[0]?.length || 0); i++) {
-      const id = results.ids[0][i];
-      const metadata = results.metadatas?.[0]?.[i] as Record<string, unknown> | null;
-      const filePath = (metadata?.file_path as string) || id.split(':chunk:')[0];
-      const distance = results.distances?.[0]?.[i];
-      const relevance = distance != null ? 1 - distance : 0;
-
-      if (!byFile[filePath]) {
-        byFile[filePath] = [];
-      }
-
-      byFile[filePath].push({
-        chunk_index: (metadata?.chunk_index as number) || 0,
-        content: results.documents[0]?.[i] || '',
-        relevance,
-      });
-    }
-
-    // Sort files by max relevance
-    const sortedFiles = Object.entries(byFile)
-      .map(([path, chunks]) => ({
-        file_path: path,
-        language: (results.metadatas?.[0]?.find(
-          (m: Record<string, unknown> | null) => m?.file_path === path
-        ) as Record<string, unknown> | null)?.language as string || 'unknown',
-        chunks: chunks.sort((a, b) => a.chunk_index - b.chunk_index),
-        max_relevance: Math.max(...chunks.map(c => c.relevance)),
-      }))
-      .sort((a, b) => b.max_relevance - a.max_relevance);
-
-    // Get index stats for context
-    const stats = await getCodeIndexStats();
+    // Get both index stats for context
+    const chromaStats = await getCodeIndexStats();
+    const sqliteStats = getCodeFileStats();
 
     return jsonResponse({
       query,
-      total_results: results.ids[0]?.length || 0,
-      files_matched: sortedFiles.length,
+      search_method: result.source, // 'sqlite' or 'semantic'
+      query_time_ms: result.query_time_ms,
+      total_results: result.total_results,
       index_stats: {
-        total_documents: stats.totalDocuments,
-        languages: stats.languages,
+        chromadb_documents: chromaStats.totalDocuments,
+        sqlite_files: sqliteStats.totalFiles,
+        languages: chromaStats.languages,
       },
-      results: sortedFiles.map(f => ({
-        file_path: f.file_path,
-        language: f.language,
-        relevance: Math.round(f.max_relevance * 100),
-        snippets: f.chunks.slice(0, 3).map(c => ({
-          content: c.content.slice(0, 500) + (c.content.length > 500 ? '...' : ''),
-          relevance: Math.round(c.relevance * 100),
+      results: result.results.map(r => ({
+        file_path: r.file_path,
+        language: r.language || 'unknown',
+        relevance: r.relevance || 0,
+        functions: r.functions?.slice(0, 10),
+        classes: r.classes?.slice(0, 5),
+        snippets: r.snippets?.slice(0, 3).map(s => ({
+          content: s.content.slice(0, 500) + (s.content.length > 500 ? '...' : ''),
+          relevance: s.relevance,
         })),
       })),
     });

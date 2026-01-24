@@ -11,6 +11,7 @@
 
 import chokidar, { type FSWatcher } from 'chokidar';
 import { readFile, stat } from 'fs/promises';
+import { realpathSync, existsSync } from 'fs';
 import { extname, relative, basename } from 'path';
 import { glob } from 'glob';
 import {
@@ -20,6 +21,10 @@ import {
   deleteCodeFile,
   getCodeIndexStats,
 } from '../vector-db';
+import {
+  upsertCodeFile,
+  removeCodeFile as removeCodeFileFromDb,
+} from '../db';
 
 // Supported file extensions and their language mappings
 const LANGUAGE_MAP: Record<string, string> = {
@@ -73,6 +78,27 @@ const DEFAULT_IGNORE = [
 
 // Max file size to index (500KB)
 const MAX_FILE_SIZE = 500 * 1024;
+
+// Get project ID from environment or folder name
+function getProjectId(rootPath: string): string {
+  return process.env.MATRIX_ID || basename(rootPath);
+}
+
+// Detect if file is external (symlinked from outside project root)
+function getFileInfo(filePath: string, projectRoot: string): {
+  realPath: string;
+  isExternal: boolean;
+} {
+  try {
+    const realPath = realpathSync(filePath);
+    const realRoot = realpathSync(projectRoot);
+    const isExternal = !realPath.startsWith(realRoot);
+    return { realPath, isExternal };
+  } catch {
+    // If realpath fails, assume internal
+    return { realPath: filePath, isExternal: false };
+  }
+}
 
 export interface IndexerConfig {
   rootPath: string;
@@ -214,13 +240,43 @@ export class CodeIndexer {
       // Generate relative path for ID
       const relativePath = relative(this.config.rootPath, filePath);
 
-      // Index the file
+      // Get real path and external flag for symlink support
+      const { realPath, isExternal } = getFileInfo(filePath, this.config.rootPath);
+      const projectId = getProjectId(this.config.rootPath);
+
+      // Count lines
+      const lineCount = content.split('\n').length;
+
+      // Index the file in ChromaDB
       await embedCodeFile(relativePath, content, {
         file_path: relativePath,
         language,
         file_name: basename(filePath),
         ...metadata,
         indexed_at: new Date().toISOString(),
+      });
+
+      // Calculate chunk count (matches vector-db.ts chunking: 300 chars, 50 overlap)
+      const chunkSize = 300;
+      const overlap = 50;
+      const chunkCount = Math.max(1, Math.ceil((content.length - overlap) / (chunkSize - overlap)));
+
+      // Sync to SQLite for fast lookups
+      upsertCodeFile({
+        id: relativePath,
+        file_path: relativePath,
+        real_path: realPath,
+        project_id: projectId,
+        file_name: basename(filePath),
+        language,
+        line_count: lineCount,
+        size_bytes: fileStat.size,
+        chunk_count: chunkCount,
+        functions: metadata.functions ? JSON.stringify(metadata.functions) : null,
+        classes: metadata.classes ? JSON.stringify(metadata.classes) : null,
+        imports: metadata.imports ? JSON.stringify(metadata.imports) : null,
+        exports: metadata.exports ? JSON.stringify(metadata.exports) : null,
+        is_external: isExternal ? 1 : 0,
       });
 
       this.indexedFiles.add(relativePath);
@@ -240,7 +296,14 @@ export class CodeIndexer {
    */
   async removeFile(filePath: string): Promise<void> {
     const relativePath = relative(this.config.rootPath, filePath);
+    const projectId = getProjectId(this.config.rootPath);
+
+    // Remove from ChromaDB
     await deleteCodeFile(relativePath);
+
+    // Remove from SQLite
+    removeCodeFileFromDb(relativePath, projectId);
+
     this.indexedFiles.delete(relativePath);
   }
 
