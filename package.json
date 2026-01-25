@@ -25,7 +25,6 @@
   "dependencies": {
     "@anthropic-ai/tokenizer": "^0.0.4",
     "@huggingface/transformers": "^3.8.1",
-    "@img/sharp-libvips-darwin-arm64": "^1.2.4",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "chokidar": "^5.0.0",
     "chromadb": "^3.2.2",
