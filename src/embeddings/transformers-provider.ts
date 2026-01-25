@@ -3,6 +3,7 @@
  * Embeddings using Hugging Face Transformers.js
  *
  * Supported models:
+ * - multilingual-e5-base (768 dims, best multilingual/Thai support, default)
  * - nomic-embed-text-v1 (768 dims, good quality)
  * - nomic-embed-text-v1.5 (768 dims, Matryoshka support)
  * - bge-small-en-v1.5 (384 dims, fast)
@@ -14,6 +15,10 @@ import type { EmbeddingConfig } from "./index";
 
 // Model configurations
 const MODEL_CONFIGS: Record<string, { id: string; dimensions: number }> = {
+  "multilingual-e5-base": {
+    id: "Xenova/multilingual-e5-base",
+    dimensions: 768,
+  },
   "nomic-embed-text-v1": {
     id: "nomic-ai/nomic-embed-text-v1",
     dimensions: 768,
@@ -32,8 +37,8 @@ const MODEL_CONFIGS: Record<string, { id: string; dimensions: number }> = {
   },
   // Default
   default: {
-    id: "Xenova/bge-small-en-v1.5",
-    dimensions: 384,
+    id: "Xenova/multilingual-e5-base",
+    dimensions: 768,
   },
 };
 
@@ -45,7 +50,7 @@ export class TransformersEmbeddingFunction implements EmbeddingFunction {
   private modelConfig: { id: string; dimensions: number };
 
   constructor(config?: Partial<EmbeddingConfig>) {
-    const modelName = config?.model || "bge-small-en-v1.5";
+    const modelName = config?.model || "multilingual-e5-base";
     this.modelConfig = MODEL_CONFIGS[modelName] ?? MODEL_CONFIGS["default"]!;
 
     this.config = {

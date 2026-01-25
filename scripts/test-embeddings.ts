@@ -189,7 +189,9 @@ async function runTest(modelName: string = "bge-small-en-v1.5") {
 const arg = process.argv[2] || "transformers";
 
 const modelMap: Record<string, string> = {
-  transformers: "bge-small-en-v1.5",
+  transformers: "multilingual-e5-base",
+  e5: "multilingual-e5-base",
+  multilingual: "multilingual-e5-base",
   bge: "bge-small-en-v1.5",
   nomic: "nomic-embed-text-v1.5",
   minilm: "all-minilm-l6-v2",

@@ -3,7 +3,8 @@
  * Supports Transformers.js for semantic search embeddings
  *
  * Available models:
- * - nomic-embed-text-v1.5 (768 dims, Matryoshka support, default - best quality)
+ * - multilingual-e5-base (768 dims, best multilingual/Thai support, default)
+ * - nomic-embed-text-v1.5 (768 dims, Matryoshka support)
  * - nomic-embed-text-v1 (768 dims)
  * - bge-small-en-v1.5 (384 dims, fast, use if memory constrained)
  * - all-minilm-l6-v2 (384 dims)
@@ -25,6 +26,7 @@ export interface EmbeddingConfig {
 
 // Default batch size per model (larger models need smaller batches)
 const MODEL_BATCH_SIZES: Record<string, number> = {
+  'multilingual-e5-base': 32,
   'nomic-embed-text-v1.5': 64,
   'nomic-embed-text-v1': 64,
   'bge-small-en-v1.5': 32,
@@ -34,7 +36,7 @@ const MODEL_BATCH_SIZES: Record<string, number> = {
 
 // Get config from environment
 export function getEmbeddingConfig(): EmbeddingConfig {
-  const model = process.env.EMBEDDING_MODEL || "nomic-embed-text-v1.5";
+  const model = process.env.EMBEDDING_MODEL || "multilingual-e5-base";
   const defaultBatchSize = MODEL_BATCH_SIZES[model] ?? MODEL_BATCH_SIZES['default'];
 
   return {

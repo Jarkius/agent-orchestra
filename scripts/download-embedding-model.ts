@@ -9,10 +9,10 @@
 import { TransformersEmbeddingFunction } from "../src/embeddings/transformers-provider";
 
 async function main() {
-  const modelName = process.env.EMBEDDING_MODEL || "nomic-embed-text-v1.5";
+  const modelName = process.env.EMBEDDING_MODEL || "multilingual-e5-base";
 
   console.log(`Downloading embedding model: ${modelName}`);
-  console.log("This may take a moment on first run (~250MB for nomic-embed-text-v1.5)...\n");
+  console.log("This may take a moment on first run (~278MB for multilingual-e5-base)...\n");
 
   const startTime = Date.now();
 
