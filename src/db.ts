@@ -4034,6 +4034,43 @@ export function getCodeFileStats(projectId?: string): {
 }
 
 /**
+ * Quick check for fresh clone indicators
+ * Used by MCP startup health check - lightweight, no vector ops
+ */
+export function getSystemStateQuick(): {
+  hasAgents: boolean;
+  hasSessions: boolean;
+  hasLearnings: boolean;
+  hasCodeIndex: boolean;
+  agentCount: number;
+  sessionCount: number;
+  learningCount: number;
+  codeFileCount: number;
+} {
+  const agents = (db.query('SELECT COUNT(*) as c FROM agents').get() as { c: number }).c;
+  const sessions = (db.query('SELECT COUNT(*) as c FROM sessions').get() as { c: number }).c;
+  const learnings = (db.query('SELECT COUNT(*) as c FROM learnings').get() as { c: number }).c;
+
+  let codeFiles = 0;
+  try {
+    codeFiles = (db.query('SELECT COUNT(*) as c FROM code_files').get() as { c: number }).c;
+  } catch {
+    // Table may not exist on fresh clone
+  }
+
+  return {
+    hasAgents: agents > 0,
+    hasSessions: sessions > 0,
+    hasLearnings: learnings > 0,
+    hasCodeIndex: codeFiles > 0,
+    agentCount: agents,
+    sessionCount: sessions,
+    learningCount: learnings,
+    codeFileCount: codeFiles,
+  };
+}
+
+/**
  * Find files containing a function or class name
  */
 export function findFilesBySymbol(symbol: string, options?: {

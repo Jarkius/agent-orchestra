@@ -20,6 +20,7 @@ import {
 } from '../../../vector-db';
 import { hybridSearch } from '../../../indexer/hybrid-search';
 import { getCodeFileStats } from '../../../db';
+import { checkStartupHealth } from '../../startup-health';
 import type { ToolDefinition, ToolHandler } from '../../types';
 
 // ============ Ensure VectorDB is ready ============
@@ -73,11 +74,12 @@ export const vectorTools: ToolDefinition[] = [
   },
   {
     name: 'health_check',
-    description: 'Health check',
+    description: 'Health check. Use full=true for fresh clone detection and setup guidance.',
     inputSchema: {
       type: 'object',
       properties: {
         reconnect: { type: 'boolean', description: 'Reconnect to ChromaDB (use after reindex)' },
+        full: { type: 'boolean', description: 'Include fresh clone detection and setup guidance' },
       },
     },
   },
@@ -211,7 +213,7 @@ async function handleSearch(args: unknown) {
 
 async function handleHealthCheck(args: unknown) {
   try {
-    const input = args as { reconnect?: boolean };
+    const input = args as { reconnect?: boolean; full?: boolean };
 
     // Reconnect if requested (use after reindex/reset)
     if (input?.reconnect) {
@@ -219,14 +221,32 @@ async function handleHealthCheck(args: unknown) {
     }
 
     const health = await getHealthStatus();
-    return jsonResponse({
+    const response: Record<string, any> = {
       status: health.chromadb.status === 'healthy' && health.collections.initialized ? 'healthy' : 'degraded',
       chromadb: health.chromadb,
       embedding: health.embedding,
       collections: health.collections,
       reconnected: input?.reconnect || false,
       timestamp: new Date().toISOString(),
-    });
+    };
+
+    // Add fresh clone indicators if full check requested
+    if (input?.full) {
+      const startupHealth = await checkStartupHealth();
+      response.startup = {
+        isFreshClone: startupHealth.isFreshClone,
+        severity: startupHealth.severity,
+        indicators: startupHealth.indicators,
+        guidance: startupHealth.guidance,
+        stats: startupHealth.stats,
+      };
+      // Override status if startup check shows needs_setup
+      if (startupHealth.severity === 'needs_setup') {
+        response.status = 'needs_setup';
+      }
+    }
+
+    return jsonResponse(response);
   } catch (error) {
     return jsonResponse({
       status: 'unhealthy',

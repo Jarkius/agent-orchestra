@@ -21,6 +21,7 @@ import { errorResponse } from './utils/response';
 import { initVectorDBWithAutoStart, getHealthStatus } from '../vector-db';
 import { startServer as startWsServer, isServerRunning, getConnectionStats } from '../ws-server';
 import { connectToHub, onMessage, isConnected as isHubConnected, getStatus as getHubStatus } from '../matrix-client';
+import { checkStartupHealth, formatStartupWarning } from './startup-health';
 
 // Create MCP server
 const server = new Server(
@@ -64,6 +65,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Start server
 async function main() {
+  // Fresh clone detection (non-blocking)
+  try {
+    const startupHealth = await checkStartupHealth();
+    const warning = formatStartupWarning(startupHealth);
+    if (warning) {
+      console.error(warning);
+    }
+  } catch {
+    // Don't block startup if health check fails
+  }
+
   // Auto-start ChromaDB and initialize vector DB
   if (process.env.SKIP_VECTORDB !== "true") {
     try {
