@@ -19,3 +19,21 @@ export {
   type ProactiveSpawnDecision,
   type QueueSnapshot,
 } from './orchestrator';
+
+// Task routing (LLM-driven)
+export {
+  TaskRouter,
+  getTaskRouter,
+  type RoutingDecision,
+  type RouterContext,
+  type TaskRouterConfig,
+} from './task-router';
+
+// Task decomposition
+export {
+  TaskDecomposer,
+  getTaskDecomposer,
+  type Subtask,
+  type DecomposedTask,
+  type DecomposerConfig,
+} from './task-decomposer';

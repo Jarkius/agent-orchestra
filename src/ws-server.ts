@@ -69,7 +69,26 @@ interface PongMessage {
   agentId: number;
 }
 
-type IncomingMessage = ResultMessage | PongMessage | AgentMessage;
+interface CheckpointMessage {
+  type: 'checkpoint';
+  taskId: string;
+  step: number;
+  status: 'progressing' | 'blocked' | 'need_guidance';
+  summary: string;
+  nextStep?: string;
+  blockerDetails?: string;
+}
+
+interface CheckpointResponse {
+  type: 'checkpoint_response';
+  taskId: string;
+  status: 'acknowledged' | 'guidance' | 'escalate';
+  message: string;
+  guidance?: string;
+  extendTimeout?: number; // ms to add to timeout
+}
+
+type IncomingMessage = ResultMessage | PongMessage | CheckpointMessage | AgentMessage;
 type OutgoingMessage = TaskMessage | PingMessage | AgentMessage;
 
 // ============ State ============
@@ -80,6 +99,10 @@ let server: ReturnType<typeof Bun.serve> | null = null;
 let resultHandler: ((agentId: number, result: ResultMessage) => void) | null = null;
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 let disconnectHandler: ((agentId: number, reason: string) => void) | null = null;
+let checkpointHandler: ((agentId: number, checkpoint: CheckpointMessage) => Promise<CheckpointResponse>) | null = null;
+
+// Track active checkpoints for adaptive timeout
+const activeCheckpoints = new Map<string, { agentId: number; lastCheckpoint: Date; step: number }>();
 
 // ============ Token Management ============
 
@@ -209,6 +232,37 @@ export function onResult(handler: (agentId: number, result: ResultMessage) => vo
  */
 export function onDisconnect(handler: (agentId: number, reason: string) => void): void {
   disconnectHandler = handler;
+}
+
+/**
+ * Set handler for checkpoint messages from agents
+ * Handler should return guidance response
+ */
+export function onCheckpoint(handler: (agentId: number, checkpoint: CheckpointMessage) => Promise<CheckpointResponse>): void {
+  checkpointHandler = handler;
+}
+
+/**
+ * Get checkpoint status for a task
+ */
+export function getTaskCheckpoint(taskId: string): { agentId: number; lastCheckpoint: Date; step: number } | null {
+  return activeCheckpoints.get(taskId) || null;
+}
+
+/**
+ * Check if a task has recent checkpoint activity (within timeout)
+ */
+export function hasRecentCheckpoint(taskId: string, withinMs: number = 60000): boolean {
+  const checkpoint = activeCheckpoints.get(taskId);
+  if (!checkpoint) return false;
+  return Date.now() - checkpoint.lastCheckpoint.getTime() < withinMs;
+}
+
+/**
+ * Clear checkpoint tracking for a task (call when task completes)
+ */
+export function clearTaskCheckpoint(taskId: string): void {
+  activeCheckpoints.delete(taskId);
 }
 
 // ============ Agent-to-Agent RPC Routing ============
@@ -444,7 +498,52 @@ export function startServer(port = WS_PORT): void {
             }
           } else if (data.type === 'result') {
             log.info(`Result received`, { agentId, taskId: data.taskId, status: data.status });
+            // Clear checkpoint tracking when task completes
+            clearTaskCheckpoint(data.taskId);
             resultHandler?.(agentId, data);
+          } else if (data.type === 'checkpoint') {
+            // Handle checkpoint message from agent
+            log.info(`Checkpoint received`, { agentId, taskId: data.taskId, step: data.step, status: data.status });
+
+            // Track checkpoint for adaptive timeout
+            activeCheckpoints.set(data.taskId, {
+              agentId,
+              lastCheckpoint: new Date(),
+              step: data.step,
+            });
+
+            // Call handler if registered, otherwise send default response
+            if (checkpointHandler) {
+              checkpointHandler(agentId, data).then(response => {
+                const conn = connectedAgents.get(agentId);
+                if (conn) {
+                  try {
+                    conn.ws.send(JSON.stringify(response));
+                  } catch (error) {
+                    log.error(`Failed to send checkpoint response`, { agentId, error: String(error) });
+                  }
+                }
+              }).catch(error => {
+                log.error(`Checkpoint handler error`, { agentId, error: String(error) });
+              });
+            } else {
+              // Default response: acknowledge
+              const defaultResponse: CheckpointResponse = {
+                type: 'checkpoint_response',
+                taskId: data.taskId,
+                status: data.status === 'progressing' ? 'acknowledged' : 'guidance',
+                message: data.status === 'progressing'
+                  ? 'Progress noted. Continue.'
+                  : 'Consider using oracle_consult tool for guidance.',
+                extendTimeout: data.status === 'progressing' ? 60000 : undefined,
+              };
+              const conn = connectedAgents.get(agentId);
+              if (conn) {
+                try {
+                  conn.ws.send(JSON.stringify(defaultResponse));
+                } catch {}
+              }
+            }
           } else if ('v' in data && data.v === 1) {
             // Agent protocol message (RPC request/response, event)
             handleAgentMessage(agentId, data as AgentMessage);
@@ -537,6 +636,10 @@ export function stopServer(): void {
 export function isServerRunning(): boolean {
   return server !== null;
 }
+
+// ============ Type Exports ============
+
+export type { CheckpointMessage, CheckpointResponse };
 
 // ============ Auto-start if run directly ============
 

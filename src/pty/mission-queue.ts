@@ -17,6 +17,7 @@ import { calculateBackoff, isRecoverable } from '../interfaces/mission';
 import { randomUUID } from 'crypto';
 import { saveMission, loadPendingMissions, updateMissionStatus, atomicDequeueWithExecutionId, type MissionRecord } from '../db';
 import { missionLogger as log } from '../utils/logger';
+import { hasRecentCheckpoint } from '../ws-server';
 
 // Queue backpressure configuration
 const MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || '1000');
@@ -362,6 +363,16 @@ export class MissionQueue implements IMissionQueue {
     }
   }
 
+  // Extend timeout for a mission (adaptive timeout based on checkpoints)
+  extendTimeout(missionId: string, additionalMs: number): boolean {
+    const mission = this.missions.get(missionId);
+    if (!mission) return false;
+
+    mission.timeoutMs += additionalMs;
+    log.info(`Extended timeout`, { missionId, additionalMs, newTimeout: mission.timeoutMs });
+    return true;
+  }
+
   // Start background timeout enforcement
   startTimeoutEnforcement(checkIntervalMs: number = 5000): void {
     if (this.timeoutChecker) return; // Already running
@@ -372,6 +383,19 @@ export class MissionQueue implements IMissionQueue {
       for (const mission of this.missions.values()) {
         if (mission.status === 'running' && mission.startedAt) {
           const elapsed = now - mission.startedAt.getTime();
+
+          // Adaptive timeout: Check if agent has recent checkpoint activity
+          // If agent is making progress (checkpoint within last 60s), extend timeout
+          if (hasRecentCheckpoint(mission.id, 60000)) {
+            // Agent is actively working - don't timeout yet
+            if (elapsed > mission.timeoutMs - 30000) {
+              // Getting close to timeout, but agent is active - extend
+              this.extendTimeout(mission.id, 60000);
+              log.info(`Auto-extended timeout due to checkpoint activity`, { missionId: mission.id });
+            }
+            continue;
+          }
+
           if (elapsed > mission.timeoutMs) {
             this.fail(mission.id, {
               code: 'timeout',
