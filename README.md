@@ -73,6 +73,14 @@ Agent Orchestra provides:
 - **Watch Pane** - Dedicated tmux pane for live matrix message feed
 - **Cross-Machine Support** - LAN/remote matrix communication via `MATRIX_HUB_HOST`
 
+### Oracle Intelligence (NEW)
+- **Proactive Spawning** - Spawn agents before queue backs up based on growth rate
+- **Task Complexity Analysis** - Auto-detect haiku/sonnet/opus requirements
+- **LLM-Driven Routing** - Claude Haiku analyzes tasks for optimal agent selection
+- **Task Decomposition** - Break complex tasks into subtasks with dependencies
+- **Checkpoint Protocol** - Agents report progress mid-task for adaptive timeouts
+- **Pre-Task Briefing** - Structured guidance with patterns, pitfalls, and success criteria
+
 ### Persistent Memory System
 - **Session Persistence** - Save/recall sessions with full context
 - **Semantic Search** - Find relevant sessions and learnings by meaning, not keywords
@@ -645,6 +653,7 @@ agent-orchestra/
 
 | Document | Description |
 |----------|-------------|
+| [Oracle Intelligence](docs/oracle-intelligence.md) | Task routing, decomposition, proactive spawning |
 | [Memory System](docs/memory-system.md) | Session persistence, learnings, auto-completion |
 | [Learning Loop](docs/learning-loop.md) | Closed-loop learning, dual-collection pattern |
 | [PTY Orchestration](docs/pty-orchestration.md) | Agent spawning and management |

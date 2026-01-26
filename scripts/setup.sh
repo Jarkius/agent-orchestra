@@ -316,6 +316,21 @@ else
     HEALTH_FAILED=1
 fi
 
+# Check 7: Oracle Intelligence (quick routing test)
+echo -n "  Testing Oracle intelligence... "
+ORACLE_TEST=$(bun -e "
+const { getTaskRouter } = await import('./src/oracle/task-router.ts');
+const router = getTaskRouter({ enableLLM: false });
+const decision = await router.routeTask('Write unit tests');
+console.log(decision.recommendedRole === 'tester' ? 'ok' : 'fail');
+" 2>/dev/null || echo "fail")
+
+if [ "$ORACLE_TEST" = "ok" ]; then
+    echo -e "${GREEN}✓${NC} routing correctly"
+else
+    echo -e "${YELLOW}⚠${NC} routing may need attention"
+fi
+
 echo ""
 
 # Final verdict
@@ -372,6 +387,12 @@ echo -e "${BLUE}│${NC}  ${YELLOW}EMBEDDING MODEL${NC}"
 echo -e "${BLUE}│${NC}  Provider:    Transformers.js (local, no API cost)"
 echo -e "${BLUE}│${NC}  Model:       Xenova/multilingual-e5-base"
 echo -e "${BLUE}│${NC}  Dimensions:  768"
+echo -e "${BLUE}├──────────────────────────────────────────────────────────┤${NC}"
+echo -e "${BLUE}│${NC}  ${YELLOW}ORACLE INTELLIGENCE${NC}"
+echo -e "${BLUE}│${NC}  Task Router:      LLM-driven (Claude Haiku)"
+echo -e "${BLUE}│${NC}  Task Decomposer:  Sequential/parallel subtasks"
+echo -e "${BLUE}│${NC}  Checkpoints:      Adaptive timeout on progress"
+echo -e "${BLUE}│${NC}  Test Coverage:    74 tests (routing, chaos, simulation)"
 echo -e "${BLUE}└──────────────────────────────────────────────────────────┘${NC}"
 echo ""
 echo -e "${YELLOW}Quick Commands:${NC}"
