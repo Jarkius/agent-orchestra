@@ -11,6 +11,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { GoogleGenAI, type ThinkingConfig } from '@google/genai';
 
 // Load API keys from environment or .env.local
 function loadApiKeys(): Record<string, string> {
@@ -65,6 +66,7 @@ const GEMINI_MODELS = {
   'gemini-3-pro': 'gemini-3-pro-preview',
   'gemini-2.5-flash': 'gemini-2.5-flash',
   'gemini-2.5-pro': 'gemini-2.5-pro',
+  'gemini-2.0-flash': 'gemini-2.0-flash',  // Stable, fast
 } as const;
 
 export class ExternalLLM {
@@ -97,59 +99,55 @@ export class ExternalLLM {
   }
 
   private async queryGemini(prompt: string, options: LLMOptions): Promise<LLMResponse> {
-    // Default to Gemini 3 Flash (latest, fast)
-    const modelKey = options.model || 'gemini-3-flash';
+    // Default to Gemini 2.0 Flash (stable, fast)
+    const modelKey = options.model || 'gemini-2.0-flash';
     const model = GEMINI_MODELS[modelKey as keyof typeof GEMINI_MODELS] || modelKey;
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.apiKey}`;
+    // Use official @google/genai SDK
+    const client = new GoogleGenAI({ apiKey: this.apiKey });
 
-    const body: any = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        maxOutputTokens: options.maxOutputTokens || 8192,
-        temperature: options.temperature ?? 0.7,
-      },
+    // Build config object
+    const config: {
+      maxOutputTokens?: number;
+      temperature?: number;
+      thinkingConfig?: ThinkingConfig;
+    } = {
+      maxOutputTokens: options.maxOutputTokens || 8192,
+      temperature: options.temperature ?? 0.7,
     };
 
-    // Add thinkingConfig for Gemini 3 models (inside generationConfig)
+    // Add thinkingConfig for Gemini 3 models
     if (model.includes('gemini-3') && options.thinkingLevel) {
-      body.generationConfig.thinkingConfig = {
-        thinkingLevel: options.thinkingLevel.toLowerCase(),
+      config.thinkingConfig = {
+        thinkingLevel: options.thinkingLevel.toUpperCase() as 'LOW' | 'HIGH',
       };
     }
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    try {
+      const response = await client.models.generateContent({
+        model,
+        contents: prompt,
+        config,
+      });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Gemini API error: ${response.status} ${error}`);
+      // Extract text from response
+      const text = response.text || '';
+
+      // Extract usage metadata
+      const usage = response.usageMetadata;
+
+      return {
+        text,
+        model,
+        provider: 'gemini',
+        usage: usage ? {
+          inputTokens: usage.promptTokenCount || 0,
+          outputTokens: usage.candidatesTokenCount || 0,
+        } : undefined,
+      };
+    } catch (error: any) {
+      throw new Error(`Gemini API error: ${error.message || error}`);
     }
-
-    const data = await response.json() as any;
-
-    // When thinking is enabled, response may have multiple parts (thoughts + text)
-    // Extract all text parts and join them
-    const parts = data.candidates?.[0]?.content?.parts || [];
-    const text = parts
-      .filter((p: any) => p.text)
-      .map((p: any) => p.text)
-      .join('\n\n') || '';
-
-    const usage = data.usageMetadata;
-
-    return {
-      text,
-      model,
-      provider: 'gemini',
-      usage: usage ? {
-        inputTokens: usage.promptTokenCount || 0,
-        outputTokens: usage.candidatesTokenCount || 0,
-      } : undefined,
-    };
   }
 
   private async queryOpenAI(prompt: string, options: LLMOptions): Promise<LLMResponse> {
