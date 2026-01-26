@@ -154,6 +154,10 @@ export class ExternalLLM {
   private async queryOpenAI(prompt: string, options: LLMOptions): Promise<LLMResponse> {
     const model = options.model || 'gpt-4o';
 
+    // GPT-5+ uses max_completion_tokens instead of max_tokens
+    const isGpt5Plus = model.startsWith('gpt-5') || model.startsWith('o1') || model.startsWith('o3');
+    const tokenParam = isGpt5Plus ? 'max_completion_tokens' : 'max_tokens';
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -163,7 +167,7 @@ export class ExternalLLM {
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: options.maxOutputTokens || 4096,
+        [tokenParam]: options.maxOutputTokens || 4096,
         temperature: options.temperature ?? 0.7,
       }),
     });
