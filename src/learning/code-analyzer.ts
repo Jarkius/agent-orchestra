@@ -14,8 +14,9 @@
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { basename, join, extname } from 'path';
+import { basename, join, extname, relative } from 'path';
 import type { LearningCategory } from '../interfaces/learning';
+import { upsertCodePattern, clearPatternsForFile, getPatternStats } from '../db';
 
 // ============ Interfaces ============
 
@@ -277,6 +278,49 @@ function detectPatterns(content: string, filePath: string): DetectedPattern[] {
   }
 
   return patterns;
+}
+
+/**
+ * Persist detected patterns to the database
+ * @param patterns Detected patterns
+ * @param codeFileId The code file ID (usually relative file path)
+ * @returns Number of patterns persisted
+ */
+export function persistPatterns(patterns: DetectedPattern[], codeFileId: string): number {
+  if (patterns.length === 0) return 0;
+
+  let persisted = 0;
+  for (const pattern of patterns) {
+    try {
+      upsertCodePattern({
+        code_file_id: codeFileId,
+        pattern_name: pattern.name,
+        category: pattern.category,
+        description: pattern.description,
+        evidence: pattern.evidence,
+        line_number: pattern.line,
+        confidence: 0.5, // Initial detection confidence
+      });
+      persisted++;
+    } catch (error) {
+      console.error(`[CodeAnalyzer] Failed to persist pattern ${pattern.name}:`, error);
+    }
+  }
+
+  return persisted;
+}
+
+/**
+ * Detect and persist patterns for a file
+ * Combines detection and persistence in one call
+ */
+export function analyzeAndPersistPatterns(content: string, filePath: string): {
+  detected: DetectedPattern[];
+  persisted: number;
+} {
+  const patterns = detectPatterns(content, filePath);
+  const persisted = persistPatterns(patterns, filePath);
+  return { detected: patterns, persisted };
 }
 
 // ============ Gem Detection (Clever Code) ============
@@ -672,8 +716,12 @@ export function analyzeRepository(
       }
     }
 
-    // Detect patterns
+    // Detect patterns and persist to database for querying
     const patterns = detectPatterns(content, filePath);
+    if (patterns.length > 0) {
+      // Persist patterns to code_patterns table for fast lookups
+      persistPatterns(patterns, relativePath);
+    }
     for (const pattern of patterns) {
       patternsFound++;
       learnings.push({
@@ -724,4 +772,6 @@ export default {
   analyzeDirectoryStructure,
   detectPatterns,
   detectGems,
+  persistPatterns,
+  analyzeAndPersistPatterns,
 };

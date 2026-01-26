@@ -24,7 +24,11 @@ import {
 import {
   upsertCodeFile,
   removeCodeFile as removeCodeFileFromDb,
+  clearSymbolsForFile,
+  bulkInsertSymbols,
+  type SymbolRecord,
 } from '../db';
+import { analyzeAndPersistPatterns } from '../learning/code-analyzer';
 
 // Supported file extensions and their language mappings
 const LANGUAGE_MAP: Record<string, string> = {
@@ -261,7 +265,7 @@ export class CodeIndexer {
       const overlap = 50;
       const chunkCount = Math.max(1, Math.ceil((content.length - overlap) / (chunkSize - overlap)));
 
-      // Sync to SQLite for fast lookups
+      // Sync to SQLite for fast lookups (including full content for pattern analysis)
       upsertCodeFile({
         id: relativePath,
         file_path: relativePath,
@@ -277,7 +281,31 @@ export class CodeIndexer {
         imports: metadata.imports ? JSON.stringify(metadata.imports) : null,
         exports: metadata.exports ? JSON.stringify(metadata.exports) : null,
         is_external: isExternal ? 1 : 0,
+        content,  // Store full source code for fast retrieval and pattern analysis
       });
+
+      // Extract and persist symbols with line numbers for fast lookup
+      try {
+        clearSymbolsForFile(relativePath);
+        const symbols = this.extractSymbols(content, language, relativePath);
+        if (symbols.length > 0) {
+          bulkInsertSymbols(symbols);
+        }
+      } catch (symbolError) {
+        // Non-fatal: continue even if symbol extraction fails
+        console.error(`[CodeIndexer] Symbol extraction failed for ${relativePath}:`, symbolError);
+      }
+
+      // Detect and persist code patterns (singleton, factory, retry, etc.)
+      try {
+        const { detected, persisted } = analyzeAndPersistPatterns(content, relativePath);
+        if (persisted > 0) {
+          console.error(`[CodeIndexer] Persisted ${persisted} patterns for ${relativePath}`);
+        }
+      } catch (patternError) {
+        // Non-fatal: continue even if pattern detection fails
+        console.error(`[CodeIndexer] Pattern detection failed for ${relativePath}:`, patternError);
+      }
 
       this.indexedFiles.add(relativePath);
       this.stats.indexedFiles++;
@@ -368,6 +396,142 @@ export class CodeIndexer {
   /**
    * Extract metadata from code content
    */
+  /**
+   * Symbol with line number for the symbols table
+   */
+  private extractSymbols(
+    content: string,
+    language: string,
+    codeFileId: string
+  ): Array<Omit<SymbolRecord, 'id' | 'created_at'>> {
+    const lines = content.split('\n');
+    const symbols: Array<Omit<SymbolRecord, 'id' | 'created_at'>> = [];
+
+    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+      const line = lines[lineNum]!;
+      const trimmed = line.trim();
+      const lineNumber = lineNum + 1; // 1-indexed
+
+      // Function detection with line numbers
+      if (language === 'typescript' || language === 'javascript') {
+        // function name(), async function name()
+        let funcMatch = trimmed.match(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(/);
+        if (funcMatch) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: funcMatch[1]!,
+            type: 'function',
+            line_start: lineNumber,
+            signature: trimmed.slice(0, 100),
+          });
+        }
+
+        // Arrow functions: const name = () =>, const name = async () =>
+        funcMatch = trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(/);
+        if (funcMatch) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: funcMatch[1]!,
+            type: 'function',
+            line_start: lineNumber,
+            signature: trimmed.slice(0, 100),
+          });
+        }
+
+        // Class methods: methodName() {, async methodName() {
+        funcMatch = trimmed.match(/^(?:async\s+)?(\w+)\s*\([^)]*\)\s*(?::\s*\w+)?\s*\{/);
+        if (funcMatch && !['if', 'for', 'while', 'switch', 'catch', 'constructor'].includes(funcMatch[1]!)) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: funcMatch[1]!,
+            type: 'function',
+            line_start: lineNumber,
+            signature: trimmed.slice(0, 100),
+          });
+        }
+      } else if (language === 'python') {
+        const funcMatch = trimmed.match(/^(?:async\s+)?def\s+(\w+)\s*\(/);
+        if (funcMatch) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: funcMatch[1]!,
+            type: 'function',
+            line_start: lineNumber,
+            signature: trimmed.slice(0, 100),
+          });
+        }
+      } else if (language === 'go') {
+        const funcMatch = trimmed.match(/^func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(/);
+        if (funcMatch) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: funcMatch[1]!,
+            type: 'function',
+            line_start: lineNumber,
+            signature: trimmed.slice(0, 100),
+          });
+        }
+      }
+
+      // Class detection with line numbers
+      if (language === 'typescript' || language === 'javascript') {
+        const classMatch = trimmed.match(/^(?:export\s+)?class\s+(\w+)/);
+        if (classMatch) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: classMatch[1]!,
+            type: 'class',
+            line_start: lineNumber,
+            signature: trimmed.slice(0, 100),
+          });
+        }
+      } else if (language === 'python') {
+        const classMatch = trimmed.match(/^class\s+(\w+)/);
+        if (classMatch) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: classMatch[1]!,
+            type: 'class',
+            line_start: lineNumber,
+            signature: trimmed.slice(0, 100),
+          });
+        }
+      }
+
+      // Import detection
+      if (language === 'typescript' || language === 'javascript') {
+        const importMatch = trimmed.match(/^import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"]([^'"]+)['"]/);
+        if (importMatch) {
+          const names = importMatch[1] ? importMatch[1].split(',').map(s => s.trim().split(' as ')[0]!) : [importMatch[2]!];
+          for (const name of names.filter(Boolean)) {
+            symbols.push({
+              code_file_id: codeFileId,
+              name: name,
+              type: 'import',
+              line_start: lineNumber,
+            });
+          }
+        }
+      }
+
+      // Export detection
+      if (language === 'typescript' || language === 'javascript') {
+        const exportMatch = trimmed.match(/^export\s+(?:const|let|var|type|interface)\s+(\w+)/);
+        if (exportMatch) {
+          symbols.push({
+            code_file_id: codeFileId,
+            name: exportMatch[1]!,
+            type: 'export',
+            line_start: lineNumber,
+          });
+        }
+      }
+    }
+
+    // Limit to prevent excessive symbols
+    return symbols.slice(0, 100);
+  }
+
   private extractMetadata(
     content: string,
     language: string,

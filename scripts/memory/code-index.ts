@@ -11,9 +11,10 @@
  */
 
 import { CodeIndexer, getDefaultIndexer } from '../../src/indexer/code-indexer';
-import { getCodeFileStats, findIndexedFiles, findFilesBySymbol } from '../../src/db';
+import { getCodeFileStats, findIndexedFiles, findFilesBySymbol, findSymbolByName, getSymbolStats, getFilesByPattern, getPatternStats, getAllCodeFiles } from '../../src/db';
 import { hybridSearch, fastSearch, getIndexHealth } from '../../src/indexer/hybrid-search';
 import { initVectorDB } from '../../src/vector-db';
+import { analyzeAndPersistPatterns } from '../../src/learning/code-analyzer';
 
 const args = process.argv.slice(2);
 const subcommand = args[0];
@@ -430,6 +431,183 @@ async function main() {
       break;
     }
 
+    case 'pattern': {
+      // Fast pattern lookup
+      if (!query) {
+        // Show pattern stats if no query
+        const stats = getPatternStats();
+        console.log('\nPattern Index Statistics\n');
+        console.log(`Total patterns: ${stats.totalPatterns}`);
+        console.log(`Average confidence: ${(stats.avgConfidence * 100).toFixed(0)}%`);
+        console.log('\nBy pattern name:');
+        for (const [name, count] of Object.entries(stats.byName)) {
+          console.log(`  ${name}: ${count}`);
+        }
+        console.log('\nUsage: bun memory index pattern "name"');
+        break;
+      }
+
+      const startTime = Date.now();
+
+      const limit = args.includes('--limit')
+        ? parseInt(args[args.indexOf('--limit') + 1] || '20')
+        : 20;
+
+      const minConfidence = args.includes('--min-confidence')
+        ? parseFloat(args[args.indexOf('--min-confidence') + 1] || '0.5')
+        : 0.5;
+
+      const results = getFilesByPattern(query, { limit, minConfidence });
+
+      const queryTime = Date.now() - startTime;
+      console.log(`\n🔍 Pattern lookup for: "${query}" (${queryTime}ms)\n`);
+
+      if (results.length === 0) {
+        console.log('No files found with that pattern.');
+        console.log('Tip: Run "bun memory learn ./path" to analyze code for patterns.');
+        break;
+      }
+
+      console.log(`Found ${results.length} occurrences:\n`);
+
+      // Group by file
+      const byFile: Record<string, typeof results> = {};
+      for (const pattern of results) {
+        if (!byFile[pattern.file_path]) byFile[pattern.file_path] = [];
+        byFile[pattern.file_path].push(pattern);
+      }
+
+      for (const [filePath, patterns] of Object.entries(byFile)) {
+        console.log(`📄 ${filePath}`);
+        for (const p of patterns) {
+          const conf = `${(p.confidence * 100).toFixed(0)}%`;
+          const line = p.line_number ? `:${p.line_number}` : '';
+          console.log(`   🔷 ${p.pattern_name} (${conf})${line}`);
+          if (p.description) {
+            console.log(`      ${p.description}`);
+          }
+          if (p.evidence) {
+            console.log(`      Evidence: ${p.evidence}`);
+          }
+        }
+        console.log('');
+      }
+      break;
+    }
+
+    case 'symbol': {
+      // Fast symbol lookup with line numbers
+      if (!query) {
+        // Show symbol stats if no query
+        const stats = getSymbolStats();
+        console.log('\nSymbol Index Statistics\n');
+        console.log(`Total symbols: ${stats.totalSymbols}`);
+        console.log(`Files with symbols: ${stats.filesWithSymbols}`);
+        console.log('\nBy type:');
+        for (const [type, count] of Object.entries(stats.byType)) {
+          console.log(`  ${type}: ${count}`);
+        }
+        console.log('\nUsage: bun memory index symbol "name"');
+        break;
+      }
+
+      const startTime = Date.now();
+
+      const typeFilter = args.includes('--type')
+        ? args[args.indexOf('--type') + 1] as 'function' | 'class' | 'export' | 'import'
+        : undefined;
+
+      const limit = args.includes('--limit')
+        ? parseInt(args[args.indexOf('--limit') + 1] || '20')
+        : 20;
+
+      const results = findSymbolByName(query, {
+        type: typeFilter,
+        exactMatch: args.includes('--exact'),
+        limit,
+      });
+
+      const queryTime = Date.now() - startTime;
+      console.log(`\n🔍 Symbol lookup for: "${query}" (${queryTime}ms)\n`);
+
+      if (results.length === 0) {
+        console.log('No symbols found matching that name.');
+        console.log('Tip: Run "bun memory index once --force" to re-index with symbol extraction.');
+        break;
+      }
+
+      console.log(`Found ${results.length} symbols:\n`);
+
+      // Group by file
+      const byFile: Record<string, typeof results> = {};
+      for (const symbol of results) {
+        if (!byFile[symbol.file_path]) byFile[symbol.file_path] = [];
+        byFile[symbol.file_path].push(symbol);
+      }
+
+      for (const [filePath, symbols] of Object.entries(byFile)) {
+        console.log(`📄 ${filePath}`);
+        for (const sym of symbols) {
+          const typeIcon = sym.type === 'function' ? 'ƒ' : sym.type === 'class' ? '◇' : sym.type === 'export' ? '→' : '←';
+          const line = sym.line_start ? `:${sym.line_start}` : '';
+          console.log(`   ${typeIcon} ${sym.name} (${sym.type})${line}`);
+          if (sym.signature) {
+            console.log(`     ${sym.signature.slice(0, 80)}${sym.signature.length > 80 ? '...' : ''}`);
+          }
+        }
+        console.log('');
+      }
+      break;
+    }
+
+    case 'analyze':
+    case 'patterns': {
+      // Run pattern analysis on all indexed files
+      console.log('\nRunning pattern analysis on all indexed files...\n');
+
+      const langFilter = args.includes('--lang')
+        ? args[args.indexOf('--lang') + 1]
+        : undefined;
+
+      const files = getAllCodeFiles({
+        language: langFilter,
+        includeContent: true,
+      });
+
+      console.log(`Found ${files.length} files to analyze${langFilter ? ` (${langFilter})` : ''}...\n`);
+
+      let totalPatterns = 0;
+      let filesWithPatterns = 0;
+
+      for (const file of files) {
+        if (!file.content) {
+          // Skip files without content (need re-index)
+          continue;
+        }
+
+        const { detected, persisted } = analyzeAndPersistPatterns(file.content, file.file_path);
+        if (persisted > 0) {
+          filesWithPatterns++;
+          totalPatterns += persisted;
+          console.log(`  ${file.file_path}: ${persisted} patterns`);
+        }
+      }
+
+      console.log('\n✅ Pattern analysis complete');
+      console.log(`   Files with patterns: ${filesWithPatterns}`);
+      console.log(`   Total patterns persisted: ${totalPatterns}`);
+
+      // Show summary stats
+      const stats = getPatternStats();
+      if (stats.totalPatterns > 0) {
+        console.log('\nPattern distribution:');
+        for (const [name, count] of Object.entries(stats.byName)) {
+          console.log(`   ${name}: ${count}`);
+        }
+      }
+      break;
+    }
+
     default:
       printHelp();
       break;
@@ -448,6 +626,9 @@ Commands:
   status            Show index statistics
   search "query"    Search indexed code semantically
   find "pattern"    Fast file/symbol lookup (SQLite, no model needed)
+  symbol "name"     Fast symbol lookup with line numbers
+  pattern "name"    Find files with detected design patterns
+  analyze           Run pattern analysis on all indexed files
   grep "pattern"    Smart grep - SQLite narrows files, then grep searches
   files             List all indexed files by language
   health            Check sync between SQLite and ChromaDB

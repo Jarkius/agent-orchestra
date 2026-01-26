@@ -7,6 +7,12 @@
  *   bun memory recall "session_123..."   # Recall specific session by ID
  *   bun memory recall "#5"               # Recall specific learning by ID
  *   bun memory recall "search query"     # Semantic search
+ *   bun memory recall --expand "query"   # Search with query expansion for better recall
+ *
+ * Options:
+ *   --expand     Enable query expansion (synonyms, acronyms, alternative phrasings)
+ *   --index      Show index view
+ *   --summary    Show summary view
  *
  * Environment:
  *   MEMORY_AGENT_ID                      # Filter by agent ID (set by --agent flag)
@@ -191,6 +197,7 @@ const args = process.argv.slice(2);
 const showIndex = args.includes('--index');
 const showSummary = args.includes('--summary');
 const showFull = !showIndex && !showSummary;
+const expandQuery = args.includes('--expand');  // Enable query expansion for better recall
 
 // Extract query (first non-flag argument)
 const query = args.find(arg => !arg.startsWith('--'));
@@ -259,6 +266,7 @@ async function main() {
     agentId,
     includeShared: true,
     projectPath: effectiveProjectPath,  // Filter by current project (unless shared db)
+    expand: expandQuery,  // Enable query expansion for better recall
   });
 
   // Show active filters

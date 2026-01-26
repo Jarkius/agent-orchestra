@@ -550,6 +550,12 @@ try {
 } catch { /* Column already exists */ }
 db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_unified ON learnings(source_unified_task_id)`);
 
+// Add source_code_file_id to link learnings to source code files
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN source_code_file_id TEXT`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_code_file ON learnings(source_code_file_id)`);
+
 // Create indexes for agent-scoped queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent_id)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_agent ON learnings(agent_id)`);
@@ -669,6 +675,66 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_code_files_language ON code_files(languag
 db.run(`CREATE INDEX IF NOT EXISTS idx_code_files_name ON code_files(file_name)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_code_files_project ON code_files(project_id)`);
 
+// ============ Symbol Index (Queryable Symbols from Code) ============
+// Extracts functions, classes, exports from code_files JSON for fast lookup
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS symbols (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_file_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('function', 'class', 'export', 'import')),
+    line_start INTEGER,
+    line_end INTEGER,
+    signature TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (code_file_id) REFERENCES code_files(id) ON DELETE CASCADE
+  )
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(code_file_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_symbols_type ON symbols(type)`);
+
+// ============ Code Patterns (Detected Design Patterns) ============
+// Stores patterns detected by code-analyzer.ts for persistent pattern tracking
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS code_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_file_id TEXT NOT NULL,
+    pattern_name TEXT NOT NULL,
+    category TEXT,
+    description TEXT,
+    evidence TEXT,
+    line_number INTEGER,
+    confidence REAL DEFAULT 0.5,
+    detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (code_file_id) REFERENCES code_files(id) ON DELETE CASCADE
+  )
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_code_patterns_file ON code_patterns(code_file_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_code_patterns_name ON code_patterns(pattern_name)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_code_patterns_category ON code_patterns(category)`);
+
+// ============ Learning-Code Links (Many-to-Many) ============
+// Bi-directional linking between learnings and source code files
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS learning_code_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    learning_id INTEGER NOT NULL,
+    code_file_id TEXT NOT NULL,
+    link_type TEXT DEFAULT 'derived_from' CHECK(link_type IN ('derived_from', 'applies_to', 'example_in', 'pattern_match')),
+    relevance_score REAL DEFAULT 1.0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (learning_id) REFERENCES learnings(id) ON DELETE CASCADE,
+    FOREIGN KEY (code_file_id) REFERENCES code_files(id) ON DELETE CASCADE,
+    UNIQUE(learning_id, code_file_id, link_type)
+  )
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learning_code_learning ON learning_code_links(learning_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learning_code_file ON learning_code_links(code_file_id)`);
+
 // ============ FTS5 Full-Text Search ============
 
 // Create FTS5 virtual table for learnings (keyword search)
@@ -725,6 +791,59 @@ initializeSchema();
 // ============ Idempotent Migrations (always run) ============
 // These use IF NOT EXISTS and try-catch, so they're safe to run on every load
 
+// Migration: Add code learning tables for symbol extraction and pattern detection
+db.run(`
+  CREATE TABLE IF NOT EXISTS symbols (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_file_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('function', 'class', 'export', 'import')),
+    line_start INTEGER,
+    line_end INTEGER,
+    signature TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(code_file_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_symbols_type ON symbols(type)`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS code_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_file_id TEXT NOT NULL,
+    pattern_name TEXT NOT NULL,
+    category TEXT,
+    description TEXT,
+    evidence TEXT,
+    line_number INTEGER,
+    confidence REAL DEFAULT 0.5,
+    detected_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_code_patterns_name ON code_patterns(pattern_name)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_code_patterns_file ON code_patterns(code_file_id)`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS learning_code_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    learning_id INTEGER NOT NULL,
+    code_file_id TEXT NOT NULL,
+    link_type TEXT DEFAULT 'derived_from' CHECK(link_type IN ('derived_from', 'applies_to', 'example_in', 'pattern_match')),
+    relevance_score REAL DEFAULT 1.0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(learning_id, code_file_id, link_type)
+  )
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learning_code_links_learning ON learning_code_links(learning_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_learning_code_links_file ON learning_code_links(code_file_id)`);
+
+// Migration: Add source_code_file_id to learnings for code-learning links
+try {
+  db.run(`ALTER TABLE learnings ADD COLUMN source_code_file_id TEXT`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_learnings_code_file ON learnings(source_code_file_id)`);
+
 // Migration: Add sequence_number column to matrix_messages for ordering
 try {
   db.run(`ALTER TABLE matrix_messages ADD COLUMN sequence_number INTEGER DEFAULT 0`);
@@ -745,6 +864,12 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_messages_sequence ON matrix_messag
 
 // Create index for efficient retry queries
 db.run(`CREATE INDEX IF NOT EXISTS idx_matrix_messages_retry ON matrix_messages(status, next_retry_at)`);
+
+// Migration: Add content column to code_files for full source code storage
+// Allows fast retrieval without hitting ChromaDB, pattern analysis, and code-learning linking
+try {
+  db.run(`ALTER TABLE code_files ADD COLUMN content TEXT`);
+} catch { /* Column already exists */ }
 
 // Sequence counter table for atomic message ordering per matrix
 db.run(`
@@ -3867,6 +3992,7 @@ export interface CodeFileRecord {
   imports: string | null;
   exports: string | null;
   is_external: number;
+  content: string | null;  // Full source code for fast retrieval and pattern analysis
   indexed_at: string;
   updated_at: string;
 }
@@ -3955,8 +4081,8 @@ export function upsertCodeFile(record: Omit<CodeFileRecord, 'indexed_at' | 'upda
     INSERT INTO code_files
     (id, file_path, real_path, project_id, file_name, language, line_count,
      size_bytes, chunk_count, functions, classes, imports, exports,
-     is_external, indexed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     is_external, content, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(file_path, project_id) DO UPDATE SET
       real_path = excluded.real_path,
       file_name = excluded.file_name,
@@ -3969,6 +4095,7 @@ export function upsertCodeFile(record: Omit<CodeFileRecord, 'indexed_at' | 'upda
       imports = excluded.imports,
       exports = excluded.exports,
       is_external = excluded.is_external,
+      content = excluded.content,
       updated_at = excluded.updated_at
   `, [
     record.id,
@@ -3985,6 +4112,7 @@ export function upsertCodeFile(record: Omit<CodeFileRecord, 'indexed_at' | 'upda
     record.imports,
     record.exports,
     record.is_external,
+    record.content,
     record.indexed_at || now,
     record.updated_at || now,
   ]);
@@ -3995,6 +4123,49 @@ export function upsertCodeFile(record: Omit<CodeFileRecord, 'indexed_at' | 'upda
  */
 export function removeCodeFile(filePath: string, projectId: string): void {
   db.run('DELETE FROM code_files WHERE file_path = ? AND project_id = ?', [filePath, projectId]);
+}
+
+/**
+ * Get a single code file by path (includes full content)
+ */
+export function getCodeFile(filePath: string, projectId?: string): CodeFileRecord | null {
+  if (projectId) {
+    return db.query('SELECT * FROM code_files WHERE file_path = ? AND project_id = ?')
+      .get(filePath, projectId) as CodeFileRecord | null;
+  }
+  return db.query('SELECT * FROM code_files WHERE file_path = ?')
+    .get(filePath) as CodeFileRecord | null;
+}
+
+/**
+ * Get all code files (optionally with content for bulk operations)
+ */
+export function getAllCodeFiles(options?: {
+  projectId?: string;
+  language?: string;
+  includeContent?: boolean;
+  limit?: number;
+}): CodeFileRecord[] {
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (options?.projectId) {
+    conditions.push('project_id = ?');
+    params.push(options.projectId);
+  }
+  if (options?.language) {
+    conditions.push('language = ?');
+    params.push(options.language);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const selectCols = options?.includeContent
+    ? '*'
+    : 'id, file_path, real_path, project_id, file_name, language, line_count, size_bytes, chunk_count, functions, classes, imports, exports, is_external, indexed_at, updated_at';
+  const limitClause = options?.limit ? `LIMIT ${options.limit}` : '';
+
+  return db.query(`SELECT ${selectCols} FROM code_files ${whereClause} ORDER BY file_path ${limitClause}`)
+    .all(...params) as CodeFileRecord[];
 }
 
 /**
@@ -4108,4 +4279,425 @@ export function findFilesBySymbol(symbol: string, options?: {
   params.push(limit);
 
   return db.query(sql).all(...params) as CodeFileRecord[];
+}
+
+// ============ Symbol Functions (Code Learning) ============
+
+export interface SymbolRecord {
+  id?: number;
+  code_file_id: string;
+  name: string;
+  type: 'function' | 'class' | 'export' | 'import';
+  line_start?: number;
+  line_end?: number;
+  signature?: string;
+  created_at?: string;
+}
+
+/**
+ * Upsert a symbol (update or insert)
+ */
+export function upsertSymbol(symbol: Omit<SymbolRecord, 'id' | 'created_at'>): number {
+  const existing = db.query(`
+    SELECT id FROM symbols
+    WHERE code_file_id = ? AND name = ? AND type = ?
+  `).get(symbol.code_file_id, symbol.name, symbol.type) as { id: number } | null;
+
+  if (existing) {
+    db.run(`
+      UPDATE symbols SET
+        line_start = ?, line_end = ?, signature = ?
+      WHERE id = ?
+    `, [symbol.line_start || null, symbol.line_end || null, symbol.signature || null, existing.id]);
+    return existing.id;
+  }
+
+  const result = db.run(`
+    INSERT INTO symbols (code_file_id, name, type, line_start, line_end, signature)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, [
+    symbol.code_file_id,
+    symbol.name,
+    symbol.type,
+    symbol.line_start || null,
+    symbol.line_end || null,
+    symbol.signature || null,
+  ]);
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Find symbols by name (supports partial match)
+ */
+export function findSymbolByName(name: string, options?: {
+  type?: 'function' | 'class' | 'export' | 'import';
+  exactMatch?: boolean;
+  limit?: number;
+}): Array<SymbolRecord & { file_path: string }> {
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (options?.exactMatch) {
+    conditions.push('s.name = ?');
+    params.push(name);
+  } else {
+    conditions.push('s.name LIKE ?');
+    params.push(`%${name}%`);
+  }
+
+  if (options?.type) {
+    conditions.push('s.type = ?');
+    params.push(options.type);
+  }
+
+  const limit = options?.limit || 20;
+
+  // Params order: WHERE conditions, then CASE for name, then LIMIT
+  return db.query(`
+    SELECT s.*, cf.file_path
+    FROM symbols s
+    JOIN code_files cf ON s.code_file_id = cf.id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY
+      CASE WHEN s.name = ? THEN 0 ELSE 1 END,
+      s.name
+    LIMIT ?
+  `).all(...params, name, limit) as Array<SymbolRecord & { file_path: string }>;
+}
+
+/**
+ * Get all symbols for a code file
+ */
+export function getSymbolsForFile(codeFileId: string): SymbolRecord[] {
+  return db.query(`
+    SELECT * FROM symbols
+    WHERE code_file_id = ?
+    ORDER BY line_start ASC, name ASC
+  `).all(codeFileId) as SymbolRecord[];
+}
+
+/**
+ * Clear all symbols for a file (before re-indexing)
+ */
+export function clearSymbolsForFile(codeFileId: string): number {
+  return db.run('DELETE FROM symbols WHERE code_file_id = ?', [codeFileId]).changes;
+}
+
+/**
+ * Bulk insert symbols efficiently
+ */
+export function bulkInsertSymbols(symbols: Array<Omit<SymbolRecord, 'id' | 'created_at'>>): number {
+  if (symbols.length === 0) return 0;
+
+  const stmt = db.prepare(`
+    INSERT INTO symbols (code_file_id, name, type, line_start, line_end, signature)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  let inserted = 0;
+  db.run('BEGIN TRANSACTION');
+  try {
+    for (const symbol of symbols) {
+      stmt.run(
+        symbol.code_file_id,
+        symbol.name,
+        symbol.type,
+        symbol.line_start || null,
+        symbol.line_end || null,
+        symbol.signature || null
+      );
+      inserted++;
+    }
+    db.run('COMMIT');
+  } catch (e) {
+    db.run('ROLLBACK');
+    throw e;
+  }
+
+  return inserted;
+}
+
+/**
+ * Get symbol statistics
+ */
+export function getSymbolStats(): {
+  totalSymbols: number;
+  byType: Record<string, number>;
+  filesWithSymbols: number;
+} {
+  const total = (db.query('SELECT COUNT(*) as c FROM symbols').get() as { c: number }).c;
+  const files = (db.query('SELECT COUNT(DISTINCT code_file_id) as c FROM symbols').get() as { c: number }).c;
+
+  const typeRows = db.query(`
+    SELECT type, COUNT(*) as count FROM symbols
+    GROUP BY type
+  `).all() as { type: string; count: number }[];
+
+  const byType: Record<string, number> = {};
+  for (const row of typeRows) {
+    byType[row.type] = row.count;
+  }
+
+  return {
+    totalSymbols: total,
+    byType,
+    filesWithSymbols: files,
+  };
+}
+
+// ============ Code Pattern Functions (Pattern Learning) ============
+
+export interface CodePatternRecord {
+  id?: number;
+  code_file_id: string;
+  pattern_name: string;
+  category?: string;
+  description?: string;
+  evidence?: string;
+  line_number?: number;
+  confidence: number;
+  detected_at?: string;
+}
+
+/**
+ * Upsert a detected pattern
+ */
+export function upsertCodePattern(pattern: Omit<CodePatternRecord, 'id' | 'detected_at'>): number {
+  const existing = db.query(`
+    SELECT id, confidence FROM code_patterns
+    WHERE code_file_id = ? AND pattern_name = ? AND (line_number = ? OR (line_number IS NULL AND ? IS NULL))
+  `).get(pattern.code_file_id, pattern.pattern_name, pattern.line_number, pattern.line_number) as { id: number; confidence: number } | null;
+
+  if (existing) {
+    // Increase confidence if re-detected
+    const newConfidence = Math.min(1.0, existing.confidence + 0.1);
+    db.run(`
+      UPDATE code_patterns SET
+        category = ?, description = ?, evidence = ?, confidence = ?, detected_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [pattern.category || null, pattern.description || null, pattern.evidence || null, newConfidence, existing.id]);
+    return existing.id;
+  }
+
+  const result = db.run(`
+    INSERT INTO code_patterns (code_file_id, pattern_name, category, description, evidence, line_number, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `, [
+    pattern.code_file_id,
+    pattern.pattern_name,
+    pattern.category || null,
+    pattern.description || null,
+    pattern.evidence || null,
+    pattern.line_number || null,
+    pattern.confidence,
+  ]);
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * Get patterns for a file
+ */
+export function getPatternsForFile(codeFileId: string): CodePatternRecord[] {
+  return db.query(`
+    SELECT * FROM code_patterns
+    WHERE code_file_id = ?
+    ORDER BY confidence DESC, pattern_name ASC
+  `).all(codeFileId) as CodePatternRecord[];
+}
+
+/**
+ * Find files containing a pattern
+ */
+export function getFilesByPattern(patternName: string, options?: {
+  minConfidence?: number;
+  limit?: number;
+}): Array<CodePatternRecord & { file_path: string }> {
+  const minConf = options?.minConfidence || 0.5;
+  const limit = options?.limit || 50;
+
+  return db.query(`
+    SELECT cp.*, cf.file_path
+    FROM code_patterns cp
+    JOIN code_files cf ON cp.code_file_id = cf.id
+    WHERE cp.pattern_name LIKE ?
+      AND cp.confidence >= ?
+    ORDER BY cp.confidence DESC
+    LIMIT ?
+  `).all(`%${patternName}%`, minConf, limit) as Array<CodePatternRecord & { file_path: string }>;
+}
+
+/**
+ * Clear patterns for a file (before re-analysis)
+ */
+export function clearPatternsForFile(codeFileId: string): number {
+  return db.run('DELETE FROM code_patterns WHERE code_file_id = ?', [codeFileId]).changes;
+}
+
+/**
+ * Get pattern statistics
+ */
+export function getPatternStats(): {
+  totalPatterns: number;
+  byName: Record<string, number>;
+  avgConfidence: number;
+} {
+  const total = (db.query('SELECT COUNT(*) as c FROM code_patterns').get() as { c: number }).c;
+  const avgRow = db.query('SELECT AVG(confidence) as avg FROM code_patterns').get() as { avg: number | null };
+
+  const nameRows = db.query(`
+    SELECT pattern_name, COUNT(*) as count FROM code_patterns
+    GROUP BY pattern_name
+    ORDER BY count DESC
+  `).all() as { pattern_name: string; count: number }[];
+
+  const byName: Record<string, number> = {};
+  for (const row of nameRows) {
+    byName[row.pattern_name] = row.count;
+  }
+
+  return {
+    totalPatterns: total,
+    byName,
+    avgConfidence: avgRow.avg || 0,
+  };
+}
+
+// ============ Learning-Code Link Functions ============
+
+export interface LearningCodeLinkRecord {
+  id?: number;
+  learning_id: number;
+  code_file_id: string;
+  link_type: 'derived_from' | 'applies_to' | 'example_in' | 'pattern_match';
+  relevance_score: number;
+  created_at?: string;
+}
+
+/**
+ * Link a learning to a code file
+ */
+export function linkLearningToCode(link: Omit<LearningCodeLinkRecord, 'id' | 'created_at'>): number {
+  try {
+    const result = db.run(`
+      INSERT INTO learning_code_links (learning_id, code_file_id, link_type, relevance_score)
+      VALUES (?, ?, ?, ?)
+    `, [link.learning_id, link.code_file_id, link.link_type, link.relevance_score]);
+    return Number(result.lastInsertRowid);
+  } catch {
+    // Unique constraint - update relevance instead
+    db.run(`
+      UPDATE learning_code_links SET relevance_score = ?
+      WHERE learning_id = ? AND code_file_id = ? AND link_type = ?
+    `, [link.relevance_score, link.learning_id, link.code_file_id, link.link_type]);
+    return 0;
+  }
+}
+
+/**
+ * Get learnings derived from a code file
+ */
+export function getLearningsForFile(codeFileId: string, options?: {
+  linkType?: LearningCodeLinkRecord['link_type'];
+  minRelevance?: number;
+  limit?: number;
+}): Array<LearningRecord & { link_type: string; relevance_score: number }> {
+  const conditions: string[] = ['lcl.code_file_id = ?'];
+  const params: any[] = [codeFileId];
+
+  if (options?.linkType) {
+    conditions.push('lcl.link_type = ?');
+    params.push(options.linkType);
+  }
+
+  if (options?.minRelevance) {
+    conditions.push('lcl.relevance_score >= ?');
+    params.push(options.minRelevance);
+  }
+
+  const limit = options?.limit || 20;
+  params.push(limit);
+
+  return db.query(`
+    SELECT l.*, lcl.link_type, lcl.relevance_score
+    FROM learnings l
+    JOIN learning_code_links lcl ON l.id = lcl.learning_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY lcl.relevance_score DESC
+    LIMIT ?
+  `).all(...params) as Array<LearningRecord & { link_type: string; relevance_score: number }>;
+}
+
+/**
+ * Get code files linked to a learning
+ */
+export function getFilesForLearning(learningId: number, options?: {
+  linkType?: LearningCodeLinkRecord['link_type'];
+  limit?: number;
+}): Array<CodeFileRecord & { link_type: string; relevance_score: number }> {
+  const conditions: string[] = ['lcl.learning_id = ?'];
+  const params: any[] = [learningId];
+
+  if (options?.linkType) {
+    conditions.push('lcl.link_type = ?');
+    params.push(options.linkType);
+  }
+
+  const limit = options?.limit || 20;
+  params.push(limit);
+
+  return db.query(`
+    SELECT cf.*, lcl.link_type, lcl.relevance_score
+    FROM code_files cf
+    JOIN learning_code_links lcl ON cf.id = lcl.code_file_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY lcl.relevance_score DESC
+    LIMIT ?
+  `).all(...params) as Array<CodeFileRecord & { link_type: string; relevance_score: number }>;
+}
+
+/**
+ * Remove a learning-code link
+ */
+export function unlinkLearningFromCode(learningId: number, codeFileId: string, linkType?: string): number {
+  if (linkType) {
+    return db.run(
+      'DELETE FROM learning_code_links WHERE learning_id = ? AND code_file_id = ? AND link_type = ?',
+      [learningId, codeFileId, linkType]
+    ).changes;
+  }
+  return db.run(
+    'DELETE FROM learning_code_links WHERE learning_id = ? AND code_file_id = ?',
+    [learningId, codeFileId]
+  ).changes;
+}
+
+/**
+ * Get learning-code link statistics
+ */
+export function getLearningCodeLinkStats(): {
+  totalLinks: number;
+  byType: Record<string, number>;
+  linkedLearnings: number;
+  linkedFiles: number;
+} {
+  const total = (db.query('SELECT COUNT(*) as c FROM learning_code_links').get() as { c: number }).c;
+  const learnings = (db.query('SELECT COUNT(DISTINCT learning_id) as c FROM learning_code_links').get() as { c: number }).c;
+  const files = (db.query('SELECT COUNT(DISTINCT code_file_id) as c FROM learning_code_links').get() as { c: number }).c;
+
+  const typeRows = db.query(`
+    SELECT link_type, COUNT(*) as count FROM learning_code_links
+    GROUP BY link_type
+  `).all() as { link_type: string; count: number }[];
+
+  const byType: Record<string, number> = {};
+  for (const row of typeRows) {
+    byType[row.link_type] = row.count;
+  }
+
+  return {
+    totalLinks: total,
+    byType,
+    linkedLearnings: learnings,
+    linkedFiles: files,
+  };
 }

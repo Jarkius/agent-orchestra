@@ -32,9 +32,12 @@ import {
 
 import {
   detectTaskType,
+  getRetrievalStrategy,
   executeSmartRetrieval,
   type TaskType,
 } from '../learning/context-router';
+import type { LearningCategory } from '../interfaces/learning';
+import { expandQuery, type ExpandedQuery } from './query-expansion';
 
 // ============ Query Cache ============
 
@@ -241,6 +244,7 @@ export interface RecallOptions {
   includeShared?: boolean;
   useSmartRetrieval?: boolean;  // Use context-aware retrieval with category boosting
   projectPath?: string;  // Filter by project/git root path for matrix scoping
+  expand?: boolean;  // Enable query expansion for better recall
 }
 
 // ============ Hybrid Search ============
@@ -380,7 +384,7 @@ export async function hybridSearchLearnings(
  * Smart recall - detects query type and handles appropriately
  */
 export async function recall(query: string | undefined, options: RecallOptions = {}): Promise<RecallResult> {
-  const { limit = 5, includeLinks = true, includeTasks = true, agentId, includeShared = true, useSmartRetrieval = true, projectPath } = options;
+  const { limit = 5, includeLinks = true, includeTasks = true, agentId, includeShared = true, useSmartRetrieval = true, projectPath, expand = false } = options;
   const queryType = detectQueryType(query);
   const normalizedQuery = query?.trim() || '';
 
@@ -395,6 +399,9 @@ export async function recall(query: string | undefined, options: RecallOptions =
       return recallLearningById(normalizedQuery, includeLinks, agentId, projectPath);
 
     case 'search':
+      if (expand) {
+        return recallWithExpansion(normalizedQuery, limit, includeLinks, includeTasks, agentId, includeShared, projectPath);
+      }
       return recallBySearch(normalizedQuery, limit, includeLinks, includeTasks, agentId, includeShared, useSmartRetrieval, projectPath);
   }
 }
@@ -612,9 +619,11 @@ async function recallBySearch(
     await initVectorDB();
   }
 
-  // Detect task type for context-aware retrieval
+  // Detect task type for context-aware retrieval with category boosting
   const taskContext = detectTaskType(query);
+  const retrievalStrategy = getRetrievalStrategy(taskContext.type);
   console.log(`[Recall] Detected task type: ${taskContext.type} (confidence: ${(taskContext.confidence * 100).toFixed(0)}%)`);
+  console.log(`[Recall] Category boosts: ${Object.entries(retrievalStrategy.categoryBoost).filter(([_, v]) => v > 1).map(([k, v]) => `${k}:${v}x`).join(', ') || 'none'}`);
 
   // Build search options with agent and project scoping
   const searchOptions = { limit, agentId, includeShared, projectPath };
@@ -670,7 +679,8 @@ async function recallBySearch(
     }
   }
 
-  // Process learning results (hybrid search already returns parent IDs)
+  // Process learning results with category boosting
+  // Hybrid search already returns parent IDs; we apply task-aware boosts to rerank
   const learningsWithContext: LearningWithContext[] = [];
   if (learningResults.ids[0]?.length) {
     for (let i = 0; i < learningResults.ids[0].length; i++) {
@@ -684,12 +694,29 @@ async function recallBySearch(
 
       // Double-check access
       if (learning && (agentId === undefined || canAccessLearning(agentId, learning))) {
+        // Apply category boost based on task type (1.0 default, 1.5 preferred, 2.0 highly preferred)
+        const categoryBoost = retrievalStrategy.categoryBoost[learning.category as LearningCategory] || 1.0;
+        const baseSimilarity = 1 - distance;
+        const boostedSimilarity = baseSimilarity * categoryBoost;
+
         learningsWithContext.push({
           learning,
           linkedLearnings: includeLinks && learning.id ? getLinkedLearnings(learning.id) : [],
-          similarity: 1 - distance,
+          similarity: boostedSimilarity,  // Boosted score for ranking
         });
       }
+    }
+
+    // Re-sort by boosted similarity score to surface task-relevant learnings
+    learningsWithContext.sort((a, b) => (b.similarity || 0) - (a.similarity || 0));
+
+    // Log category boost effect if any learnings were boosted
+    const boostedCount = learningsWithContext.filter(l => {
+      const cat = l.learning.category as LearningCategory;
+      return (retrievalStrategy.categoryBoost[cat] || 1) > 1;
+    }).length;
+    if (boostedCount > 0) {
+      console.log(`[Recall] Category boosting: ${boostedCount}/${learningsWithContext.length} learnings boosted for ${taskContext.type} task`);
     }
   }
 
@@ -709,6 +736,96 @@ async function recallBySearch(
     sessions: sessionsWithContext,
     learnings: learningsWithContext,
     tasks,
+  };
+}
+
+/**
+ * Recall with query expansion - searches with multiple query variants
+ * for better recall on ambiguous or abbreviated queries
+ */
+async function recallWithExpansion(
+  query: string,
+  limit: number,
+  includeLinks: boolean,
+  includeTasks: boolean,
+  agentId?: number | null,
+  includeShared: boolean = true,
+  projectPath?: string
+): Promise<RecallResult> {
+  // Expand the query into variants
+  const expanded = expandQuery(query);
+  console.log(`[Recall] Query expansion: ${expanded.variants.length} variants from "${query}"`);
+  if (expanded.variants.length > 1) {
+    console.log(`[Recall] Variants: ${expanded.variants.slice(1).join(', ')}`);
+  }
+
+  // Collect all results from all variants
+  const allLearnings = new Map<number, LearningWithContext>();
+  const allSessions = new Map<string, SessionWithContext>();
+
+  // Search with each variant (in parallel for speed)
+  const searchPromises = expanded.variants.slice(0, 3).map(async (variant, idx) => {
+    const weight = idx === 0 ? 1.0 : 0.8; // Original query gets full weight
+    const result = await recallBySearch(
+      variant,
+      Math.ceil(limit * 1.5), // Get extra results per variant
+      includeLinks,
+      includeTasks,
+      agentId,
+      includeShared,
+      true, // useSmartRetrieval
+      projectPath
+    );
+
+    // Collect learnings with weighted scores
+    for (const l of result.learnings || []) {
+      if (l.learning.id) {
+        const existing = allLearnings.get(l.learning.id);
+        if (existing) {
+          // Boost score if found by multiple variants
+          existing.similarity = Math.max(existing.similarity || 0, (l.similarity || 0) * weight) * 1.1;
+        } else {
+          allLearnings.set(l.learning.id, {
+            ...l,
+            similarity: (l.similarity || 0) * weight,
+          });
+        }
+      }
+    }
+
+    // Collect sessions with weighted scores
+    for (const s of result.sessions || []) {
+      const existing = allSessions.get(s.session.id);
+      if (existing) {
+        existing.similarity = Math.max(existing.similarity || 0, (s.similarity || 0) * weight) * 1.1;
+      } else {
+        allSessions.set(s.session.id, {
+          ...s,
+          similarity: (s.similarity || 0) * weight,
+        });
+      }
+    }
+  });
+
+  await Promise.all(searchPromises);
+
+  // Sort and limit results
+  const learnings = Array.from(allLearnings.values())
+    .sort((a, b) => (b.similarity || 0) - (a.similarity || 0))
+    .slice(0, limit);
+
+  const sessions = Array.from(allSessions.values())
+    .sort((a, b) => (b.similarity || 0) - (a.similarity || 0))
+    .slice(0, limit);
+
+  console.log(`[Recall] Expansion found: ${learnings.length} learnings, ${sessions.length} sessions (deduplicated)`);
+
+  return {
+    type: 'semantic_search',
+    query,
+    sessions,
+    learnings,
+    tasks: [], // Tasks not deduplicated in expansion mode
   };
 }
 
