@@ -1,3 +1,7 @@
+---
+description: "Delete old sessions/learnings. Use --keep N to retain recent"
+---
+
 # Memory Purge
 
 Selectively delete old sessions or learnings.

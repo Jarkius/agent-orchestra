@@ -1,3 +1,7 @@
+---
+description: "Show all memory commands with usage examples"
+---
+
 # Memory Help
 
 Quick reference for all memory system commands.

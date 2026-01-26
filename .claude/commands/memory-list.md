@@ -1,3 +1,7 @@
+---
+description: "Browse sessions or learnings with filters"
+---
+
 # Memory List
 
 Browse sessions and learnings.

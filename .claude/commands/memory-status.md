@@ -1,3 +1,7 @@
+---
+description: "Check system health: hub, daemon, indexer status"
+---
+
 # Memory Status
 
 Quick system health check - run this first in every new session.

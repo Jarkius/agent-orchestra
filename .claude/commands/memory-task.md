@@ -1,3 +1,7 @@
+---
+description: "Task management: list, sync, create, complete"
+---
+
 # Memory Task
 
 Unified task management with GitHub sync and git commit analysis.

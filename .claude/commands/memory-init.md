@@ -1,3 +1,7 @@
+---
+description: "Initialize all components: hub, daemon, indexer"
+---
+
 # Memory Init
 
 Initialize all memory system components - hub, daemon, indexer.

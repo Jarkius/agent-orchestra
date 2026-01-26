@@ -1,3 +1,7 @@
+---
+description: "Cross-project messaging: connect, watch, send"
+---
+
 # Matrix
 
 Cross-project messaging via Matrix Hub.

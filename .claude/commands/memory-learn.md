@@ -1,3 +1,7 @@
+---
+description: "Capture knowledge from file, URL, git repo, or manual"
+---
+
 # Memory Learn
 
 Capture knowledge from files, URLs, git repos, or manually.

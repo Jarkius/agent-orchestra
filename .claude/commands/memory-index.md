@@ -1,3 +1,7 @@
+---
+description: "Code search: find, search, symbol, pattern, grep"
+---
+
 # Memory Index
 
 Hybrid code search - SQLite for fast lookups, ChromaDB for semantic search.

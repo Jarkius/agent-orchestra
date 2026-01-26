@@ -1,3 +1,7 @@
+---
+description: "Extract learnings from sessions. Use --all --yes for batch"
+---
+
 # Memory Distill
 
 Extract learnings from past sessions.

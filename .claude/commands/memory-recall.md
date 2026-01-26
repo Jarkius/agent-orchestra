@@ -1,3 +1,7 @@
+---
+description: "Resume or search sessions. Use --expand for variants"
+---
+
 # Memory Recall
 
 Search past sessions and learnings, or resume previous work.
