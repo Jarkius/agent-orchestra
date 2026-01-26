@@ -18,9 +18,9 @@ describe('E2E: Mission Lifecycle', () => {
 
   afterEach(() => {
     queue.stopTimeoutEnforcement();
-    // Clean up test data
-    db.run(`DELETE FROM tasks WHERE id LIKE '${testPrefix}%'`);
-    db.run(`DELETE FROM tasks WHERE id LIKE 'mission_%' AND prompt LIKE '%E2E test%'`);
+    // Clean up test data from agent_tasks (where saveMission writes)
+    db.run(`DELETE FROM agent_tasks WHERE id LIKE '${testPrefix}%'`);
+    db.run(`DELETE FROM agent_tasks WHERE id LIKE 'mission_%' AND prompt LIKE '%E2E test%'`);
   });
 
   it('should complete full mission lifecycle: enqueue → dequeue → complete', () => {
@@ -130,7 +130,7 @@ describe('E2E: Mission Lifecycle', () => {
     const uniquePrefix = `priority_test_${now}`;
 
     // Clean any existing test data first
-    db.run(`DELETE FROM tasks WHERE id LIKE '${uniquePrefix}%'`);
+    db.run(`DELETE FROM agent_tasks WHERE id LIKE '${uniquePrefix}%'`);
 
     // Insert missions with different priorities
     saveMission({
@@ -186,7 +186,7 @@ describe('E2E: Mission Lifecycle', () => {
     newQueue.stopTimeoutEnforcement();
 
     // Clean up
-    db.run(`DELETE FROM tasks WHERE id LIKE '${uniquePrefix}%'`);
+    db.run(`DELETE FROM agent_tasks WHERE id LIKE '${uniquePrefix}%'`);
   });
 });
 

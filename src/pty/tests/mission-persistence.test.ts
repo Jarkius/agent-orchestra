@@ -7,11 +7,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { db, saveMission, loadPendingMissions, updateMissionStatus, getMissionFromDb, type MissionRecord } from '../../db';
 
 describe('Mission Persistence', () => {
-  const testMissionId = `test_mission_${Date.now()}`;
+  // Generate unique test ID per test to avoid conflicts
+  let testMissionId: string;
+
+  beforeEach(() => {
+    testMissionId = `test_mission_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  });
 
   afterEach(() => {
-    // Clean up test missions
-    db.run(`DELETE FROM missions WHERE id LIKE 'test_mission_%'`);
+    // Clean up test missions from agent_tasks (where saveMission actually writes)
+    db.run(`DELETE FROM agent_tasks WHERE id LIKE 'test_mission_%'`);
   });
 
   describe('saveMission', () => {
