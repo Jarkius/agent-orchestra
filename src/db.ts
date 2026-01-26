@@ -1039,6 +1039,39 @@ try {
   }
 } catch { /* Migration already done or no session_tasks */ }
 
+// ============ Missions Schema ============
+// Mission queue for orchestration with retry, timeout, and dependencies
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS missions (
+    id TEXT PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    context TEXT,
+    priority TEXT DEFAULT 'normal' CHECK(priority IN ('critical', 'high', 'normal', 'low')),
+    type TEXT CHECK(type IN ('extraction', 'analysis', 'synthesis', 'review', 'general')),
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'queued', 'running', 'completed', 'failed', 'retrying', 'blocked', 'cancelled')),
+    timeout_ms INTEGER DEFAULT 300000,
+    max_retries INTEGER DEFAULT 3,
+    retry_count INTEGER DEFAULT 0,
+    retry_delay_ms INTEGER,
+    depends_on TEXT,  -- JSON array of mission IDs
+    assigned_to INTEGER,
+    error TEXT,  -- JSON ErrorContext
+    result TEXT,  -- JSON MissionResult
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    started_at TEXT,
+    completed_at TEXT,
+    unified_task_id INTEGER,
+    FOREIGN KEY (assigned_to) REFERENCES agents(id),
+    FOREIGN KEY (unified_task_id) REFERENCES unified_tasks(id)
+  )
+`);
+
+db.run(`CREATE INDEX IF NOT EXISTS idx_missions_status ON missions(status)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_missions_priority ON missions(priority)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_missions_assigned ON missions(assigned_to)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_missions_unified ON missions(unified_task_id)`);
+
 // ============ Agent Functions ============
 
 export function registerAgent(id: number, paneId: string, pid: number, name?: string) {
