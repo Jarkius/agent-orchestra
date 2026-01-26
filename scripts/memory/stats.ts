@@ -36,7 +36,7 @@ async function showStats() {
 
   // Learning stats
   const report = getImprovementReport();
-  console.log('\n═'.repeat(50));
+  console.log('\n' + '═'.repeat(50));
   console.log('\n🧠 LEARNINGS\n');
   console.log(`  Total learnings:     ${report.total_learnings}`);
 
@@ -72,7 +72,7 @@ async function showStats() {
   // Recent sessions
   const recentSessions = listSessionsFromDb({ limit: 3 });
   if (recentSessions.length > 0) {
-    console.log('\n═'.repeat(50));
+    console.log('\n' + '═'.repeat(50));
     console.log('\n📝 RECENT SESSIONS\n');
     for (const s of recentSessions) {
       console.log(`  ${s.id}`);
