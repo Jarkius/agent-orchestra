@@ -13,4 +13,9 @@ export {
   type EfficiencyInsight,
   type RebalanceResult,
   type AutoOptimizeResult,
+  // Proactive spawning types
+  type SpawnTriggers,
+  type TaskComplexity,
+  type ProactiveSpawnDecision,
+  type QueueSnapshot,
 } from './orchestrator';

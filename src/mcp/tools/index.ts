@@ -15,6 +15,7 @@ import { analyticsTools, analyticsHandlers } from './handlers/analytics';
 import { ptyTools, ptyHandlers } from './handlers/pty';
 import { worktreeTools, worktreeHandlers } from './handlers/worktree';
 import { agentQueryTools, agentQueryHandlers } from './handlers/agent-query';
+import { oracleConsultTools, oracleConsultHandlers } from './handlers/oracle-consult';
 import type { ToolDefinition, ToolHandler } from '../types';
 
 // Aggregate all tools
@@ -31,6 +32,7 @@ export const allTools: ToolDefinition[] = [
   ...ptyTools,      // PTY orchestration tools
   ...worktreeTools, // Git worktree management tools
   ...agentQueryTools, // Agent-to-agent query tools
+  ...oracleConsultTools, // Oracle consultation tools
 ];
 
 // Aggregate all handlers
@@ -47,6 +49,7 @@ export const allHandlers: Record<string, ToolHandler> = {
   ...ptyHandlers,    // PTY orchestration handlers
   ...worktreeHandlers, // Git worktree management handlers
   ...agentQueryHandlers, // Agent-to-agent query handlers
+  ...oracleConsultHandlers, // Oracle consultation handlers
 };
 
 // Dynamic registration for Phase 1/2 tools

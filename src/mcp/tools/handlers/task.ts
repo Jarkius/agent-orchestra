@@ -22,6 +22,7 @@ import {
   linkTaskToSession,
   getRecentSessions,
   getHighConfidenceLearnings,
+  searchLearningsFTS,
   createTask as dbCreateTask,
   updateUnifiedTaskStatus,
   type SessionRecord,
@@ -34,6 +35,7 @@ import {
   sendTaskToAgent,
   broadcastTask as wsBroadcastTask,
 } from '../../../ws-server';
+import { getOracleOrchestrator } from '../../../oracle';
 
 // ============ Utility Functions ============
 
@@ -77,6 +79,183 @@ function buildContextBundle(): string {
   }
 
   return parts.length > 0 ? parts.join('\n') : '';
+}
+
+/**
+ * Build an enhanced pre-task briefing with Oracle guidance
+ * Includes: complexity analysis, recommended approach, patterns, pitfalls, checkpoints
+ */
+function buildPreTaskBriefing(taskPrompt: string, userContext?: string): string {
+  const parts: string[] = [];
+
+  // 1. Task Complexity Analysis from Oracle
+  const oracle = getOracleOrchestrator();
+  const complexity = oracle.analyzeTaskComplexity(taskPrompt, userContext);
+
+  parts.push('## 🎯 Pre-Task Briefing');
+  parts.push('');
+  parts.push(`**Task Complexity:** ${complexity.tier} (recommended model: ${complexity.recommendedModel})`);
+
+  if (complexity.signals.length > 0) {
+    parts.push(`**Detected Patterns:** ${complexity.signals.join(', ')}`);
+  }
+
+  // 2. Recommended Approach based on task type
+  parts.push('');
+  parts.push('### Recommended Approach');
+  const approach = generateTaskApproach(taskPrompt, complexity.tier);
+  parts.push(approach);
+
+  // 3. Query relevant learnings based on task content
+  const relevantLearnings = searchLearningsFTS(taskPrompt, 5);
+  if (relevantLearnings.length > 0) {
+    parts.push('');
+    parts.push('### Relevant Knowledge');
+    for (const learning of relevantLearnings.slice(0, 3)) {
+      const badge = learning.confidence === 'proven' ? '✓' : '•';
+      parts.push(`${badge} **[${learning.category}]** ${learning.title}`);
+    }
+  }
+
+  // 4. Common Pitfalls based on category patterns
+  const pitfalls = getPotentialPitfalls(taskPrompt, complexity.signals);
+  if (pitfalls.length > 0) {
+    parts.push('');
+    parts.push('### ⚠️ Common Pitfalls');
+    for (const pitfall of pitfalls) {
+      parts.push(`- ${pitfall}`);
+    }
+  }
+
+  // 5. Checkpoint Suggestions for complex tasks
+  if (complexity.tier === 'complex' || complexity.tier === 'moderate') {
+    parts.push('');
+    parts.push('### 📋 Checkpoint Suggestions');
+    const checkpoints = getCheckpointSuggestions(taskPrompt, complexity.tier);
+    for (const checkpoint of checkpoints) {
+      parts.push(`- [ ] ${checkpoint}`);
+    }
+  }
+
+  // 6. Oracle Consultation Reminder
+  parts.push('');
+  parts.push('### 💡 Need Help?');
+  parts.push('Use `oracle_consult` tool when: stuck on a problem, need approach guidance, want progress review, or considering escalation.');
+
+  return parts.join('\n');
+}
+
+/**
+ * Generate recommended approach based on task type
+ */
+function generateTaskApproach(taskPrompt: string, tier: string): string {
+  const lowerPrompt = taskPrompt.toLowerCase();
+
+  if (lowerPrompt.includes('implement') || lowerPrompt.includes('add') || lowerPrompt.includes('create')) {
+    return `1. Review existing patterns in the codebase
+2. Identify integration points
+3. Implement with tests
+4. Verify against requirements`;
+  }
+
+  if (lowerPrompt.includes('fix') || lowerPrompt.includes('bug') || lowerPrompt.includes('debug')) {
+    return `1. Reproduce the issue consistently
+2. Identify root cause (not just symptoms)
+3. Check for related issues
+4. Implement fix with regression test`;
+  }
+
+  if (lowerPrompt.includes('refactor') || lowerPrompt.includes('improve') || lowerPrompt.includes('optimize')) {
+    return `1. Understand current behavior and constraints
+2. Ensure test coverage exists
+3. Make incremental changes with verification
+4. Validate no regressions`;
+  }
+
+  if (lowerPrompt.includes('test') || lowerPrompt.includes('testing')) {
+    return `1. Identify critical paths to test
+2. Write unit tests for edge cases
+3. Add integration tests for workflows
+4. Verify coverage meets requirements`;
+  }
+
+  if (lowerPrompt.includes('review') || lowerPrompt.includes('analyze')) {
+    return `1. Gather all relevant context
+2. Check against established patterns
+3. Identify potential issues
+4. Document findings with recommendations`;
+  }
+
+  // Default approach
+  return `1. Clarify requirements and acceptance criteria
+2. Research existing solutions and patterns
+3. Plan implementation approach
+4. Execute and verify`;
+}
+
+/**
+ * Get potential pitfalls based on task signals
+ */
+function getPotentialPitfalls(taskPrompt: string, signals: string[]): string[] {
+  const pitfalls: string[] = [];
+
+  if (signals.includes('architecture') || signals.includes('design-decision')) {
+    pitfalls.push('Over-engineering: Start simple, evolve as needed');
+    pitfalls.push('Missing edge cases in design phase');
+  }
+
+  if (signals.includes('multi-file-refactor')) {
+    pitfalls.push('Breaking existing functionality during refactor');
+    pitfalls.push('Incomplete updates across all affected files');
+  }
+
+  if (signals.includes('security-analysis')) {
+    pitfalls.push('Missing authentication/authorization checks');
+    pitfalls.push('Exposure of sensitive data in logs or errors');
+  }
+
+  if (signals.includes('feature-implementation')) {
+    pitfalls.push('Missing input validation');
+    pitfalls.push('Inadequate error handling');
+  }
+
+  if (signals.includes('bug-fix')) {
+    pitfalls.push('Fixing symptom instead of root cause');
+    pitfalls.push('Introducing new bugs while fixing');
+  }
+
+  if (signals.includes('testing')) {
+    pitfalls.push('Testing implementation instead of behavior');
+    pitfalls.push('Flaky tests due to timing issues');
+  }
+
+  // Generic pitfalls
+  if (pitfalls.length === 0) {
+    pitfalls.push('Missing edge case handling');
+    pitfalls.push('Incomplete error handling');
+  }
+
+  return pitfalls.slice(0, 4);
+}
+
+/**
+ * Get checkpoint suggestions based on task complexity
+ */
+function getCheckpointSuggestions(taskPrompt: string, tier: string): string[] {
+  const checkpoints: string[] = [];
+
+  if (tier === 'complex') {
+    checkpoints.push('After understanding requirements, consult Oracle for approach');
+    checkpoints.push('After initial implementation, run tests');
+    checkpoints.push('Before finalizing, request review consultation');
+    checkpoints.push('If blocked for >5 minutes, consult Oracle');
+  } else if (tier === 'moderate') {
+    checkpoints.push('Verify approach before implementation');
+    checkpoints.push('Run tests after changes');
+    checkpoints.push('If stuck, use oracle_consult tool');
+  }
+
+  return checkpoints;
 }
 
 // ============ Tool Definitions ============
@@ -125,10 +304,19 @@ async function assignTask(args: unknown) {
   // Build enhanced context if requested
   let enhancedContext = context || '';
   if (include_context_bundle) {
+    // Build pre-task briefing with Oracle guidance
+    const briefing = buildPreTaskBriefing(task, context);
+
+    // Also include general context bundle (sessions + learnings)
     const contextBundle = buildContextBundle();
-    if (contextBundle) {
-      enhancedContext = contextBundle + (enhancedContext ? '\n\n---\n\n' + enhancedContext : '');
-    }
+
+    // Combine: briefing first, then context bundle, then user context
+    const parts: string[] = [];
+    if (briefing) parts.push(briefing);
+    if (contextBundle) parts.push(contextBundle);
+    if (enhancedContext) parts.push('---\n\n## Original Context\n' + enhancedContext);
+
+    enhancedContext = parts.join('\n\n');
   }
 
   // Create task in database with linking

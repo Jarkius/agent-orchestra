@@ -68,6 +68,42 @@ export interface EfficiencyInsight {
   actionable: boolean;
 }
 
+// ============ Proactive Spawning Types ============
+
+export interface SpawnTriggers {
+  queueGrowthRate: number;      // Tasks added per minute
+  queueDepthThreshold: number;  // Absolute queue size trigger
+  idleAgentMinimum: number;     // Min idle agents to maintain per active role
+  taskComplexityBacklog: number; // Complex tasks waiting threshold
+}
+
+export interface TaskComplexity {
+  tier: 'simple' | 'moderate' | 'complex';
+  recommendedModel: 'haiku' | 'sonnet' | 'opus';
+  reasoning: string;
+  signals: string[];
+}
+
+export interface ProactiveSpawnDecision {
+  shouldSpawn: boolean;
+  reason: string;
+  suggestedRole: AgentRole;
+  suggestedModel: ModelTier;
+  urgency: 'immediate' | 'soon' | 'optional';
+}
+
+export interface QueueSnapshot {
+  timestamp: number;
+  depth: number;
+}
+
+const DEFAULT_SPAWN_TRIGGERS: SpawnTriggers = {
+  queueGrowthRate: 5,        // Spawn if > 5 tasks/min added
+  queueDepthThreshold: 5,    // Spawn if queue > 5 with no idle
+  idleAgentMinimum: 1,       // Maintain 1 idle per active role
+  taskComplexityBacklog: 3,  // Spawn opus if 3+ complex tasks waiting
+};
+
 export interface RebalanceResult {
   spawned: Array<{ agentId: number; role: AgentRole; model: ModelTier }>;
   reassigned: Array<{ agentId: number; newRole: AgentRole }>;
@@ -84,6 +120,10 @@ export interface AutoOptimizeResult {
   agentsRetired: number;
   actionsFailed: number;
   insights: EfficiencyInsight[];
+  // Proactive spawning results
+  proactiveDecisions: number;
+  proactiveSpawned: number;
+  queueGrowthRate: number;
 }
 
 // ============ Oracle Orchestrator ============
@@ -93,10 +133,324 @@ export class OracleOrchestrator {
   private queue: MissionQueue;
   private learningLoop: LearningLoop;
 
+  // Proactive spawning state
+  private queueHistory: QueueSnapshot[] = [];
+  private spawnTriggers: SpawnTriggers = DEFAULT_SPAWN_TRIGGERS;
+  private readonly HISTORY_WINDOW_MS = 120000; // 2-minute rolling window
+
   constructor() {
     this.spawner = getAgentSpawner();
     this.queue = getMissionQueue();
     this.learningLoop = getLearningLoop();
+  }
+
+  /**
+   * Configure spawn triggers
+   */
+  setSpawnTriggers(triggers: Partial<SpawnTriggers>): void {
+    this.spawnTriggers = { ...this.spawnTriggers, ...triggers };
+  }
+
+  /**
+   * Record current queue state for growth tracking
+   */
+  recordQueueSnapshot(): void {
+    const now = Date.now();
+    this.queueHistory.push({
+      timestamp: now,
+      depth: this.queue.getQueueLength(),
+    });
+
+    // Prune old history
+    this.queueHistory = this.queueHistory.filter(
+      s => now - s.timestamp < this.HISTORY_WINDOW_MS
+    );
+  }
+
+  /**
+   * Calculate queue growth rate (tasks per minute)
+   */
+  getQueueGrowthRate(): number {
+    if (this.queueHistory.length < 2) return 0;
+
+    const oldest = this.queueHistory[0]!;
+    const newest = this.queueHistory[this.queueHistory.length - 1]!;
+
+    const timeDiffMs = newest.timestamp - oldest.timestamp;
+    if (timeDiffMs < 1000) return 0; // Need at least 1 second of data
+
+    const depthDiff = newest.depth - oldest.depth;
+    const timeDiffMinutes = timeDiffMs / 60000;
+
+    return depthDiff / timeDiffMinutes;
+  }
+
+  /**
+   * Analyze task complexity to determine required model tier
+   */
+  analyzeTaskComplexity(prompt: string, context?: string): TaskComplexity {
+    const signals: string[] = [];
+    const fullText = `${prompt} ${context || ''}`.toLowerCase();
+
+    // Complex signals → Opus
+    const complexSignals = [
+      { pattern: /architect|design.*system|design.*pattern/i, signal: 'architecture' },
+      { pattern: /refactor.*multiple|cross.?file|multi.?file/i, signal: 'multi-file-refactor' },
+      { pattern: /implement.*from.*scratch|build.*new.*system/i, signal: 'greenfield-implementation' },
+      { pattern: /optimize.*algorithm|performance.*critical/i, signal: 'algorithm-optimization' },
+      { pattern: /security.*audit|vulnerability.*analysis/i, signal: 'security-analysis' },
+      { pattern: /debug.*complex|investigate.*intermittent|intermittent|debug.*flaky|debug.*race/i, signal: 'complex-debugging' },
+      { pattern: /design.*decision|trade.?off.*analysis/i, signal: 'design-decision' },
+    ];
+
+    // Moderate signals → Sonnet
+    const moderateSignals = [
+      { pattern: /implement|create|build|add.*feature/i, signal: 'feature-implementation' },
+      { pattern: /fix.*bug|resolve.*issue/i, signal: 'bug-fix' },
+      { pattern: /write.*test|add.*test/i, signal: 'testing' },
+      { pattern: /review.*code|code.*review/i, signal: 'code-review' },
+      { pattern: /update|modify|change/i, signal: 'modification' },
+    ];
+
+    // Simple signals → Haiku
+    const simpleSignals = [
+      { pattern: /read.*file|list.*files|find.*file/i, signal: 'file-read' },
+      { pattern: /search.*for|grep|look.*up/i, signal: 'search' },
+      { pattern: /format|lint|prettify/i, signal: 'formatting' },
+      { pattern: /rename|move.*file/i, signal: 'simple-refactor' },
+      { pattern: /summarize|explain.*briefly/i, signal: 'summarization' },
+    ];
+
+    // Check for complex signals first
+    for (const { pattern, signal } of complexSignals) {
+      if (pattern.test(fullText)) {
+        signals.push(signal);
+      }
+    }
+
+    if (signals.length > 0) {
+      return {
+        tier: 'complex',
+        recommendedModel: 'opus',
+        reasoning: `Task requires deep reasoning: ${signals.join(', ')}`,
+        signals,
+      };
+    }
+
+    // Check for moderate signals
+    for (const { pattern, signal } of moderateSignals) {
+      if (pattern.test(fullText)) {
+        signals.push(signal);
+      }
+    }
+
+    if (signals.length > 0) {
+      return {
+        tier: 'moderate',
+        recommendedModel: 'sonnet',
+        reasoning: `Standard development task: ${signals.join(', ')}`,
+        signals,
+      };
+    }
+
+    // Check for simple signals
+    for (const { pattern, signal } of simpleSignals) {
+      if (pattern.test(fullText)) {
+        signals.push(signal);
+      }
+    }
+
+    if (signals.length > 0) {
+      return {
+        tier: 'simple',
+        recommendedModel: 'haiku',
+        reasoning: `Simple, well-defined task: ${signals.join(', ')}`,
+        signals,
+      };
+    }
+
+    // Default to sonnet for unclear tasks
+    return {
+      tier: 'moderate',
+      recommendedModel: 'sonnet',
+      reasoning: 'No clear complexity signals, defaulting to balanced model',
+      signals: ['unknown'],
+    };
+  }
+
+  /**
+   * Evaluate proactive spawn decisions based on current state
+   */
+  evaluateProactiveSpawning(): ProactiveSpawnDecision[] {
+    const decisions: ProactiveSpawnDecision[] = [];
+    const analysis = this.analyzeWorkload();
+    const queuedMissions = this.queue.getByStatus('queued');
+
+    // Record snapshot for growth tracking
+    this.recordQueueSnapshot();
+    const growthRate = this.getQueueGrowthRate();
+
+    // Trigger 1: Queue growing fast with no idle agents
+    if (growthRate > this.spawnTriggers.queueGrowthRate && analysis.idleAgents === 0) {
+      decisions.push({
+        shouldSpawn: true,
+        reason: `Queue growing at ${growthRate.toFixed(1)} tasks/min with no idle agents`,
+        suggestedRole: 'generalist',
+        suggestedModel: 'sonnet',
+        urgency: 'immediate',
+      });
+    }
+
+    // Trigger 2: Queue depth threshold with no idle for specific roles
+    const roleNeed = this.calculateRoleNeed(queuedMissions);
+    for (const [role, need] of Object.entries(roleNeed)) {
+      if (need >= this.spawnTriggers.queueDepthThreshold) {
+        const idleInRole = analysis.agentMetrics.filter(
+          m => m.role === role && m.status === 'idle'
+        ).length;
+
+        if (idleInRole === 0) {
+          decisions.push({
+            shouldSpawn: true,
+            reason: `${need} ${role} tasks queued with no idle ${role} agents`,
+            suggestedRole: role as AgentRole,
+            suggestedModel: 'sonnet',
+            urgency: need > 10 ? 'immediate' : 'soon',
+          });
+        }
+      }
+    }
+
+    // Trigger 3: Complex tasks waiting but no opus agents available
+    let complexTasksWaiting = 0;
+    for (const mission of queuedMissions) {
+      const complexity = this.analyzeTaskComplexity(mission.prompt, mission.context);
+      if (complexity.recommendedModel === 'opus') {
+        complexTasksWaiting++;
+      }
+    }
+
+    if (complexTasksWaiting >= this.spawnTriggers.taskComplexityBacklog) {
+      const opusAgentsIdle = analysis.agentMetrics.filter(
+        m => m.model === 'opus' && m.status === 'idle'
+      ).length;
+
+      if (opusAgentsIdle === 0) {
+        // Check what roles need opus
+        const complexMissionTypes = queuedMissions
+          .filter(m => this.analyzeTaskComplexity(m.prompt).recommendedModel === 'opus')
+          .map(m => this.getMissionRole(m));
+
+        const mostNeededRole = this.getMostFrequent(complexMissionTypes) || 'architect';
+
+        decisions.push({
+          shouldSpawn: true,
+          reason: `${complexTasksWaiting} complex tasks waiting, no opus agents available`,
+          suggestedRole: mostNeededRole,
+          suggestedModel: 'opus',
+          urgency: 'immediate',
+        });
+      }
+    }
+
+    // Trigger 4: Maintain minimum idle agents per active role
+    const activeRoles = new Set(
+      analysis.agentMetrics.filter(m => m.status === 'busy').map(m => m.role)
+    );
+
+    for (const role of activeRoles) {
+      const idleInRole = analysis.agentMetrics.filter(
+        m => m.role === role && m.status === 'idle'
+      ).length;
+
+      if (idleInRole < this.spawnTriggers.idleAgentMinimum) {
+        decisions.push({
+          shouldSpawn: true,
+          reason: `Maintaining idle buffer: only ${idleInRole} idle ${role} agents`,
+          suggestedRole: role,
+          suggestedModel: 'sonnet',
+          urgency: 'optional',
+        });
+      }
+    }
+
+    return decisions;
+  }
+
+  /**
+   * Execute proactive spawning decisions
+   */
+  async executeProactiveSpawning(): Promise<{
+    evaluated: number;
+    spawned: Array<{ agentId: number; role: AgentRole; model: ModelTier; reason: string }>;
+    skipped: Array<{ reason: string; urgency: string }>;
+  }> {
+    const decisions = this.evaluateProactiveSpawning();
+    const spawned: Array<{ agentId: number; role: AgentRole; model: ModelTier; reason: string }> = [];
+    const skipped: Array<{ reason: string; urgency: string }> = [];
+
+    // Sort by urgency: immediate > soon > optional
+    const urgencyOrder = { immediate: 0, soon: 1, optional: 2 };
+    decisions.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
+
+    // Limit spawning to avoid runaway agent creation
+    const maxSpawns = 3;
+    let spawnCount = 0;
+
+    for (const decision of decisions) {
+      if (!decision.shouldSpawn) continue;
+
+      // Only auto-execute immediate/soon, skip optional
+      if (decision.urgency === 'optional') {
+        skipped.push({ reason: decision.reason, urgency: decision.urgency });
+        continue;
+      }
+
+      if (spawnCount >= maxSpawns) {
+        skipped.push({ reason: `${decision.reason} (max spawns reached)`, urgency: decision.urgency });
+        continue;
+      }
+
+      try {
+        const agent = await this.spawner.spawnAgent({
+          role: decision.suggestedRole,
+          model: decision.suggestedModel,
+        });
+
+        spawned.push({
+          agentId: agent.id,
+          role: agent.role,
+          model: agent.model,
+          reason: decision.reason,
+        });
+        spawnCount++;
+      } catch (error) {
+        skipped.push({ reason: `Failed: ${decision.reason} - ${error}`, urgency: decision.urgency });
+      }
+    }
+
+    return {
+      evaluated: decisions.length,
+      spawned,
+      skipped,
+    };
+  }
+
+  private getMostFrequent<T>(arr: T[]): T | undefined {
+    if (arr.length === 0) return undefined;
+    const counts = new Map<T, number>();
+    for (const item of arr) {
+      counts.set(item, (counts.get(item) || 0) + 1);
+    }
+    let maxCount = 0;
+    let mostFrequent: T | undefined;
+    for (const [item, count] of counts) {
+      if (count > maxCount) {
+        maxCount = count;
+        mostFrequent = item;
+      }
+    }
+    return mostFrequent;
   }
 
   /**
@@ -493,6 +847,10 @@ export class OracleOrchestrator {
    * Auto-optimize: Run all optimizations and apply them
    */
   async autoOptimize(): Promise<AutoOptimizeResult> {
+    // 0. Proactive spawning evaluation (NEW - runs first)
+    const proactiveResult = await this.executeProactiveSpawning();
+    const queueGrowthRate = this.getQueueGrowthRate();
+
     // 1. Identify and fix bottlenecks
     const bottlenecks = this.identifyBottlenecks();
     const criticalBottlenecks = bottlenecks.filter(b => b.severity === 'critical' || b.severity === 'high');
@@ -513,11 +871,15 @@ export class OracleOrchestrator {
       bottlenecksFound: bottlenecks.length,
       criticalBottlenecks: criticalBottlenecks.length,
       prioritiesAdjusted: prioritiesApplied,
-      agentsSpawned: rebalanceResult.spawned.length,
+      agentsSpawned: rebalanceResult.spawned.length + proactiveResult.spawned.length,
       agentsReassigned: rebalanceResult.reassigned.length,
       agentsRetired: rebalanceResult.retired.length,
       actionsFailed: rebalanceResult.failed.length,
       insights: insights.filter(i => i.actionable),
+      // Proactive spawning results
+      proactiveDecisions: proactiveResult.evaluated,
+      proactiveSpawned: proactiveResult.spawned.length,
+      queueGrowthRate,
     };
   }
 
