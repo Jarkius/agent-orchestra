@@ -18,6 +18,7 @@ import {
   isExpired,
   createRpcResponse,
 } from './types/agent-protocol';
+import { wsLogger as log } from './utils/logger';
 
 // ============ Configuration ============
 
@@ -77,6 +78,8 @@ const connectedAgents = new Map<number, AgentConnection>();
 const agentTokens = new Map<string, AgentToken>();
 let server: ReturnType<typeof Bun.serve> | null = null;
 let resultHandler: ((agentId: number, result: ResultMessage) => void) | null = null;
+let pingInterval: ReturnType<typeof setInterval> | null = null;
+let disconnectHandler: ((agentId: number, reason: string) => void) | null = null;
 
 // ============ Token Management ============
 
@@ -168,10 +171,10 @@ export function sendTaskToAgent(agentId: number, task: Omit<TaskMessage, 'type'>
   try {
     const message: TaskMessage = { type: 'task', ...task };
     conn.ws.send(JSON.stringify(message));
-    console.log(`[WS] Task ${task.id} sent to Agent ${agentId}`);
+    log.info(`Task sent`, { taskId: task.id, agentId });
     return true;
   } catch (error) {
-    console.error(`[WS] Failed to send task to Agent ${agentId}:`, error);
+    log.error(`Failed to send task`, { agentId, error: String(error) });
     connectedAgents.delete(agentId);
     return false;
   }
@@ -198,6 +201,14 @@ export function broadcastTask(task: Omit<TaskMessage, 'type'>): number[] {
  */
 export function onResult(handler: (agentId: number, result: ResultMessage) => void): void {
   resultHandler = handler;
+}
+
+/**
+ * Set handler for agent disconnection events
+ * Useful for cleaning up pending RPC requests when agents go offline
+ */
+export function onDisconnect(handler: (agentId: number, reason: string) => void): void {
+  disconnectHandler = handler;
 }
 
 // ============ Agent-to-Agent RPC Routing ============
@@ -417,7 +428,7 @@ export function startServer(port = WS_PORT): void {
           lastPing: now,
         });
 
-        console.log(`[WS] Agent ${agentId} connected (total: ${connectedAgents.size})`);
+        log.info(`Agent connected`, { agentId, total: connectedAgents.size });
       },
 
       message(ws, message) {
@@ -432,7 +443,7 @@ export function startServer(port = WS_PORT): void {
               conn.lastPing = new Date();
             }
           } else if (data.type === 'result') {
-            console.log(`[WS] Result from Agent ${agentId}: task ${data.taskId} ${data.status}`);
+            log.info(`Result received`, { agentId, taskId: data.taskId, status: data.status });
             resultHandler?.(agentId, data);
           } else if ('v' in data && data.v === 1) {
             // Agent protocol message (RPC request/response, event)
@@ -446,31 +457,40 @@ export function startServer(port = WS_PORT): void {
       close(ws, code, reason) {
         const { agentId } = ws.data as { agentId: number };
         connectedAgents.delete(agentId);
-        console.log(`[WS] Agent ${agentId} disconnected (code: ${code}, reason: ${reason || 'none'})`);
+        const reasonStr = reason || 'none';
+        log.info(`Agent disconnected`, { agentId, code, reason: reasonStr });
+        // Notify handler for RPC cleanup
+        disconnectHandler?.(agentId, `closed: ${reasonStr}`);
       },
 
       error(ws, error) {
         const { agentId } = ws.data as { agentId: number };
-        console.error(`[WS] Error for Agent ${agentId}:`, error);
+        log.error(`WebSocket error`, { agentId, error: String(error) });
+        // Clean up connection on error to prevent memory leaks
+        connectedAgents.delete(agentId);
+        // Notify handler for RPC cleanup
+        disconnectHandler?.(agentId, `error: ${error.message || error}`);
       },
     },
   });
 
-  console.log(`[WS] Server started on port ${port}`);
+  log.info(`Server started`, { port });
 
   // Start ping interval to detect dead connections
-  setInterval(() => {
+  pingInterval = setInterval(() => {
     const now = new Date();
     const timeout = 30000; // 30 seconds
 
     for (const [agentId, conn] of connectedAgents) {
       // Check for dead connections
       if (now.getTime() - conn.lastPing.getTime() > timeout) {
-        console.log(`[WS] Agent ${agentId} timed out, disconnecting`);
+        log.warn(`Agent timed out, disconnecting`, { agentId });
         try {
           conn.ws.close(1000, 'Ping timeout');
         } catch {}
         connectedAgents.delete(agentId);
+        // Notify handler for RPC cleanup
+        disconnectHandler?.(agentId, 'ping timeout');
         continue;
       }
 
@@ -479,6 +499,8 @@ export function startServer(port = WS_PORT): void {
         conn.ws.send(JSON.stringify({ type: 'ping' }));
       } catch {
         connectedAgents.delete(agentId);
+        // Notify handler for RPC cleanup
+        disconnectHandler?.(agentId, 'ping send failed');
       }
     }
   }, 10000); // Every 10 seconds
@@ -490,6 +512,12 @@ export function startServer(port = WS_PORT): void {
 export function stopServer(): void {
   if (!server) return;
 
+  // Clear ping interval to prevent memory leaks
+  if (pingInterval) {
+    clearInterval(pingInterval);
+    pingInterval = null;
+  }
+
   // Close all connections
   for (const [, conn] of connectedAgents) {
     try {
@@ -500,7 +528,7 @@ export function stopServer(): void {
 
   server.stop();
   server = null;
-  console.log('[WS] Server stopped');
+  log.info(`Server stopped`);
 }
 
 /**

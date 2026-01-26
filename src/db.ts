@@ -488,6 +488,12 @@ try {
 } catch { /* Column already exists */ }
 db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_parent_mission ON agent_tasks(parent_mission_id)`);
 
+// Add execution_id for task idempotency - prevents duplicate execution on crash recovery
+try {
+  db.run(`ALTER TABLE agent_tasks ADD COLUMN execution_id TEXT`);
+} catch { /* Column already exists */ }
+db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_execution ON agent_tasks(execution_id)`);
+
 // ============ Phase 1: Per-Agent Memory Schema ============
 
 // Add agent_id column to sessions table (nullable, NULL = orchestrator)
@@ -1700,6 +1706,7 @@ export function updateMissionStatus(
     result?: object;
     startedAt?: Date;
     completedAt?: Date;
+    executionId?: string | null;  // null clears the execution_id
   }
 ): void {
   const updates: string[] = ['status = ?'];
@@ -1729,6 +1736,11 @@ export function updateMissionStatus(
     updates.push('completed_at = ?');
     params.push(extras.completedAt.toISOString());
   }
+  if (extras?.executionId !== undefined) {
+    updates.push('execution_id = ?');
+    // Allow clearing execution_id by passing null
+    params.push(extras.executionId || null);
+  }
 
   params.push(missionId);
   db.run(`UPDATE agent_tasks SET ${updates.join(', ')} WHERE id = ?`, params);
@@ -1736,6 +1748,64 @@ export function updateMissionStatus(
 
 export function getMissionFromDb(missionId: string): MissionRecord | null {
   return db.query(`SELECT * FROM agent_tasks WHERE id = ?`).get(missionId) as MissionRecord | null;
+}
+
+/**
+ * Atomically dequeue a mission with execution ID for idempotency.
+ * Uses a transaction to ensure the status change and execution ID assignment are atomic.
+ * Returns the execution ID if successful, null if mission not found or already running.
+ */
+export function atomicDequeueWithExecutionId(
+  missionId: string,
+  agentId: number,
+  executionId: string
+): { success: boolean; executionId?: string; error?: string } {
+  try {
+    db.run('BEGIN IMMEDIATE');
+
+    // Check current status - only dequeue if queued
+    const mission = db.query(
+      `SELECT status, execution_id FROM agent_tasks WHERE id = ?`
+    ).get(missionId) as { status: string; execution_id: string | null } | null;
+
+    if (!mission) {
+      db.run('ROLLBACK');
+      return { success: false, error: 'Mission not found' };
+    }
+
+    if (mission.status !== 'queued') {
+      db.run('ROLLBACK');
+      return { success: false, error: `Cannot dequeue mission in status: ${mission.status}` };
+    }
+
+    // Check if already has an execution ID (crash recovery case)
+    if (mission.execution_id) {
+      db.run('ROLLBACK');
+      return { success: false, error: 'Mission already has execution ID', executionId: mission.execution_id };
+    }
+
+    // Atomically update status and set execution ID
+    db.run(
+      `UPDATE agent_tasks SET status = 'running', assigned_to = ?, started_at = ?, execution_id = ? WHERE id = ? AND status = 'queued'`,
+      [agentId, new Date().toISOString(), executionId, missionId]
+    );
+
+    db.run('COMMIT');
+    return { success: true, executionId };
+  } catch (e) {
+    try { db.run('ROLLBACK'); } catch {}
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Check if a mission was already executed with a given execution ID.
+ * Used for crash recovery to detect duplicate execution attempts.
+ */
+export function getMissionByExecutionId(executionId: string): MissionRecord | null {
+  return db.query(
+    `SELECT * FROM agent_tasks WHERE execution_id = ?`
+  ).get(executionId) as MissionRecord | null;
 }
 
 // ============ Matrix Message Functions ============

@@ -15,7 +15,18 @@ import type {
 } from '../interfaces/mission';
 import { calculateBackoff, isRecoverable } from '../interfaces/mission';
 import { randomUUID } from 'crypto';
-import { saveMission, loadPendingMissions, updateMissionStatus, type MissionRecord } from '../db';
+import { saveMission, loadPendingMissions, updateMissionStatus, atomicDequeueWithExecutionId, type MissionRecord } from '../db';
+import { missionLogger as log } from '../utils/logger';
+
+// Queue backpressure configuration
+const MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || '1000');
+
+export class QueueFullError extends Error {
+  constructor(queueSize: number, maxSize: number) {
+    super(`Queue full: ${queueSize}/${maxSize} missions. Apply backpressure.`);
+    this.name = 'QueueFullError';
+  }
+}
 
 export class MissionQueue implements IMissionQueue {
   private missions: Map<string, Mission> = new Map();
@@ -31,6 +42,12 @@ export class MissionQueue implements IMissionQueue {
   };
 
   enqueue(mission: Omit<Mission, 'id' | 'status' | 'createdAt' | 'retryCount'>): string {
+    // Backpressure: reject if queue is full
+    if (this.queue.length >= MAX_QUEUE_SIZE) {
+      log.error(`Queue full, rejecting mission`, { queueSize: this.queue.length, maxSize: MAX_QUEUE_SIZE, priority: mission.priority });
+      throw new QueueFullError(this.queue.length, MAX_QUEUE_SIZE);
+    }
+
     const id = `mission_${randomUUID().slice(0, 8)}`;
     const now = new Date();
 
@@ -72,9 +89,23 @@ export class MissionQueue implements IMissionQueue {
       if (!mission) continue;
 
       if (mission.status === 'queued' && this.isReady(missionId)) {
+        // Generate unique execution ID for idempotency
+        const executionId = `exec_${randomUUID().slice(0, 12)}`;
+
+        // Atomic dequeue with execution ID - prevents duplicate execution on crash recovery
+        const result = atomicDequeueWithExecutionId(missionId, agentId, executionId);
+
+        if (!result.success) {
+          // Mission was already dequeued by another process or has existing execution
+          log.warn(`Atomic dequeue failed`, { missionId, error: result.error });
+          continue;
+        }
+
+        // Update in-memory state
         mission.status = 'running';
         mission.startedAt = new Date();
         mission.assignedTo = agentId;
+        (mission as any).executionId = result.executionId;
 
         // Remove from queue
         this.queue = this.queue.filter(id => id !== missionId);
@@ -84,12 +115,6 @@ export class MissionQueue implements IMissionQueue {
         if (startWait) {
           this.waitTimes.set(missionId, Date.now() - startWait);
         }
-
-        // Persist status change
-        updateMissionStatus(missionId, 'running', {
-          assignedTo: agentId,
-          startedAt: mission.startedAt,
-        });
 
         return mission;
       }
@@ -387,6 +412,34 @@ export class MissionQueue implements IMissionQueue {
     return Array.from(this.missions.values());
   }
 
+  // Get queue metrics for monitoring/observability
+  getMetrics(): {
+    queueDepth: number;
+    maxQueueSize: number;
+    utilization: number;
+    byStatus: Record<string, number>;
+    byPriority: Record<string, number>;
+    averageWaitTimeMs: number;
+  } {
+    const missions = Array.from(this.missions.values());
+    const byStatus: Record<string, number> = {};
+    const byPriority: Record<string, number> = {};
+
+    for (const m of missions) {
+      byStatus[m.status] = (byStatus[m.status] || 0) + 1;
+      byPriority[m.priority] = (byPriority[m.priority] || 0) + 1;
+    }
+
+    return {
+      queueDepth: this.queue.length,
+      maxQueueSize: MAX_QUEUE_SIZE,
+      utilization: this.queue.length / MAX_QUEUE_SIZE,
+      byStatus,
+      byPriority,
+      averageWaitTimeMs: this.getAverageWaitTime(),
+    };
+  }
+
   // Persist mission to SQLite
   private persistMission(mission: Mission): void {
     saveMission({
@@ -446,12 +499,16 @@ export class MissionQueue implements IMissionQueue {
       }
 
       // Running missions that were interrupted should be retried
+      // Clear execution_id so it gets a fresh one on next dequeue
       if (mission.status === 'running') {
+        log.info(`Recovering interrupted mission`, { missionId: mission.id, previousExecutionId: record.execution_id || 'none' });
         mission.status = 'queued';
         mission.assignedTo = undefined;
         mission.startedAt = undefined;
+        (mission as any).executionId = undefined;
         this.insertByPriority(mission.id, mission.priority);
-        updateMissionStatus(mission.id, 'queued');
+        // Pass null to clear execution_id so the mission gets a fresh one on next dequeue
+        updateMissionStatus(mission.id, 'queued', { executionId: null });
       }
 
       loaded++;
@@ -470,7 +527,7 @@ export function getMissionQueue(): MissionQueue {
     // Load any pending missions from previous session
     const loaded = instance.loadFromDb();
     if (loaded > 0) {
-      console.log(`[MissionQueue] Recovered ${loaded} mission(s) from database`);
+      log.info(`Recovered missions from database`, { count: loaded });
     }
     instance.startTimeoutEnforcement(); // Auto-start timeout enforcement
   }
