@@ -1,3 +1,7 @@
+---
+description: "Cancel Ralph"
+---
+
 # Cancel Ralph
 
 Terminate an active Ralph loop.
