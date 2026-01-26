@@ -57,6 +57,33 @@ function getDaemonPort(): string | null {
   return null;
 }
 
+// Read actual indexer daemon port from PID file (per-project)
+// PID file is per-matrix: daemon-{matrix_id}.pid
+function getIndexerPort(): string | null {
+  const matrixId = getMatrixId();
+  const indexerDir = join(homedir(), '.indexer-daemon');
+  const pidFile = join(indexerDir, `daemon-${matrixId}.pid`);
+  if (existsSync(pidFile)) {
+    try {
+      const content = readFileSync(pidFile, 'utf-8').trim().split('\n');
+      const pid = parseInt(content[0] || '0');
+      const port = content[1] || null;
+      // Verify process is still running
+      if (pid > 0 && port) {
+        try {
+          process.kill(pid, 0); // Check if process exists
+          return port;
+        } catch {
+          // Process not running
+        }
+      }
+    } catch {
+      // Can't read PID file
+    }
+  }
+  return null;
+}
+
 function getMatrixId(): string {
   // Prefer .matrix.json config if it exists
   try {
@@ -109,6 +136,7 @@ interface DaemonStatus {
 interface IndexerStatus {
   status: string;
   watcherActive: boolean;
+  rootPath?: string;  // What directory the indexer is watching
   stats: {
     indexedFiles: number;
     totalDocuments?: number;
@@ -172,7 +200,8 @@ async function main() {
   const config = loadMatrixConfig();
   const configDaemonPort = config.daemon_port ? String(config.daemon_port) : (process.env.MATRIX_DAEMON_PORT || '37888');
   const daemonPort = getDaemonPort() || configDaemonPort;
-  const indexerPort = process.env.INDEXER_DAEMON_PORT || '37889';
+  // Prefer actual indexer port from PID file, fall back to env/default
+  const indexerPort = getIndexerPort() || process.env.INDEXER_DAEMON_PORT || '37889';
   const matrixId = getMatrixId();
 
   console.log('\n📊 System Status\n');
@@ -213,9 +242,24 @@ async function main() {
   // Check indexer daemon
   const indexer = await checkIndexer(indexerPort);
   if (indexer) {
-    const watcherStatus = indexer.watcherActive ? '✅ Watching' : '⚠️  Idle';
-    const docCount = indexer.vectorStats?.totalDocuments || indexer.stats?.indexedFiles || 0;
-    console.log(`  Indexer: ${watcherStatus} (${docCount} docs)`);
+    // Check if indexer is watching the CURRENT project
+    let gitRoot: string | null = null;
+    try {
+      gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
+    } catch {}
+    const currentRoot = gitRoot || process.cwd();
+    const isWrongProject = indexer.rootPath && indexer.rootPath !== currentRoot;
+
+    if (isWrongProject) {
+      console.log(`  Indexer: ⚠️  WRONG PROJECT`);
+      console.log(`           Watching: ${indexer.rootPath}`);
+      console.log(`           Current:  ${currentRoot}`);
+      console.log(`           Fix: bun memory indexer stop && bun memory indexer start`);
+    } else {
+      const watcherStatus = indexer.watcherActive ? '✅ Watching' : '⚠️  Idle';
+      const docCount = indexer.vectorStats?.totalDocuments || indexer.stats?.indexedFiles || 0;
+      console.log(`  Indexer: ${watcherStatus} (${docCount} docs)`);
+    }
   } else {
     console.log(`  Indexer: ❌ Not running`);
     console.log(`           Start: bun memory indexer start`);

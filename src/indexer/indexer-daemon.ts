@@ -12,18 +12,63 @@
 
 import { createServer, type Server } from 'http';
 import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, basename } from 'path';
+import { execSync } from 'child_process';
 import { CodeIndexer, getDefaultIndexer } from './code-indexer';
 
 // ============ Configuration ============
 
-const DAEMON_PORT = parseInt(process.env.INDEXER_DAEMON_PORT || '37889');
 const ROOT_PATH = process.env.INDEXER_ROOT_PATH || process.cwd();
+
+// Get matrix ID from config or folder name (same logic as status.ts)
+function getMatrixId(): string {
+  // Check for .matrix.json in git root or cwd
+  const paths = [
+    (() => {
+      try {
+        return join(execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim(), '.matrix.json');
+      } catch { return null; }
+    })(),
+    join(ROOT_PATH, '.matrix.json'),
+    join(process.cwd(), '.matrix.json'),
+  ].filter(Boolean) as string[];
+
+  for (const configPath of paths) {
+    if (existsSync(configPath)) {
+      try {
+        const config = JSON.parse(readFileSync(configPath, 'utf8'));
+        if (config.matrix_id) return config.matrix_id;
+      } catch {}
+    }
+  }
+
+  // Fall back to folder name
+  try {
+    return basename(execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim());
+  } catch {
+    return basename(ROOT_PATH);
+  }
+}
+
+const MATRIX_ID = getMatrixId();
+
+// Per-project port: hash matrix_id to get unique port in range 37890-38890
+function getDefaultPort(): number {
+  let hash = 0;
+  for (let i = 0; i < MATRIX_ID.length; i++) {
+    hash = ((hash << 5) - hash) + MATRIX_ID.charCodeAt(i);
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return 37890 + Math.abs(hash % 1000);
+}
+
+const DAEMON_PORT = parseInt(process.env.INDEXER_DAEMON_PORT || String(getDefaultPort()));
 
 // Use home directory for persistence across reboots
 const DEFAULT_DAEMON_DIR = join(process.env.HOME || '/tmp', '.indexer-daemon');
 const DAEMON_DIR = process.env.INDEXER_DAEMON_DIR || DEFAULT_DAEMON_DIR;
-const PID_FILE = join(DAEMON_DIR, 'daemon.pid');
+// Per-project PID file (like matrix daemon)
+const PID_FILE = join(DAEMON_DIR, `daemon-${MATRIX_ID}.pid`);
 
 // ============ State ============
 
@@ -257,6 +302,7 @@ async function start(): Promise<void> {
   }
 
   console.log(`[IndexerDaemon] Starting indexer daemon`);
+  console.log(`[IndexerDaemon] Matrix ID: ${MATRIX_ID}`);
   console.log(`[IndexerDaemon] PID: ${process.pid}`);
   console.log(`[IndexerDaemon] API Port: ${DAEMON_PORT}`);
   console.log(`[IndexerDaemon] Root Path: ${ROOT_PATH}`);
@@ -345,6 +391,7 @@ async function showStatus(): Promise<void> {
     const uptimeSec = data.uptime % 60;
 
     console.log(`[IndexerDaemon] Status: Running`);
+    console.log(`  Matrix: ${MATRIX_ID}`);
     console.log(`  PID: ${status.pid}`);
     console.log(`  Port: ${status.port}`);
     console.log(`  Root: ${data.rootPath}`);
