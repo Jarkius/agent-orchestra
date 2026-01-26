@@ -1072,6 +1072,44 @@ db.run(`CREATE INDEX IF NOT EXISTS idx_missions_priority ON missions(priority)`)
 db.run(`CREATE INDEX IF NOT EXISTS idx_missions_assigned ON missions(assigned_to)`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_missions_unified ON missions(unified_task_id)`);
 
+// ============ Agent Conversations (Agent-to-Agent RPC) ============
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS agent_conversations (
+    id TEXT PRIMARY KEY,
+    participants TEXT NOT NULL,  -- JSON array of agent IDs
+    topic TEXT,
+    status TEXT DEFAULT 'active' CHECK(status IN ('active', 'closed', 'archived')),
+    message_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS agent_conversation_messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    thread_id TEXT,
+    correlation_id TEXT,
+    from_agent INTEGER NOT NULL,
+    to_agent INTEGER,
+    message_type TEXT NOT NULL CHECK(message_type IN ('rpc.request', 'rpc.response', 'event', 'ack', 'error')),
+    method TEXT,           -- For rpc.request
+    content TEXT NOT NULL, -- JSON payload
+    ok INTEGER,            -- For rpc.response (1=success, 0=error)
+    deadline_ms INTEGER,   -- Absolute deadline
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES agent_conversations(id),
+    FOREIGN KEY (from_agent) REFERENCES agents(id)
+  )
+`);
+
+db.run(`CREATE INDEX IF NOT EXISTS idx_conv_messages_conv ON agent_conversation_messages(conversation_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_conv_messages_thread ON agent_conversation_messages(thread_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_conv_messages_correlation ON agent_conversation_messages(correlation_id)`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_conv_messages_from ON agent_conversation_messages(from_agent)`);
+
 // ============ Agent Functions ============
 
 export function registerAgent(id: number, paneId: string, pid: number, name?: string) {
@@ -1111,6 +1149,148 @@ export function getAllAgents() {
 
 export function getAgent(id: number) {
   return db.query(`SELECT * FROM agents WHERE id = ?`).get(id);
+}
+
+// ============ Agent Conversation Functions ============
+
+export function createConversation(
+  id: string,
+  participants: number[],
+  topic?: string
+): void {
+  db.run(
+    `INSERT INTO agent_conversations (id, participants, topic) VALUES (?, ?, ?)`,
+    [id, JSON.stringify(participants), topic || null]
+  );
+}
+
+export function getConversation(id: string): any {
+  const row = db.query(`SELECT * FROM agent_conversations WHERE id = ?`).get(id) as any;
+  if (row) {
+    row.participants = JSON.parse(row.participants);
+  }
+  return row;
+}
+
+export function getConversationByThread(threadId: string): any {
+  // Find conversation by thread ID from messages
+  const msg = db.query(
+    `SELECT conversation_id FROM agent_conversation_messages WHERE thread_id = ? LIMIT 1`
+  ).get(threadId) as any;
+  if (msg) {
+    return getConversation(msg.conversation_id);
+  }
+  return null;
+}
+
+export function updateConversationStatus(id: string, status: 'active' | 'closed' | 'archived'): void {
+  db.run(
+    `UPDATE agent_conversations SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [status, id]
+  );
+}
+
+export function saveConversationMessage(
+  id: string,
+  conversationId: string,
+  threadId: string | undefined,
+  correlationId: string | undefined,
+  fromAgent: number,
+  toAgent: number | undefined,
+  messageType: string,
+  content: any,
+  options?: {
+    method?: string;
+    ok?: boolean;
+    deadlineMs?: number;
+  }
+): void {
+  db.run(
+    `INSERT INTO agent_conversation_messages
+     (id, conversation_id, thread_id, correlation_id, from_agent, to_agent, message_type, method, content, ok, deadline_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      conversationId,
+      threadId || null,
+      correlationId || null,
+      fromAgent,
+      toAgent || null,
+      messageType,
+      options?.method || null,
+      JSON.stringify(content),
+      options?.ok !== undefined ? (options.ok ? 1 : 0) : null,
+      options?.deadlineMs || null,
+    ]
+  );
+
+  // Update conversation message count
+  db.run(
+    `UPDATE agent_conversations SET message_count = message_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [conversationId]
+  );
+}
+
+export function getConversationMessages(
+  conversationId: string,
+  limit = 100
+): any[] {
+  const rows = db.query(
+    `SELECT * FROM agent_conversation_messages
+     WHERE conversation_id = ?
+     ORDER BY created_at ASC
+     LIMIT ?`
+  ).all(conversationId, limit) as any[];
+
+  return rows.map(row => ({
+    ...row,
+    content: JSON.parse(row.content),
+    ok: row.ok !== null ? row.ok === 1 : undefined,
+  }));
+}
+
+export function getThreadMessages(threadId: string, limit = 100): any[] {
+  const rows = db.query(
+    `SELECT * FROM agent_conversation_messages
+     WHERE thread_id = ?
+     ORDER BY created_at ASC
+     LIMIT ?`
+  ).all(threadId, limit) as any[];
+
+  return rows.map(row => ({
+    ...row,
+    content: JSON.parse(row.content),
+    ok: row.ok !== null ? row.ok === 1 : undefined,
+  }));
+}
+
+export function getAgentConversations(agentId: number, limit = 50): any[] {
+  const rows = db.query(
+    `SELECT * FROM agent_conversations
+     WHERE participants LIKE ?
+     ORDER BY updated_at DESC
+     LIMIT ?`
+  ).all(`%${agentId}%`, limit) as any[];
+
+  return rows.map(row => ({
+    ...row,
+    participants: JSON.parse(row.participants),
+  }));
+}
+
+export function getRecentAgentMessages(agentId: number, limit = 50): any[] {
+  const rows = db.query(
+    `SELECT * FROM agent_conversation_messages
+     WHERE from_agent = ? OR to_agent = ?
+     ORDER BY created_at DESC
+     LIMIT ?`
+  ).all(agentId, agentId, limit) as any[];
+
+  return rows.map(row => ({
+    ...row,
+    content: JSON.parse(row.content),
+    ok: row.ok !== null ? row.ok === 1 : undefined,
+  }));
 }
 
 // ============ Message Functions ============

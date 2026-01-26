@@ -7,6 +7,17 @@
  */
 
 import { randomBytes } from 'crypto';
+import {
+  type AgentMessage,
+  type RpcRequest,
+  type RpcResponse,
+  type EventMessage,
+  isRpcRequest,
+  isRpcResponse,
+  isEventMessage,
+  isExpired,
+  createRpcResponse,
+} from './types/agent-protocol';
 
 // ============ Configuration ============
 
@@ -57,8 +68,8 @@ interface PongMessage {
   agentId: number;
 }
 
-type IncomingMessage = ResultMessage | PongMessage;
-type OutgoingMessage = TaskMessage | PingMessage;
+type IncomingMessage = ResultMessage | PongMessage | AgentMessage;
+type OutgoingMessage = TaskMessage | PingMessage | AgentMessage;
 
 // ============ State ============
 
@@ -189,6 +200,140 @@ export function onResult(handler: (agentId: number, result: ResultMessage) => vo
   resultHandler = handler;
 }
 
+// ============ Agent-to-Agent RPC Routing ============
+
+/**
+ * Route an RPC request to the target agent
+ */
+function routeRpcRequest(fromAgentId: number, msg: RpcRequest): void {
+  const targetAgentId = msg.to.agentId;
+  const targetConn = connectedAgents.get(targetAgentId);
+
+  if (!targetConn) {
+    // Target agent not connected - send error response back
+    const fromConn = connectedAgents.get(fromAgentId);
+    if (fromConn) {
+      const errorResponse = createRpcResponse(msg, undefined, false, {
+        code: 'AGENT_OFFLINE',
+        message: `Agent ${targetAgentId} is not connected`,
+      });
+      try {
+        fromConn.ws.send(JSON.stringify(errorResponse));
+      } catch (error) {
+        console.error(`[WS] Failed to send error response to Agent ${fromAgentId}:`, error);
+      }
+    }
+    console.log(`[WS] RPC request from Agent ${fromAgentId} to offline Agent ${targetAgentId}`);
+    return;
+  }
+
+  // Check if request has expired
+  if (isExpired(msg)) {
+    console.log(`[WS] Dropping expired RPC request: ${msg.method} from Agent ${fromAgentId}`);
+    return;
+  }
+
+  // Forward to target agent
+  try {
+    targetConn.ws.send(JSON.stringify(msg));
+    console.log(`[WS] RPC ${msg.method} routed: Agent ${fromAgentId} → Agent ${targetAgentId}`);
+  } catch (error) {
+    console.error(`[WS] Failed to route RPC to Agent ${targetAgentId}:`, error);
+    connectedAgents.delete(targetAgentId);
+  }
+}
+
+/**
+ * Route an RPC response back to the requester
+ */
+function routeRpcResponse(fromAgentId: number, msg: RpcResponse): void {
+  const targetAgentId = msg.to.agentId;
+  const targetConn = connectedAgents.get(targetAgentId);
+
+  if (!targetConn) {
+    console.log(`[WS] RPC response from Agent ${fromAgentId} to offline Agent ${targetAgentId} (dropped)`);
+    return;
+  }
+
+  try {
+    targetConn.ws.send(JSON.stringify(msg));
+    console.log(`[WS] RPC response routed: Agent ${fromAgentId} → Agent ${targetAgentId} (${msg.ok ? 'ok' : 'error'})`);
+  } catch (error) {
+    console.error(`[WS] Failed to route RPC response to Agent ${targetAgentId}:`, error);
+    connectedAgents.delete(targetAgentId);
+  }
+}
+
+/**
+ * Route an event message
+ */
+function routeEvent(fromAgentId: number, msg: EventMessage): void {
+  const targetAgentId = msg.to.agentId;
+
+  // Broadcast to all if target is 0
+  if (targetAgentId === 0) {
+    for (const [agentId, conn] of connectedAgents) {
+      if (agentId !== fromAgentId) {
+        try {
+          conn.ws.send(JSON.stringify(msg));
+        } catch {
+          connectedAgents.delete(agentId);
+        }
+      }
+    }
+    console.log(`[WS] Event ${msg.topic} broadcast from Agent ${fromAgentId}`);
+    return;
+  }
+
+  // Direct to specific agent
+  const targetConn = connectedAgents.get(targetAgentId);
+  if (targetConn) {
+    try {
+      targetConn.ws.send(JSON.stringify(msg));
+      console.log(`[WS] Event ${msg.topic} routed: Agent ${fromAgentId} → Agent ${targetAgentId}`);
+    } catch (error) {
+      console.error(`[WS] Failed to route event to Agent ${targetAgentId}:`, error);
+      connectedAgents.delete(targetAgentId);
+    }
+  }
+}
+
+/**
+ * Handle agent-to-agent message routing
+ */
+function handleAgentMessage(fromAgentId: number, msg: AgentMessage): boolean {
+  if (isRpcRequest(msg)) {
+    routeRpcRequest(fromAgentId, msg);
+    return true;
+  }
+  if (isRpcResponse(msg)) {
+    routeRpcResponse(fromAgentId, msg);
+    return true;
+  }
+  if (isEventMessage(msg)) {
+    routeEvent(fromAgentId, msg);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Send an agent message to a specific agent
+ */
+export function sendAgentMessage(toAgentId: number, msg: AgentMessage): boolean {
+  const conn = connectedAgents.get(toAgentId);
+  if (!conn) return false;
+
+  try {
+    conn.ws.send(JSON.stringify(msg));
+    return true;
+  } catch (error) {
+    console.error(`[WS] Failed to send agent message to Agent ${toAgentId}:`, error);
+    connectedAgents.delete(toAgentId);
+    return false;
+  }
+}
+
 // ============ WebSocket Server ============
 
 /**
@@ -289,6 +434,9 @@ export function startServer(port = WS_PORT): void {
           } else if (data.type === 'result') {
             console.log(`[WS] Result from Agent ${agentId}: task ${data.taskId} ${data.status}`);
             resultHandler?.(agentId, data);
+          } else if ('v' in data && data.v === 1) {
+            // Agent protocol message (RPC request/response, event)
+            handleAgentMessage(agentId, data as AgentMessage);
           }
         } catch (error) {
           console.error(`[WS] Invalid message from Agent ${agentId}:`, error);

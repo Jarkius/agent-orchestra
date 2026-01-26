@@ -14,6 +14,7 @@ import { learningTools, learningHandlers } from './handlers/learning';
 import { analyticsTools, analyticsHandlers } from './handlers/analytics';
 import { ptyTools, ptyHandlers } from './handlers/pty';
 import { worktreeTools, worktreeHandlers } from './handlers/worktree';
+import { agentQueryTools, agentQueryHandlers } from './handlers/agent-query';
 import type { ToolDefinition, ToolHandler } from '../types';
 
 // Aggregate all tools
@@ -29,6 +30,7 @@ export const allTools: ToolDefinition[] = [
   ...analyticsTools, // Analytics and export tools
   ...ptyTools,      // PTY orchestration tools
   ...worktreeTools, // Git worktree management tools
+  ...agentQueryTools, // Agent-to-agent query tools
 ];
 
 // Aggregate all handlers
@@ -44,6 +46,7 @@ export const allHandlers: Record<string, ToolHandler> = {
   ...analyticsHandlers, // Analytics and export handlers
   ...ptyHandlers,    // PTY orchestration handlers
   ...worktreeHandlers, // Git worktree management handlers
+  ...agentQueryHandlers, // Agent-to-agent query handlers
 };
 
 // Dynamic registration for Phase 1/2 tools
