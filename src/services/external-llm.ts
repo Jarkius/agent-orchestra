@@ -46,6 +46,7 @@ export interface LLMOptions {
   maxOutputTokens?: number;
   temperature?: number;
   thinkingLevel?: 'low' | 'medium' | 'high';  // Gemini 3 feature
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';  // GPT-5+ feature
 }
 
 export interface LLMResponse {
@@ -158,18 +159,27 @@ export class ExternalLLM {
     const isGpt5Plus = model.startsWith('gpt-5') || model.startsWith('o1') || model.startsWith('o3');
     const tokenParam = isGpt5Plus ? 'max_completion_tokens' : 'max_tokens';
 
+    const body: any = {
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      [tokenParam]: options.maxOutputTokens || 4096,
+    };
+
+    // Add reasoning_effort for GPT-5+ models (temperature must be 1 when reasoning is enabled)
+    if (isGpt5Plus && options.reasoningEffort) {
+      body.reasoning_effort = options.reasoningEffort;
+      body.temperature = 1;  // Required when reasoning is enabled
+    } else {
+      body.temperature = options.temperature ?? 0.7;
+    }
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        [tokenParam]: options.maxOutputTokens || 4096,
-        temperature: options.temperature ?? 0.7,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

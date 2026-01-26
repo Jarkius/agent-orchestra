@@ -22,8 +22,9 @@ Options:
   --gemini        Use Gemini (default)
   --openai        Use OpenAI
   --anthropic     Use Anthropic
-  --model <name>  Specific model (e.g., gemini-3-pro, gpt-4o)
+  --model <name>  Specific model (e.g., gemini-3-pro, gpt-5.2)
   --thinking <level>  Gemini 3 thinking depth: low (recommended), medium, high
+  --reasoning <level> GPT-5+ reasoning effort: none, low, medium, high, xhigh
   --max-tokens <n>    Maximum output tokens
 
 Commands:
@@ -31,8 +32,8 @@ Commands:
 
 Examples:
   bun memory llm "What is TypeScript?"
-  bun memory llm --thinking high "Explain quantum computing"
-  bun memory llm --model gemini-3-pro "Complex reasoning task"
+  bun memory llm --thinking low "Explain quantum computing"
+  bun memory llm --openai --model gpt-5.2 --reasoning high "Complex task"
   bun memory llm providers
 `);
 }
@@ -80,6 +81,8 @@ async function main() {
       options.model = args[++i];
     } else if (arg === '--thinking' && args[i + 1]) {
       options.thinkingLevel = args[++i] as 'low' | 'medium' | 'high';
+    } else if (arg === '--reasoning' && args[i + 1]) {
+      options.reasoningEffort = args[++i] as 'none' | 'low' | 'medium' | 'high' | 'xhigh';
     } else if (arg === '--max-tokens' && args[i + 1]) {
       options.maxOutputTokens = parseInt(args[++i]!);
     } else if (!arg.startsWith('--')) {
