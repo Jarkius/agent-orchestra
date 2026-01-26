@@ -1,61 +1,58 @@
----
-description: "Extract learnings from past sessions. Distill wins, challenges, and insights into structured knowledge."
----
-
 # Memory Distill
 
-Extract learnings from past sessions and save them as structured knowledge.
+Extract learnings from past sessions.
 
 ## Usage
 
 ```
-/memory-distill [session_id] [--last N] [--all] [--yes]
+/memory-distill                   Distill from last session (interactive)
+/memory-distill <session_id>      Distill from specific session
+/memory-distill --all             Distill from ALL sessions
+/memory-distill --yes             Auto-accept all learnings
+/memory-distill --all --yes       Batch distill everything
 ```
+
+## Actions
+
+| Action | Description |
+|--------|-------------|
+| (none) | Distill from last session |
+| `<session_id>` | Distill from specific session |
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--all` | Process all sessions |
+| `--yes` | Auto-accept learnings (no prompts) |
+| `--last N` | Process last N sessions |
+
+## What Gets Extracted
+
+- **Wins** - Successes worth repeating
+- **Challenges** - Problems that became lessons
+- **Learnings** - Explicit insights from sessions
+
+## Interactive Mode
+
+For each potential learning:
+- `Y` (default) - Save with suggested category
+- `n` - Skip this learning
+- `c` - Change category before saving
+- `s` - Skip all remaining
 
 ## Examples
 
 ```bash
-# From last session (interactive)
+# Interactive distill from last session
 /memory-distill
 
-# From specific session
-/memory-distill session_1768648290468
-
-# From last 5 sessions
-/memory-distill --last 5
-
-# From ALL sessions (full extraction)
-/memory-distill --all
-
-# Auto-accept all suggestions (batch mode)
-/memory-distill --yes
-/memory-distill --last 5 --yes
+# Batch distill all sessions
 /memory-distill --all --yes
+
+# Distill last 5 sessions
+/memory-distill --last 5
 ```
-
-## What Gets Extracted
-
-The distill process scans session context for:
-- **Learnings**: Explicit insights captured during the session
-- **Wins**: Successes that often contain reusable patterns
-- **Challenges**: Problems faced that became lessons learned
-
-## Interactive Mode
-
-For each potential learning, you can:
-- `Y` (default) - Save with suggested category
-- `n` - Skip this learning
-- `c` - Change category before saving
-- `s` - Skip all remaining learnings
-
-After accepting, you'll be prompted for structured fields:
-- **What happened**: The situation/context
-- **What did you learn**: The key insight
-- **How to prevent/apply**: Future application
-
-## Confidence
-
-Distilled learnings start at `low` confidence. Use `bun memory validate_learning <id>` to increase confidence when a learning proves useful.
 
 ## Instructions
 
@@ -63,5 +60,3 @@ Run the distill command:
 ```bash
 bun memory distill $ARGUMENTS
 ```
-
-Review each extracted learning and add structured context when prompted.

@@ -1,64 +1,68 @@
----
-description: "Capture learnings with smart auto-detect (file, URL, YouTube, git) or structured fields. Quick knowledge capture."
----
-
 # Memory Learn
 
-Smart learning capture with auto-detection or manual structured fields.
+Capture knowledge from files, URLs, git repos, or manually.
 
 ## Usage
 
 ```
-# Smart Mode (auto-detects input type)
-/memory-learn ./docs/file.md              # Learn from file
-/memory-learn https://example.com/article # Learn from URL
-/memory-learn https://youtube.com/watch?v=x # Learn from YouTube
-/memory-learn HEAD~3                       # Learn from git commits
-
-# Traditional Mode
-/memory-learn <category> "title" [--lesson "..."] [--prevention "..."]
+/memory-learn <source>            Auto-detect and learn from source
+/memory-learn ./path/file.md      Learn from local file
+/memory-learn https://example.com Learn from URL
+/memory-learn https://github.com/user/repo  Learn from git repo
+/memory-learn HEAD~5              Learn from git commits
+/memory-learn <category> "title"  Manual learning
 ```
+
+## Actions
+
+| Action | Description |
+|--------|-------------|
+| `<file>` | Learn from local file |
+| `<url>` | Learn from web page |
+| `<git-url>` | Clone and analyze repository |
+| `HEAD~N` | Learn from last N commits |
+| `<category> "title"` | Manual learning capture |
+
+## Auto-Detection
+
+The command auto-detects source type:
+- Local paths → File analysis
+- `http://` URLs → Web page fetch
+- GitHub URLs → Repository analysis
+- `HEAD~N` → Git commit analysis
+
+## Categories
+
+**Technical:** performance, architecture, tooling, process, debugging, security, testing
+
+**Wisdom:** philosophy, principle, insight, pattern, retrospective
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--lesson "..."` | Add lesson learned |
+| `--prevention "..."` | Add prevention/application |
+| `-i, --interactive` | Interactive mode with prompts |
 
 ## Examples
 
 ```bash
-# Smart auto-detect
-/memory-learn ./README.md                  # Extract key points from file
-/memory-learn HEAD~5                       # Learn from last 5 commits
-/memory-learn https://blog.example.com/post # Fetch and extract from URL
+# Learn from documentation
+/memory-learn ./docs/architecture.md
 
-# Traditional with structured fields
-/memory-learn architecture "Dual-storage pattern" --lesson "SQLite for truth, ChromaDB for search" --prevention "Design dual-storage from start"
+# Learn from web article
+/memory-learn https://bun.sh/docs/api/websocket
 
-# Interactive mode (prompts for all fields)
-/memory-learn -i
-/memory-learn --interactive
+# Learn from repository
+/memory-learn https://github.com/anthropics/anthropic-sdk-python
+
+# Learn from commits
+/memory-learn HEAD~5
+
+# Manual learning
+/memory-learn architecture "Singleton pattern" --lesson "Use for global state"
 ```
-
-## Categories
-
-**Technical** (7):
-- `performance` - Speed, memory, optimization
-- `architecture` - System design, patterns
-- `tooling` - Tools, configs, CLI
-- `process` - Workflow, methodology
-- `debugging` - Problem diagnosis, errors
-- `security` - Auth, vulnerabilities
-- `testing` - Test strategies, coverage
-
-**Wisdom** (5):
-- `philosophy` - Core beliefs, approaches
-- `principle` - Guiding rules, values
-- `insight` - Deep realizations, "aha" moments
-- `pattern` - Recurring observations
-- `retrospective` - Lessons from experience
-
-## Structured Fields
-
-Each learning can have three structured fields:
-- **what_happened**: The situation/context (use positional arg or interactive)
-- **lesson**: What you learned (`--lesson "..."`)
-- **prevention**: How to prevent/apply (`--prevention "..."`)
 
 ## Instructions
 
@@ -66,10 +70,3 @@ Run the learn command:
 ```bash
 bun memory learn $ARGUMENTS
 ```
-
-For detailed context capture, use interactive mode:
-```bash
-bun memory learn -i
-```
-
-Confirm the learning ID and any auto-linked learnings.

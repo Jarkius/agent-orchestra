@@ -1,54 +1,63 @@
----
-description: "Browse recent sessions or learnings. Shows summaries, tags, task counts, and confidence levels."
----
-
 # Memory List
 
-List recent sessions or learnings with details.
+Browse sessions and learnings.
 
 ## Usage
 
 ```
-/memory-list [sessions|learnings] [-i|--interactive]
+/memory-list                      Show recent items
+/memory-list sessions             List work sessions
+/memory-list learnings            List captured learnings
+/memory-list learnings --category architecture
 ```
+
+## Actions
+
+| Action | Description |
+|--------|-------------|
+| (none) | Show recent sessions and learnings |
+| `sessions` | List work sessions with summaries |
+| `learnings` | List captured learnings by category |
+
+## Flags
+
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Limit results (default: 10) |
+| `--category CAT` | Filter learnings by category |
+| `--confidence LVL` | Filter by confidence (low/medium/high/proven) |
+| `-i, --interactive` | Interactive browser mode |
+
+## Session List Shows
+
+- Session ID and summary
+- Tags and task counts
+- Duration and commit count
+- Created timestamp
+
+## Learning List Shows
+
+Grouped by category with confidence badges:
+- `○` low
+- `✓` high
+- `⭐` proven
+
+## Categories
+
+architecture, debugging, performance, tooling, process, security, testing, philosophy, insight, pattern
 
 ## Examples
 
 ```bash
-# List recent sessions (default)
-/memory-list
-/memory-list sessions
-/memory-list s
+# List recent sessions
+/memory-list sessions --limit 5
 
-# List recent learnings grouped by category
-/memory-list learnings
-/memory-list l
+# List architecture learnings
+/memory-list learnings --category architecture
 
-# Interactive session browser
+# Interactive browser
 /memory-list -i
-/memory-list sessions -i
 ```
-
-## Session List Shows
-
-- Session ID
-- Summary (truncated)
-- Tags
-- Task counts (done/pending/blocked)
-- Duration and commit count
-- Created timestamp (local time)
-
-## Learning List Shows
-
-Grouped by category:
-- Learning ID with confidence badge
-- Title
-- Validation count
-
-Confidence badges:
-- `○` low
-- `✓` high
-- `⭐` proven
 
 ## Instructions
 
@@ -56,18 +65,3 @@ Run the list command:
 ```bash
 bun memory list $ARGUMENTS
 ```
-
-Arguments:
-- `sessions` or `s` - List recent sessions
-- `learnings` or `l` - List recent learnings
-- `-i` or `--interactive` - Interactive session browser
-
-If no argument, default to sessions.
-
-## Interactive Mode
-
-Use `-i` flag for interactive browsing:
-- Arrow keys to navigate sessions
-- Enter to view full session details (summary, tasks, git context)
-- Back to return to list
-- Quit to exit
