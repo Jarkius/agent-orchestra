@@ -79,3 +79,4 @@ data/
 # Claude Code state
 .claude/.inbox-state
 .matrix.json
+.env.local

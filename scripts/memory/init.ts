@@ -100,6 +100,24 @@ async function checkIndexer(port: string): Promise<boolean> {
   }
 }
 
+function checkDockerRunning(): boolean {
+  try {
+    execSync('docker info', { encoding: 'utf8', stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function checkDockerInstalled(): boolean {
+  try {
+    execSync('which docker', { encoding: 'utf8', stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const config = loadMatrixConfig();
   const { pin: cliPin } = parseArgs();
@@ -113,6 +131,22 @@ async function main() {
   let pin = cliPin || process.env.MATRIX_HUB_PIN || config.hub_pin || null;
 
   console.log('\n🚀 Initializing Matrix Communication\n');
+
+  // Pre-flight check: Docker
+  process.stdout.write('  0. Docker... ');
+  if (!checkDockerInstalled()) {
+    console.log('❌ Not installed');
+    console.log('     Docker is required for ChromaDB (vector database).');
+    console.log('     Install: https://docs.docker.com/get-docker/');
+    return;
+  }
+  if (!checkDockerRunning()) {
+    console.log('❌ Not running');
+    console.log('     Docker Desktop is installed but not running.');
+    console.log('     Please start Docker Desktop and run this command again.');
+    return;
+  }
+  console.log('✅ Running');
 
   // Step 1: Check/Start Hub
   process.stdout.write('  1. Hub... ');

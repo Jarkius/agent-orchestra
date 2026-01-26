@@ -253,9 +253,20 @@ export async function runClaudeTask(
   try {
     // Run claude CLI with --print flag for non-interactive output
     // Use -p for prompt input
+    // Enable key tools including WebSearch for internet research
     const cwd = workingDir || process.cwd();
+    const allowedTools = [
+      'WebSearch',   // Internet search capability
+      'WebFetch',    // URL fetching
+      'Bash',        // Shell commands
+      'Read',        // File reading
+      'Write',       // File writing
+      'Edit',        // File editing
+      'Glob',        // File pattern matching
+      'Grep',        // Content search
+    ].join(',');
 
-    const result = await $`claude -p ${fullPrompt} --output-format text`
+    const result = await $`claude -p ${fullPrompt} --output-format text --allowedTools ${allowedTools}`
       .cwd(cwd)
       .text();
 

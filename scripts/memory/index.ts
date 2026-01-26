@@ -199,6 +199,13 @@ async function main() {
       break;
     }
 
+    case 'llm': {
+      // External LLM queries (Gemini, OpenAI, Anthropic)
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./llm');
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -260,6 +267,8 @@ Commands:
   indexer status    Check indexer daemon status
   map               Generate codebase map from indexed data
   map --update      Update CLAUDE.md with codebase map
+  llm "prompt"      Query external LLMs (Gemini, OpenAI, Anthropic)
+  llm providers     List available LLM providers (based on API keys)
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing
