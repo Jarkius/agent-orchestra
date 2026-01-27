@@ -2202,6 +2202,19 @@ export function getUnreadCount(matrixId: string): number {
 }
 
 /**
+ * Clear inbox messages for a matrix
+ */
+export function clearInbox(matrixId: string): number {
+  const result = db.run(`
+    DELETE FROM matrix_messages
+    WHERE (to_matrix = ? OR to_matrix IS NULL OR message_type = 'broadcast')
+      AND from_matrix != ?
+      AND status = 'delivered'
+  `, matrixId, matrixId);
+  return result.changes;
+}
+
+/**
  * Get outbox messages (sent by this matrix)
  */
 export function getOutboxMessages(matrixId: string, limit: number = 50): MatrixMessageRecord[] {

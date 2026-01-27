@@ -10,7 +10,7 @@
  * Phase 3: Now supports WebSocket real-time delivery via matrix hub
  */
 
-import { createLearning, db, getInboxMessages, getUnreadCount as dbGetUnreadCount, type MatrixMessageRecord } from '../../src/db';
+import { createLearning, db, getInboxMessages, getUnreadCount as dbGetUnreadCount, clearInbox as dbClearInbox, type MatrixMessageRecord } from '../../src/db';
 import { connectToHub, sendMessage as sendViaHub, sendDirect, broadcast, isConnected, disconnect, waitForFlush } from '../../src/matrix-client';
 import { execSync } from 'child_process';
 import { basename, join } from 'path';
@@ -130,6 +130,7 @@ Usage:
   bun memory message "Hello all"                     # Broadcast to all matrices
   bun memory message "Hello" --to /path/to/clone    # Direct message to specific matrix
   bun memory message --inbox                         # Check your inbox
+  bun memory message --clear                         # Clear your inbox
   bun memory message --unread                        # Count unread (last hour)
 
 This Matrix: ${THIS_MATRIX}
@@ -138,6 +139,7 @@ Examples:
   bun memory message "Index rebuilt, ready for testing"
   bun memory message "Can you test the new feature?" --to /Users/dev/clone-project
   bun memory message --inbox
+  bun memory message --clear
 `);
 }
 
@@ -164,6 +166,17 @@ async function main() {
       console.log(`  ${icon} #${msg.id}${unread} [${msg.from_matrix}] ${formatLocalTime(msg.created_at)}`);
       console.log(`     ${msg.content}`);
       console.log('');
+    }
+    return;
+  }
+
+  // Clear inbox
+  if (args[0] === '--clear' || args[0] === '-c') {
+    const count = dbClearInbox(THIS_MATRIX);
+    if (count === 0) {
+      console.log('\n📭 Inbox already empty\n');
+    } else {
+      console.log(`\n🗑️  Cleared ${count} message(s)\n`);
     }
     return;
   }
