@@ -567,6 +567,259 @@ describe('Chaos Testing - Concurrent Operations', () => {
   });
 });
 
+describe('Chaos Testing - DB Lock Contention', () => {
+  let db: ReturnType<typeof getTempDb>;
+  let missionQueue: MissionQueue;
+
+  beforeEach(() => {
+    createTempDb();
+    db = getTempDb();
+    missionQueue = new MissionQueue(db);
+  });
+
+  afterEach(() => {
+    cleanupTempDb();
+  });
+
+  // Helper: Register agent in DB
+  function registerAgent(id: number, role: AgentRole, model: ModelTier, status = 'idle') {
+    db.prepare(`
+      INSERT OR REPLACE INTO agents (id, role, model, status, pid, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `).run(id, role, model, status, 1000 + id);
+  }
+
+  it('should handle 10 concurrent agent registrations without deadlock', async () => {
+    const AGENT_COUNT = 10;
+    const startTime = Date.now();
+    const results: { agentId: number; success: boolean; duration: number }[] = [];
+
+    // Launch 10 concurrent registrations
+    const promises = Array.from({ length: AGENT_COUNT }, (_, i) => {
+      const agentId = i + 1;
+      const opStart = Date.now();
+
+      return new Promise<void>((resolve) => {
+        try {
+          registerAgent(agentId, 'coder', 'sonnet', 'idle');
+          results.push({ agentId, success: true, duration: Date.now() - opStart });
+        } catch (error) {
+          results.push({ agentId, success: false, duration: Date.now() - opStart });
+        }
+        resolve();
+      });
+    });
+
+    await Promise.all(promises);
+    const totalDuration = Date.now() - startTime;
+
+    // All 10 should succeed (no deadlock)
+    const successCount = results.filter(r => r.success).length;
+    expect(successCount).toBe(AGENT_COUNT);
+
+    // Verify all agents in DB
+    const agentCount = db.prepare(`SELECT COUNT(*) as count FROM agents`).get() as { count: number };
+    expect(agentCount.count).toBe(AGENT_COUNT);
+
+    // Log contention metrics
+    const maxDuration = Math.max(...results.map(r => r.duration));
+    console.log(`[DB Contention] ${AGENT_COUNT} concurrent writes completed in ${totalDuration}ms (max single: ${maxDuration}ms)`);
+  });
+
+  it('should handle concurrent mission enqueue without data loss', async () => {
+    const MISSION_COUNT = 50;
+    const startTime = Date.now();
+    const missionIds: string[] = [];
+
+    // Launch 50 concurrent mission enqueues
+    const promises = Array.from({ length: MISSION_COUNT }, (_, i) => {
+      return new Promise<void>((resolve) => {
+        try {
+          const id = missionQueue.enqueue({
+            prompt: `Concurrent mission ${i}`,
+            context: `Test context ${i}`,
+            priority: ['critical', 'high', 'normal', 'low'][i % 4] as 'critical' | 'high' | 'normal' | 'low',
+            type: 'general',
+          });
+          missionIds.push(id);
+        } catch (error) {
+          console.error(`Mission ${i} failed:`, error);
+        }
+        resolve();
+      });
+    });
+
+    await Promise.all(promises);
+    const totalDuration = Date.now() - startTime;
+
+    // All 50 should be created
+    expect(missionIds.length).toBe(MISSION_COUNT);
+
+    // Verify in DB
+    const queueLength = missionQueue.getQueueLength();
+    expect(queueLength).toBe(MISSION_COUNT);
+
+    console.log(`[DB Contention] ${MISSION_COUNT} concurrent enqueues completed in ${totalDuration}ms`);
+  });
+
+  it('should handle mixed read/write contention', async () => {
+    // Pre-populate with data
+    for (let i = 1; i <= 10; i++) {
+      registerAgent(i, 'coder', 'sonnet', 'idle');
+      missionQueue.enqueue({
+        prompt: `Pre-existing mission ${i}`,
+        context: '',
+        priority: 'normal',
+        type: 'general',
+      });
+    }
+
+    const operations: Promise<{ type: string; success: boolean }>[] = [];
+
+    // Mix of reads and writes
+    for (let i = 0; i < 20; i++) {
+      if (i % 3 === 0) {
+        // Write: update agent status
+        operations.push(new Promise((resolve) => {
+          try {
+            db.prepare(`UPDATE agents SET status = ? WHERE id = ?`).run(
+              i % 2 === 0 ? 'busy' : 'idle',
+              (i % 10) + 1
+            );
+            resolve({ type: 'write', success: true });
+          } catch {
+            resolve({ type: 'write', success: false });
+          }
+        }));
+      } else if (i % 3 === 1) {
+        // Read: query agents
+        operations.push(new Promise((resolve) => {
+          try {
+            db.prepare(`SELECT * FROM agents WHERE status = 'idle'`).all();
+            resolve({ type: 'read', success: true });
+          } catch {
+            resolve({ type: 'read', success: false });
+          }
+        }));
+      } else {
+        // Write: enqueue mission
+        operations.push(new Promise((resolve) => {
+          try {
+            missionQueue.enqueue({
+              prompt: `Concurrent mission ${i}`,
+              context: '',
+              priority: 'normal',
+              type: 'general',
+            });
+            resolve({ type: 'enqueue', success: true });
+          } catch {
+            resolve({ type: 'enqueue', success: false });
+          }
+        }));
+      }
+    }
+
+    const results = await Promise.all(operations);
+
+    // All operations should succeed (WAL mode allows concurrent reads during writes)
+    const failedOps = results.filter(r => !r.success);
+    expect(failedOps.length).toBe(0);
+
+    console.log(`[DB Contention] Mixed R/W: ${results.filter(r => r.type === 'read').length} reads, ${results.filter(r => r.type !== 'read').length} writes - all succeeded`);
+  });
+
+  it('should recover from SQLITE_BUSY without deadlock', async () => {
+    // This test simulates high contention that might trigger SQLITE_BUSY
+    const CONCURRENT_TRANSACTIONS = 20;
+    const results: { success: boolean; retries: number }[] = [];
+
+    const heavyWrite = async (id: number): Promise<{ success: boolean; retries: number }> => {
+      let retries = 0;
+      const maxRetries = 3;
+
+      while (retries < maxRetries) {
+        try {
+          // Heavy transaction: multiple writes
+          db.prepare(`
+            INSERT OR REPLACE INTO agents (id, role, model, status, pid, created_at, updated_at)
+            VALUES (?, 'coder', 'sonnet', 'busy', ?, datetime('now'), datetime('now'))
+          `).run(id, 1000 + id);
+
+          db.prepare(`UPDATE agents SET status = 'idle' WHERE id = ?`).run(id);
+
+          return { success: true, retries };
+        } catch (error: any) {
+          if (error.code === 'SQLITE_BUSY') {
+            retries++;
+            // Exponential backoff
+            await new Promise(r => setTimeout(r, 10 * Math.pow(2, retries)));
+          } else {
+            return { success: false, retries };
+          }
+        }
+      }
+
+      return { success: false, retries };
+    };
+
+    // Launch concurrent heavy writes
+    const promises = Array.from({ length: CONCURRENT_TRANSACTIONS }, (_, i) =>
+      heavyWrite(i + 1).then(result => results.push(result))
+    );
+
+    await Promise.all(promises);
+
+    // Most should succeed (some might need retries but no deadlock)
+    const successCount = results.filter(r => r.success).length;
+    const totalRetries = results.reduce((sum, r) => sum + r.retries, 0);
+
+    // At least 90% success rate
+    expect(successCount / CONCURRENT_TRANSACTIONS).toBeGreaterThanOrEqual(0.9);
+
+    console.log(`[DB Contention] Heavy writes: ${successCount}/${CONCURRENT_TRANSACTIONS} succeeded, ${totalRetries} total retries`);
+  });
+
+  it('should not deadlock on rapid status transitions', async () => {
+    // Register agents
+    for (let i = 1; i <= 5; i++) {
+      registerAgent(i, 'coder', 'sonnet', 'idle');
+    }
+
+    const TRANSITIONS = 100;
+    const statuses = ['idle', 'busy', 'crashed', 'stopping', 'idle'];
+    let completedTransitions = 0;
+
+    const startTime = Date.now();
+
+    // Rapid status transitions across all agents
+    const promises = Array.from({ length: TRANSITIONS }, (_, i) => {
+      return new Promise<void>((resolve) => {
+        const agentId = (i % 5) + 1;
+        const status = statuses[i % statuses.length];
+
+        try {
+          db.prepare(`UPDATE agents SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, agentId);
+          completedTransitions++;
+        } catch (error) {
+          console.error(`Transition ${i} failed:`, error);
+        }
+        resolve();
+      });
+    });
+
+    await Promise.all(promises);
+    const duration = Date.now() - startTime;
+
+    // All transitions should complete
+    expect(completedTransitions).toBe(TRANSITIONS);
+
+    // Should complete reasonably fast (no deadlock stalls)
+    expect(duration).toBeLessThan(5000); // 5 seconds max
+
+    console.log(`[DB Contention] ${TRANSITIONS} status transitions in ${duration}ms (${(TRANSITIONS / duration * 1000).toFixed(0)} ops/sec)`);
+  });
+});
+
 describe('Chaos Recovery Metrics', () => {
   it('should track recovery statistics', () => {
     const metrics = {
