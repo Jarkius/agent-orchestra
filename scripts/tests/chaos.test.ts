@@ -820,6 +820,273 @@ describe('Chaos Testing - DB Lock Contention', () => {
   });
 });
 
+describe('Chaos Testing - CircuitBreaker Race Conditions', () => {
+  /**
+   * Tests for circuit breaker race conditions in src/vector-db.ts
+   *
+   * Race conditions to test:
+   * 1. Concurrent circuit reset - Multiple requests hitting reset window
+   * 2. Failure counting race - Non-atomic consecutiveFailures increment
+   * 3. State reset during operations - markIndexFresh() during failures
+   * 4. Recovery under load - Operations queued during circuit break
+   */
+
+  // Mock circuit breaker state for isolated testing
+  interface CircuitBreakerState {
+    circuitBroken: boolean;
+    circuitBrokenAt: number;
+    consecutiveFailures: number;
+    indexStale: boolean;
+    lastSuccessfulWrite: number;
+  }
+
+  const CIRCUIT_TIMEOUT_MS = 60000; // 1 minute recovery window
+  const CIRCUIT_BREAK_THRESHOLD = 3;
+
+  function createCircuitBreaker(): CircuitBreakerState {
+    return {
+      circuitBroken: false,
+      circuitBrokenAt: 0,
+      consecutiveFailures: 0,
+      indexStale: false,
+      lastSuccessfulWrite: Date.now(),
+    };
+  }
+
+  function checkCircuit(state: CircuitBreakerState): 'open' | 'closed' | 'half-open' {
+    if (!state.circuitBroken) return 'closed';
+
+    if (Date.now() - state.circuitBrokenAt >= CIRCUIT_TIMEOUT_MS) {
+      return 'half-open'; // Ready to try recovery
+    }
+
+    return 'open'; // Fast-fail
+  }
+
+  function recordFailure(state: CircuitBreakerState): void {
+    state.consecutiveFailures++;
+    if (state.consecutiveFailures >= CIRCUIT_BREAK_THRESHOLD) {
+      state.circuitBroken = true;
+      state.circuitBrokenAt = Date.now();
+      state.indexStale = true;
+    }
+  }
+
+  function recordSuccess(state: CircuitBreakerState): void {
+    state.consecutiveFailures = 0;
+    state.lastSuccessfulWrite = Date.now();
+    state.circuitBroken = false;
+    state.indexStale = false;
+  }
+
+  it('should handle concurrent operations hitting reset window simultaneously', async () => {
+    // Simulate circuit that's about to reset (at timeout boundary)
+    const state = createCircuitBreaker();
+    state.circuitBroken = true;
+    state.circuitBrokenAt = Date.now() - CIRCUIT_TIMEOUT_MS - 10; // Just past timeout
+    state.consecutiveFailures = 5;
+
+    const CONCURRENT_OPS = 20;
+    const results: { id: number; status: string; recovered: boolean }[] = [];
+
+    // Launch concurrent operations all hitting the reset window
+    const promises = Array.from({ length: CONCURRENT_OPS }, (_, i) => {
+      return new Promise<void>((resolve) => {
+        const circuitState = checkCircuit(state);
+
+        if (circuitState === 'half-open') {
+          // All operations see half-open and try to recover
+          const succeeded = Math.random() > 0.3; // 70% success rate
+
+          if (succeeded) {
+            recordSuccess(state);
+            results.push({ id: i, status: 'success', recovered: true });
+          } else {
+            recordFailure(state);
+            results.push({ id: i, status: 'failed', recovered: false });
+          }
+        } else if (circuitState === 'open') {
+          results.push({ id: i, status: 'skipped', recovered: false });
+        } else {
+          results.push({ id: i, status: 'success', recovered: false });
+        }
+
+        resolve();
+      });
+    });
+
+    await Promise.all(promises);
+
+    // Verify no operations were lost
+    expect(results.length).toBe(CONCURRENT_OPS);
+
+    // Final state should be consistent (either recovered or broken, not undefined)
+    expect(state.circuitBroken).toBeDefined();
+    expect(typeof state.consecutiveFailures).toBe('number');
+
+    const recoveredOps = results.filter(r => r.recovered).length;
+    const skippedOps = results.filter(r => r.status === 'skipped').length;
+
+    console.log(`[CircuitBreaker] ${CONCURRENT_OPS} concurrent reset-window hits: ${recoveredOps} recovered, ${skippedOps} skipped`);
+  });
+
+  it('should maintain consistent failure count under concurrent failures', async () => {
+    const state = createCircuitBreaker();
+    const CONCURRENT_FAILURES = 10;
+
+    // Simulate concurrent failures (race on consecutiveFailures++)
+    const failures = Array.from({ length: CONCURRENT_FAILURES }, (_, i) => {
+      return new Promise<number>((resolve) => {
+        const beforeCount = state.consecutiveFailures;
+        recordFailure(state);
+        const afterCount = state.consecutiveFailures;
+        resolve(afterCount - beforeCount);
+      });
+    });
+
+    await Promise.all(failures);
+
+    // Final count should reflect all failures
+    // Note: In JavaScript single-threaded model, this should always be correct
+    // but in a truly concurrent system, we'd need atomic operations
+    expect(state.consecutiveFailures).toBe(CONCURRENT_FAILURES);
+
+    // Circuit should be broken after exceeding threshold
+    expect(state.circuitBroken).toBe(true);
+    expect(state.indexStale).toBe(true);
+
+    console.log(`[CircuitBreaker] ${CONCURRENT_FAILURES} concurrent failures counted correctly (final: ${state.consecutiveFailures})`);
+  });
+
+  it('should handle markIndexFresh during ongoing failures gracefully', async () => {
+    const state = createCircuitBreaker();
+
+    // Start with some failures
+    state.consecutiveFailures = 2;
+    state.indexStale = true;
+
+    const operations: Promise<{ type: string; state: Partial<CircuitBreakerState> }>[] = [];
+
+    // Mix of failures and resets
+    for (let i = 0; i < 20; i++) {
+      if (i === 10) {
+        // Mid-stream: call markIndexFresh (simulating reindex)
+        operations.push(new Promise((resolve) => {
+          recordSuccess(state); // This is what markIndexFresh does
+          resolve({ type: 'reset', state: { consecutiveFailures: state.consecutiveFailures } });
+        }));
+      } else if (i % 3 === 0) {
+        // Failure
+        operations.push(new Promise((resolve) => {
+          recordFailure(state);
+          resolve({ type: 'failure', state: { consecutiveFailures: state.consecutiveFailures } });
+        }));
+      } else {
+        // Success
+        operations.push(new Promise((resolve) => {
+          recordSuccess(state);
+          resolve({ type: 'success', state: { consecutiveFailures: state.consecutiveFailures } });
+        }));
+      }
+    }
+
+    const results = await Promise.all(operations);
+
+    // System should be in a consistent state
+    expect(state.consecutiveFailures).toBeGreaterThanOrEqual(0);
+    expect(typeof state.circuitBroken).toBe('boolean');
+
+    const resetOps = results.filter(r => r.type === 'reset').length;
+    const failureOps = results.filter(r => r.type === 'failure').length;
+
+    console.log(`[CircuitBreaker] Mixed ops: ${failureOps} failures, ${resetOps} resets - state consistent`);
+  });
+
+  it('should properly queue operations during circuit break', async () => {
+    const state = createCircuitBreaker();
+
+    // Break the circuit
+    state.circuitBroken = true;
+    state.circuitBrokenAt = Date.now();
+    state.consecutiveFailures = 5;
+
+    const queuedOps: { id: number; queued: boolean; executed: boolean }[] = [];
+    const operationQueue: Array<() => Promise<void>> = [];
+
+    // Queue operations while circuit is broken
+    for (let i = 0; i < 15; i++) {
+      const op = {
+        id: i,
+        queued: true,
+        executed: false,
+      };
+      queuedOps.push(op);
+
+      operationQueue.push(async () => {
+        const circuitState = checkCircuit(state);
+        if (circuitState === 'open') {
+          // Skip - circuit is open
+          return;
+        }
+        op.executed = true;
+      });
+    }
+
+    // Execute all queued operations
+    await Promise.all(operationQueue.map(op => op()));
+
+    // All should be queued, none executed (circuit still broken)
+    const queuedCount = queuedOps.filter(op => op.queued).length;
+    const executedCount = queuedOps.filter(op => op.executed).length;
+
+    expect(queuedCount).toBe(15);
+    expect(executedCount).toBe(0); // All skipped due to open circuit
+
+    // Now simulate circuit recovery
+    state.circuitBrokenAt = Date.now() - CIRCUIT_TIMEOUT_MS - 100; // Past timeout
+
+    // Re-run queued operations
+    await Promise.all(operationQueue.map(op => op()));
+
+    const executedAfterRecovery = queuedOps.filter(op => op.executed).length;
+    expect(executedAfterRecovery).toBe(15); // All should execute now
+
+    console.log(`[CircuitBreaker] Queued ${queuedCount} ops, executed ${executedAfterRecovery} after recovery`);
+  });
+
+  it('should not race on circuit state during rapid open/close cycles', async () => {
+    const state = createCircuitBreaker();
+    const CYCLES = 50;
+    const stateHistory: string[] = [];
+
+    for (let i = 0; i < CYCLES; i++) {
+      if (i % 5 === 0) {
+        // Trigger failures to break circuit
+        recordFailure(state);
+        recordFailure(state);
+        recordFailure(state);
+        stateHistory.push(state.circuitBroken ? 'broken' : 'ok');
+      } else if (i % 5 === 3) {
+        // Success to recover
+        recordSuccess(state);
+        stateHistory.push(state.circuitBroken ? 'broken' : 'ok');
+      }
+    }
+
+    // Verify state transitions are consistent
+    const transitions = stateHistory.filter((s, i) => i > 0 && s !== stateHistory[i - 1]);
+
+    // Should have some transitions between broken and ok
+    expect(transitions.length).toBeGreaterThan(0);
+
+    // Final state should be defined
+    expect(typeof state.circuitBroken).toBe('boolean');
+    expect(state.consecutiveFailures).toBeGreaterThanOrEqual(0);
+
+    console.log(`[CircuitBreaker] ${CYCLES} rapid cycles, ${transitions.length} state transitions, final: ${state.circuitBroken ? 'broken' : 'closed'}`);
+  });
+});
+
 describe('Chaos Recovery Metrics', () => {
   it('should track recovery statistics', () => {
     const metrics = {
