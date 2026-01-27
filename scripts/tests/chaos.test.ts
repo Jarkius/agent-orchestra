@@ -1341,6 +1341,273 @@ describe('Chaos Testing - SSE Backpressure', () => {
     // p50 should be fast, p99 can be slow but bounded
     expect(p50).toBeLessThan(20);
     expect(p99).toBeLessThan(150);
+
+    console.log(`[SSE Backpressure] ${numClients} clients, p50: ${p50}ms, p99: ${p99}ms`);
+  });
+});
+
+// ============================================================
+// memory-matrix contribution - Message Deduplication
+// ============================================================
+
+describe('Chaos Testing - Message Duplication Prevention', () => {
+  /**
+   * Tests for message deduplication under network partition scenarios
+   *
+   * Scenarios:
+   * 1. Network partition during send - message stuck in 'sending' state
+   * 2. Reconnect retry race - retry starts while original still pending
+   * 3. In-flight timeout causing potential duplicate retry
+   * 4. Concurrent senders trying to send same pending message
+   * 5. Message ID collision prevention
+   */
+
+  // Mock message tracking state (mirrors matrix-daemon.ts)
+  interface MessageState {
+    id: string;
+    content: string;
+    status: 'pending' | 'sending' | 'sent' | 'failed';
+    retryCount: number;
+    createdAt: number;
+    sentAt?: number;
+  }
+
+  const IN_FLIGHT_TIMEOUT_MS = 5000;
+  const MAX_RETRIES = 3;
+
+  function createMessageStore(): {
+    messages: Map<string, MessageState>;
+    inFlight: Map<string, number>;
+    delivered: Set<string>;
+  } {
+    return {
+      messages: new Map(),
+      inFlight: new Map(),
+      delivered: new Set(),
+    };
+  }
+
+  function generateMessageId(matrixId: string): string {
+    return `${matrixId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function queueMessage(store: ReturnType<typeof createMessageStore>, content: string, matrixId: string): string {
+    const id = generateMessageId(matrixId);
+    store.messages.set(id, {
+      id,
+      content,
+      status: 'pending',
+      retryCount: 0,
+      createdAt: Date.now(),
+    });
+    return id;
+  }
+
+  function attemptSend(
+    store: ReturnType<typeof createMessageStore>,
+    messageId: string,
+    simulateFailure: boolean = false
+  ): { sent: boolean; duplicate: boolean } {
+    const msg = store.messages.get(messageId);
+    if (!msg) return { sent: false, duplicate: false };
+
+    // Check if already delivered (deduplication)
+    if (store.delivered.has(messageId)) {
+      return { sent: false, duplicate: true };
+    }
+
+    // Check if already in-flight
+    if (store.inFlight.has(messageId)) {
+      const sentAt = store.inFlight.get(messageId)!;
+      if (Date.now() - sentAt < IN_FLIGHT_TIMEOUT_MS) {
+        // Still in flight, don't duplicate
+        return { sent: false, duplicate: true };
+      }
+      // Timeout expired, allow retry
+    }
+
+    // Mark as sending and track in-flight
+    msg.status = 'sending';
+    store.inFlight.set(messageId, Date.now());
+
+    if (simulateFailure) {
+      // Simulate network failure
+      msg.status = 'pending';
+      msg.retryCount++;
+      store.inFlight.delete(messageId);
+      return { sent: false, duplicate: false };
+    }
+
+    // Successful send
+    msg.status = 'sent';
+    msg.sentAt = Date.now();
+    store.inFlight.delete(messageId);
+    store.delivered.add(messageId);
+
+    return { sent: true, duplicate: false };
+  }
+
+  it('should prevent duplicate sends during network partition', async () => {
+    const store = createMessageStore();
+    const messageId = queueMessage(store, 'Test message', 'test-matrix');
+
+    // First send attempt starts
+    const msg = store.messages.get(messageId)!;
+    msg.status = 'sending';
+    store.inFlight.set(messageId, Date.now());
+
+    // Simulate concurrent retry attempts while first is "in flight"
+    const retryAttempts = Array.from({ length: 5 }, () => {
+      return attemptSend(store, messageId);
+    });
+
+    // All should be blocked as duplicates
+    const duplicates = retryAttempts.filter(r => r.duplicate).length;
+    expect(duplicates).toBe(5);
+
+    // Only one message in the system
+    expect(store.messages.size).toBe(1);
+
+    console.log(`[MessageDedup] Network partition: 5 concurrent retries blocked as duplicates`);
+  });
+
+  it('should allow retry after in-flight timeout expires', async () => {
+    const store = createMessageStore();
+    const messageId = queueMessage(store, 'Test message', 'test-matrix');
+
+    // First send "hangs" - set in-flight to past timeout
+    const msg = store.messages.get(messageId)!;
+    msg.status = 'sending';
+    store.inFlight.set(messageId, Date.now() - IN_FLIGHT_TIMEOUT_MS - 100);
+
+    // Now retry should be allowed
+    const retryResult = attemptSend(store, messageId);
+
+    expect(retryResult.sent).toBe(true);
+    expect(retryResult.duplicate).toBe(false);
+    expect(store.delivered.has(messageId)).toBe(true);
+
+    console.log(`[MessageDedup] In-flight timeout: retry allowed after ${IN_FLIGHT_TIMEOUT_MS}ms`);
+  });
+
+  it('should prevent re-sending already delivered messages', async () => {
+    const store = createMessageStore();
+    const messageId = queueMessage(store, 'Test message', 'test-matrix');
+
+    // Successfully send
+    const firstSend = attemptSend(store, messageId);
+    expect(firstSend.sent).toBe(true);
+
+    // Attempt to re-send (simulating crash recovery scan)
+    const resendAttempts = Array.from({ length: 10 }, () => {
+      return attemptSend(store, messageId);
+    });
+
+    // All should be blocked as duplicates
+    const duplicates = resendAttempts.filter(r => r.duplicate).length;
+    expect(duplicates).toBe(10);
+
+    // Message was only delivered once
+    expect(store.delivered.size).toBe(1);
+
+    console.log(`[MessageDedup] Delivered tracking: 10 re-send attempts blocked`);
+  });
+
+  it('should handle concurrent senders on same pending message', async () => {
+    const store = createMessageStore();
+    const messageId = queueMessage(store, 'Contested message', 'test-matrix');
+
+    // Simulate 3 concurrent processes trying to send the same message
+    const results: { sender: number; sent: boolean; duplicate: boolean }[] = [];
+
+    // First sender starts
+    store.inFlight.set(messageId, Date.now());
+    store.messages.get(messageId)!.status = 'sending';
+    results.push({ sender: 1, sent: false, duplicate: false }); // In progress
+
+    // Senders 2 and 3 try concurrently
+    for (let i = 2; i <= 3; i++) {
+      const result = attemptSend(store, messageId);
+      results.push({ sender: i, ...result });
+    }
+
+    // Sender 1 completes successfully
+    store.messages.get(messageId)!.status = 'sent';
+    store.inFlight.delete(messageId);
+    store.delivered.add(messageId);
+    results[0].sent = true;
+
+    // Count successful sends (should be 1)
+    const successfulSends = results.filter(r => r.sent).length;
+    expect(successfulSends).toBe(1);
+
+    // Count blocked duplicates (should be 2)
+    const blockedDuplicates = results.filter(r => r.duplicate).length;
+    expect(blockedDuplicates).toBe(2);
+
+    console.log(`[MessageDedup] Concurrent senders: 1 success, 2 blocked`);
+  });
+
+  it('should generate unique message IDs under high concurrency', async () => {
+    const MESSAGE_COUNT = 100;
+    const CONCURRENT_SENDERS = 5;
+    const allIds = new Set<string>();
+    const collisions: string[] = [];
+
+    // Simulate multiple matrices sending concurrently
+    const promises = Array.from({ length: CONCURRENT_SENDERS }, (_, senderIdx) => {
+      return new Promise<string[]>((resolve) => {
+        const senderIds: string[] = [];
+        for (let i = 0; i < MESSAGE_COUNT; i++) {
+          const id = generateMessageId(`matrix-${senderIdx}`);
+          if (allIds.has(id)) {
+            collisions.push(id);
+          } else {
+            allIds.add(id);
+          }
+          senderIds.push(id);
+        }
+        resolve(senderIds);
+      });
+    });
+
+    await Promise.all(promises);
+
+    // Should have generated unique IDs
+    expect(collisions.length).toBe(0);
+    expect(allIds.size).toBe(MESSAGE_COUNT * CONCURRENT_SENDERS);
+
+    console.log(`[MessageDedup] ID generation: ${allIds.size} unique IDs, 0 collisions`);
+  });
+
+  it('should respect max retry limit', async () => {
+    const store = createMessageStore();
+    const messageId = queueMessage(store, 'Failing message', 'test-matrix');
+
+    let attempts = 0;
+    const results: { attempt: number; sent: boolean; retryCount: number }[] = [];
+
+    // Keep retrying until max retries exceeded
+    while (attempts < MAX_RETRIES + 2) {
+      attempts++;
+      const msg = store.messages.get(messageId)!;
+
+      if (msg.retryCount >= MAX_RETRIES) {
+        msg.status = 'failed';
+        results.push({ attempt: attempts, sent: false, retryCount: msg.retryCount });
+        break;
+      }
+
+      const result = attemptSend(store, messageId, true); // Always fails
+      results.push({ attempt: attempts, sent: result.sent, retryCount: msg.retryCount });
+    }
+
+    // Should have stopped at max retries
+    const finalMsg = store.messages.get(messageId)!;
+    expect(finalMsg.retryCount).toBe(MAX_RETRIES);
+    expect(finalMsg.status).toBe('failed');
+
+    console.log(`[MessageDedup] Max retries: stopped after ${finalMsg.retryCount} attempts`);
   });
 });
 
