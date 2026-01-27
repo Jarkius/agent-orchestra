@@ -224,11 +224,22 @@ export class CrossSessionAnalyzer {
     const tagCounts = new Map<string, string[]>();
     for (const session of sessions) {
       if (session.tags) {
-        const tags = JSON.parse(session.tags) as string[];
-        for (const tag of tags) {
-          const sessionIds = tagCounts.get(tag) || [];
-          sessionIds.push(session.id!);
-          tagCounts.set(tag, sessionIds);
+        try {
+          // Handle both array and JSON string formats
+          const tags = Array.isArray(session.tags)
+            ? session.tags
+            : (typeof session.tags === 'string' && session.tags.trim()
+              ? JSON.parse(session.tags)
+              : []) as string[];
+          for (const tag of tags) {
+            if (typeof tag === 'string') {
+              const sessionIds = tagCounts.get(tag) || [];
+              sessionIds.push(session.id!);
+              tagCounts.set(tag, sessionIds);
+            }
+          }
+        } catch {
+          // Skip invalid JSON tags
         }
       }
     }
