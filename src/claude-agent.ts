@@ -264,9 +264,11 @@ export async function runClaudeTask(
       'Edit',        // File editing
       'Glob',        // File pattern matching
       'Grep',        // Content search
+      'mcp__agent-orchestrator__*',  // All MCP orchestrator tools
     ].join(',');
 
-    const result = await $`claude -p ${fullPrompt} --output-format text --allowedTools ${allowedTools}`
+    // Use bypassPermissions to allow autonomous execution without plan mode prompts
+    const result = await $`claude -p ${fullPrompt} --output-format text --allowedTools ${allowedTools} --permission-mode bypassPermissions`
       .cwd(cwd)
       .text();
 

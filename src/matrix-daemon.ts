@@ -81,8 +81,13 @@ let authStopped = false; // True when max auth failures reached
 const MAX_AUTH_FAILURES = 5;
 const AUTH_BACKOFF_BASE = 5000; // 5s base, doubles each failure (max 60s)
 
-const messageQueue: Array<{ type: 'broadcast' | 'direct'; content: string; to?: string; id?: string }> = [];
+const messageQueue: Array<{ type: 'broadcast' | 'direct'; content: string; to?: string; id?: string; seq?: number }> = [];
 const receivedMessages: Array<{ from: string; content: string; timestamp: string; type: string; id?: string }> = [];
+
+// In-flight message tracking for crash recovery
+// Messages in 'sending' state for too long get reset to 'pending'
+const IN_FLIGHT_TIMEOUT_MS = 5000;  // 5 seconds to consider send failed
+const inFlightMessages = new Map<string, number>();  // messageId → sendTimestamp
 
 // SSE clients for real-time streaming
 import type { ServerResponse } from 'http';
@@ -402,8 +407,12 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
     return false;
   }
 
-  // Two-phase commit: mark as 'sending' before transmission
-  // This prevents duplicates if crash occurs after ws.send but before markMessageSent
+  // Track this message as in-flight before any state change
+  // This allows crash recovery to detect stuck messages
+  const sendTimestamp = Date.now();
+  inFlightMessages.set(messageId, sendTimestamp);
+
+  // Mark as 'sending' - indicates transmission in progress
   markMessageSending(messageId);
 
   try {
@@ -417,8 +426,16 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
 
     ws.send(JSON.stringify(payload));
 
-    // Mark as sent (second phase of two-phase commit)
+    // Mark as sent IMMEDIATELY after ws.send returns (before confirmation)
+    // This is safe because:
+    // 1. ws.send() is synchronous for buffering
+    // 2. Hub will receive and process in-order
+    // 3. If connection drops, we'll detect on next send/heartbeat
     markMessageSent(messageId);
+
+    // Remove from in-flight tracking (successfully committed)
+    inFlightMessages.delete(messageId);
+
     console.log(`[Daemon] Sent ${type} #${sequenceNumber}: ${content.substring(0, 50)}...`);
 
     // Push to SSE clients so watch shows outgoing messages too
@@ -443,9 +460,36 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
     return true;
   } catch (error) {
     console.error('[Daemon] Send failed:', error);
+    // Remove from in-flight tracking
+    inFlightMessages.delete(messageId);
     // Mark back to 'pending' for retry (was 'sending')
     markMessagePending(messageId);
     return false;
+  }
+}
+
+/**
+ * Recover stuck 'sending' messages on startup
+ * Messages stuck in 'sending' state are from crashed sends - reset to pending
+ */
+function recoverStuckMessages(): void {
+  const pending = getPendingMessages(MAX_RETRIES);
+  const stuckSending = pending.filter(msg => msg.status === 'sending');
+
+  for (const msg of stuckSending) {
+    // Skip if this message is currently in-flight (we're tracking it)
+    if (inFlightMessages.has(msg.message_id)) {
+      const sendTime = inFlightMessages.get(msg.message_id)!;
+      if (Date.now() - sendTime < IN_FLIGHT_TIMEOUT_MS) {
+        continue;  // Still in-flight, don't reset yet
+      }
+      // In-flight too long, remove tracking
+      inFlightMessages.delete(msg.message_id);
+    }
+
+    // Reset to pending for retry
+    console.log(`[Daemon] Recovering stuck message ${msg.message_id} (was 'sending')`);
+    markMessagePending(msg.message_id);
   }
 }
 
@@ -453,8 +497,29 @@ function sendMessage(type: 'broadcast' | 'direct', content: string, to?: string,
 function retryPendingMessages(): void {
   if (!connected) return;
 
+  // First, check for in-flight messages that have timed out
+  const now = Date.now();
+  for (const [msgId, sendTime] of inFlightMessages.entries()) {
+    if (now - sendTime > IN_FLIGHT_TIMEOUT_MS) {
+      console.log(`[Daemon] Message ${msgId} timed out in-flight, resetting to pending`);
+      inFlightMessages.delete(msgId);
+      markMessagePending(msgId);
+    }
+  }
+
   const pending = getPendingMessages(MAX_RETRIES);
   for (const msg of pending) {
+    // Skip messages currently in-flight (prevents duplicates)
+    if (inFlightMessages.has(msg.message_id)) {
+      continue;
+    }
+
+    // Skip 'sending' messages (may be in-flight from another process)
+    // These get recovered by recoverStuckMessages on startup
+    if (msg.status === 'sending') {
+      continue;
+    }
+
     const retryCount = incrementMessageRetry(msg.message_id);
 
     if (retryCount >= MAX_RETRIES) {
@@ -842,6 +907,10 @@ async function start(): Promise<void> {
 
   writePidFile();
   startHttpServer();
+
+  // Recover any messages stuck in 'sending' state from previous crash
+  recoverStuckMessages();
+
   await connectToHub();
 
   // Handle shutdown signals

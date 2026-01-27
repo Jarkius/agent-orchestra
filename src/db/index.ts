@@ -1338,10 +1338,12 @@ export function logMessage(
     [agentId, direction, messageType, content, source || null]
   );
 
-  // Auto-embed message for semantic search (non-blocking)
+  // Auto-embed message for semantic search (non-blocking, batched)
+  // Uses the batched embedding queue for better throughput
   getVectorDb().then(vdb => {
-    if (vdb.isInitialized && vdb.isInitialized()) {
-      vdb.embedMessage(
+    if (vdb.isInitialized && vdb.isInitialized() && vdb.queueMessageEmbed) {
+      // Use batched embedding for better performance
+      vdb.queueMessageEmbed(
         `msg_${result.lastInsertRowid}`,
         content,
         direction,
@@ -1351,7 +1353,7 @@ export function logMessage(
           source: source || undefined,
           created_at: new Date().toISOString(),
         }
-      ).catch(() => {}); // Silently ignore embedding errors
+      );
     }
   }).catch(() => {}); // Silently ignore module errors
 }
@@ -1425,6 +1427,93 @@ export function startTask(taskId: string) {
     `UPDATE agent_tasks SET status = 'processing', started_at = CURRENT_TIMESTAMP WHERE id = ?`,
     [taskId]
   );
+}
+
+/**
+ * Atomically claim a task for execution.
+ *
+ * This function provides idempotent task claiming to prevent duplicate execution
+ * when tasks may arrive via multiple delivery paths (WebSocket + file polling).
+ *
+ * @param taskId - The task ID to claim
+ * @param agentId - The agent attempting to claim
+ * @param executionId - Unique execution ID for this claim attempt
+ * @returns { claimed: true } if successfully claimed, { claimed: false, reason } if not
+ *
+ * A task can only be claimed if:
+ * 1. It exists and is in 'queued' status
+ * 2. It has no existing execution_id (hasn't been claimed before)
+ * 3. It is assigned to the claiming agent
+ */
+export function claimTask(
+  taskId: string,
+  agentId: number,
+  executionId: string
+): { claimed: boolean; reason?: string; currentStatus?: string } {
+  // Use a single UPDATE with WHERE clause to make the claim atomic
+  // Only updates if task is in claimable state
+  const result = db.run(
+    `UPDATE agent_tasks
+     SET status = 'processing',
+         execution_id = ?,
+         started_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+       AND agent_id = ?
+       AND status = 'queued'
+       AND execution_id IS NULL`,
+    [executionId, taskId, agentId]
+  );
+
+  if (result.changes > 0) {
+    logEvent(agentId, 'task_claimed', { task_id: taskId, execution_id: executionId });
+    return { claimed: true };
+  }
+
+  // Claim failed - check why
+  const task = db.query(
+    `SELECT status, execution_id, agent_id FROM agent_tasks WHERE id = ?`
+  ).get(taskId) as { status: string; execution_id: string | null; agent_id: number } | null;
+
+  if (!task) {
+    return { claimed: false, reason: 'task_not_found' };
+  }
+
+  if (task.agent_id !== agentId) {
+    return { claimed: false, reason: 'wrong_agent', currentStatus: task.status };
+  }
+
+  if (task.execution_id) {
+    // Already claimed (possibly by this agent via another path)
+    if (task.execution_id === executionId) {
+      // Same execution - idempotent, treat as success
+      return { claimed: true };
+    }
+    return { claimed: false, reason: 'already_claimed', currentStatus: task.status };
+  }
+
+  if (task.status !== 'queued') {
+    return { claimed: false, reason: 'invalid_status', currentStatus: task.status };
+  }
+
+  return { claimed: false, reason: 'unknown' };
+}
+
+/**
+ * Release a claimed task (e.g., if agent crashes before completion)
+ * Allows the task to be re-claimed for retry
+ */
+export function releaseTask(taskId: string, executionId: string): boolean {
+  const result = db.run(
+    `UPDATE agent_tasks
+     SET status = 'queued',
+         execution_id = NULL,
+         started_at = NULL
+     WHERE id = ?
+       AND execution_id = ?`,
+    [taskId, executionId]
+  );
+
+  return result.changes > 0;
 }
 
 export function completeTask(

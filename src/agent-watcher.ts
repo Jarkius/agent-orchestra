@@ -16,6 +16,9 @@ import {
   createSession,
   createSessionLink,
   linkTaskToSession,
+  claimTask,
+  completeTask,
+  incrementAgentStats,
   type SessionRecord,
   type Visibility,
 } from "./db";
@@ -68,6 +71,14 @@ interface Task {
   working_dir?: string;
   session_id?: string;
   auto_save_session?: boolean;
+}
+
+/**
+ * Generate a unique execution ID for task claiming
+ * Includes agent ID, timestamp, and random component for uniqueness
+ */
+function generateExecutionId(): string {
+  return `exec_${AGENT_ID}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function log(message: string) {
@@ -175,7 +186,19 @@ async function processTask(taskFile: string): Promise<void> {
     const content = await readFile(filePath, "utf-8");
     const task: Task = JSON.parse(content);
 
-    log(`Received task: ${task.id}`);
+    // Atomic claim: prevent duplicate execution from dual delivery paths
+    const executionId = generateExecutionId();
+    const claimResult = claimTask(task.id, AGENT_ID, executionId);
+
+    if (!claimResult.claimed) {
+      // Task already claimed (possibly via WebSocket), skip
+      log(`[File] Task ${task.id} already claimed (${claimResult.reason}), skipping`);
+      // Delete the file since task is being handled elsewhere
+      await unlink(filePath);
+      return;
+    }
+
+    log(`Received task: ${task.id} (claimed via file, exec: ${executionId})`);
     console.log(`${COLOR}┌─ TASK ──────────────────────────────────────────────┐${COLORS.reset}`);
     console.log(`${COLORS.dim}${task.prompt.substring(0, 200)}${task.prompt.length > 200 ? "..." : ""}${COLORS.reset}`);
     console.log(`${COLOR}└──────────────────────────────────────────────────────┘${COLORS.reset}`);
@@ -223,6 +246,12 @@ async function processTask(taskFile: string): Promise<void> {
       console.log(`${COLORS.dim}... (${result.output.length} chars total)${COLORS.reset}`);
     }
     console.log(`${COLOR}└──────────────────────────────────────────────────────┘${COLORS.reset}`);
+
+    // Update task status in database
+    completeTask(task.id, result.output, result.duration_ms || 0);
+
+    // Update agent stats
+    incrementAgentStats(AGENT_ID, result.status === "completed", result.duration_ms || 0);
 
     // Update status
     if (result.status === "completed") {
@@ -291,7 +320,17 @@ async function getWsToken(): Promise<string | null> {
  * Process a task received via WebSocket
  */
 async function processWsTask(task: Task): Promise<void> {
-  log(`[WS] Received task: ${task.id}`);
+  // Atomic claim: prevent duplicate execution from dual delivery paths
+  const executionId = generateExecutionId();
+  const claimResult = claimTask(task.id, AGENT_ID, executionId);
+
+  if (!claimResult.claimed) {
+    // Task already claimed (possibly via file polling), skip
+    log(`[WS] Task ${task.id} already claimed (${claimResult.reason}), skipping`);
+    return;
+  }
+
+  log(`[WS] Received task: ${task.id} (claimed via WS, exec: ${executionId})`);
   console.log(`${COLOR}┌─ TASK (WebSocket) ───────────────────────────────────┐${COLORS.reset}`);
   console.log(`${COLORS.dim}${task.prompt.substring(0, 200)}${task.prompt.length > 200 ? "..." : ""}${COLORS.reset}`);
   console.log(`${COLOR}└──────────────────────────────────────────────────────┘${COLORS.reset}`);
@@ -355,6 +394,12 @@ async function processWsTask(task: Task): Promise<void> {
     console.log(`${COLORS.dim}... (${result.output.length} chars total)${COLORS.reset}`);
   }
   console.log(`${COLOR}└──────────────────────────────────────────────────────┘${COLORS.reset}`);
+
+  // Update task status in database
+  completeTask(task.id, result.output, result.duration_ms || 0);
+
+  // Update agent stats
+  incrementAgentStats(AGENT_ID, result.status === "completed", result.duration_ms || 0);
 
   // Update status
   if (result.status === "completed") {

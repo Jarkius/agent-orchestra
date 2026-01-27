@@ -135,6 +135,167 @@ export function chunkContentAdaptive(content: string, category?: string): string
 // Write queue - serializes all ChromaDB writes to prevent concurrent access corruption
 const writeQueue = new PQueue({ concurrency: 1 });
 
+// ============ EMBEDDING BATCHER ============
+// Batches embedding requests to reduce ChromaDB overhead
+// Instead of individual writes, accumulates items and flushes periodically
+
+interface BatchItem {
+  collection: 'messagesIn' | 'messagesOut' | 'tasks' | 'results' | 'context';
+  id: string;
+  document: string;
+  metadata: Record<string, unknown>;
+}
+
+const BATCH_SIZE = 20;           // Flush when batch reaches this size
+const BATCH_TIMEOUT_MS = 1000;   // Flush after this delay even if batch not full
+
+class EmbeddingBatcher {
+  private batch: BatchItem[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushPromise: Promise<void> | null = null;
+
+  /**
+   * Add an item to the batch. Returns immediately (non-blocking).
+   * Items are flushed when batch is full or timeout expires.
+   */
+  add(item: BatchItem): void {
+    this.batch.push(item);
+
+    // Start timer on first item
+    if (this.batch.length === 1 && !this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flush(), BATCH_TIMEOUT_MS);
+    }
+
+    // Flush immediately if batch is full
+    if (this.batch.length >= BATCH_SIZE) {
+      this.flush();
+    }
+  }
+
+  /**
+   * Force flush the current batch
+   */
+  async flush(): Promise<void> {
+    // Clear timer
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+
+    // Nothing to flush
+    if (this.batch.length === 0) return;
+
+    // Take batch and clear
+    const items = this.batch;
+    this.batch = [];
+
+    // Group by collection for batch inserts
+    const byCollection = new Map<string, BatchItem[]>();
+    for (const item of items) {
+      const existing = byCollection.get(item.collection) || [];
+      existing.push(item);
+      byCollection.set(item.collection, existing);
+    }
+
+    // Flush each collection batch
+    this.flushPromise = (async () => {
+      const cols = ensureInitialized();
+
+      for (const [collectionName, collItems] of byCollection) {
+        // Get the actual collection
+        let collection: Collection;
+        switch (collectionName) {
+          case 'messagesIn': collection = cols.messagesIn; break;
+          case 'messagesOut': collection = cols.messagesOut; break;
+          case 'tasks': collection = cols.tasks; break;
+          case 'results': collection = cols.results; break;
+          case 'context': collection = cols.context; break;
+          default: continue;
+        }
+
+        await writeQueue.add(async () => {
+          try {
+            // Batch add all items at once
+            await collection.add({
+              ids: collItems.map(i => i.id),
+              documents: collItems.map(i => i.document),
+              metadatas: collItems.map(i => i.metadata),
+            });
+
+            // Reset failure tracking on success
+            consecutiveFailures = 0;
+            lastSuccessfulWrite = Date.now();
+            indexStale = false;
+          } catch (error) {
+            // Track failures but don't throw - embedding is non-critical
+            consecutiveFailures++;
+            indexStale = true;
+            console.error(`[EmbeddingBatcher] Failed to flush ${collItems.length} items to ${collectionName}:`, error);
+          }
+        });
+      }
+    })();
+
+    await this.flushPromise;
+  }
+
+  /**
+   * Wait for any pending flush to complete
+   */
+  async waitForFlush(): Promise<void> {
+    if (this.flushPromise) {
+      await this.flushPromise;
+    }
+  }
+
+  /**
+   * Get current batch size (for monitoring)
+   */
+  get pendingCount(): number {
+    return this.batch.length;
+  }
+}
+
+// Singleton batcher instance
+const embeddingBatcher = new EmbeddingBatcher();
+
+/**
+ * Queue a message for batched embedding (non-blocking)
+ * Use this instead of direct embedMessage calls for high-throughput scenarios
+ */
+export function queueMessageEmbed(
+  messageId: string,
+  content: string,
+  direction: 'inbound' | 'outbound',
+  metadata: {
+    agent_id: number;
+    message_type: string;
+    source?: string;
+    created_at: string;
+  }
+): void {
+  embeddingBatcher.add({
+    collection: direction === 'inbound' ? 'messagesIn' : 'messagesOut',
+    id: messageId,
+    document: content,
+    metadata: { ...metadata, direction },
+  });
+}
+
+/**
+ * Force flush pending embeddings (useful before shutdown)
+ */
+export async function flushPendingEmbeddings(): Promise<void> {
+  await embeddingBatcher.flush();
+}
+
+/**
+ * Get count of pending embeddings
+ */
+export function getPendingEmbeddingCount(): number {
+  return embeddingBatcher.pendingCount;
+}
+
 // ChromaDB client - connects to server at localhost:8100
 // Start server with: chroma run --path ~/.chromadb_data --port 8100
 let client: ChromaClient | null = null;
