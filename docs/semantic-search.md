@@ -380,5 +380,5 @@ curl http://localhost:8100/api/v2/heartbeat
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CHROMA_URL` | `http://localhost:8100` | ChromaDB URL |
-| `EMBEDDING_MODEL` | `nomic-embed-text-v1.5` | Embedding model |
+| `EMBEDDING_MODEL` | `bge-m3` | Embedding model (1024 dims, 8192 tokens) |
 | `INDEXER_DAEMON_PORT` | `37889` | Daemon HTTP API port |
