@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "postinstall": "bun run scripts/postinstall.ts",
     "download-model": "bun run scripts/download-embedding-model.ts",
     "test:embeddings": "bun run scripts/test-embeddings.ts",
     "test:transformers": "bun run scripts/test-embeddings.ts transformers",
