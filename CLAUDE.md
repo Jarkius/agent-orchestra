@@ -28,6 +28,9 @@ bun memory task                            # List tasks
 bun memory recall "query"                  # Search sessions
 bun memory learn ./file.md                 # Capture knowledge
 bun memory message "Hello"                 # Cross-matrix message
+bun memory quality --smart                 # LLM-enhanced scoring
+bun memory analyze                         # Cross-session patterns
+bun memory correlate                       # Link learnings to code
 ```
 
 ## Oracle Intelligence
@@ -59,8 +62,8 @@ bun memory index search "concept"    # Semantic search (~400ms)
 | `src/oracle/` | Task routing, decomposition, orchestration |
 | `src/pty/` | Agent spawning, mission queue |
 | `src/mcp/` | MCP server and tools |
-| `src/learning/` | Knowledge extraction |
-| `src/db.ts` | SQLite operations |
+| `src/learning/` | Knowledge extraction, quality scoring |
+| `src/db/` | SQLite operations (modular, shim at src/db.ts) |
 | `scripts/memory/` | CLI commands |
 
 ## Rules

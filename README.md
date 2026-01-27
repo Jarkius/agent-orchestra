@@ -197,6 +197,15 @@ bun memory learn https://example.com # Extract from URL
 bun memory learn debugging "Fixed null pointer" --lesson "Always check for null"
 bun memory distill                   # Extract learnings from last session
 bun memory distill --all             # Extract from all sessions
+bun memory distill --smart           # LLM-enhanced extraction
+
+# LLM-Enhanced Learning (Phase 8)
+bun memory quality                   # Score learning quality
+bun memory quality --smart           # Use LLM for deep scoring
+bun memory analyze                   # Cross-session pattern detection
+bun memory analyze --smart           # With Gemini codebase context
+bun memory correlate                 # Link learnings to code files
+bun memory correlate --smart         # LLM-enhanced correlation
 
 # Task management (unified with GitHub sync + git commit analysis)
 bun memory task                              # List all pending tasks
@@ -631,7 +640,14 @@ agent-orchestra/
 │   │   └── recall-service.ts   # Unified recall with smart routing
 │   ├── mcp/                    # MCP server & tools
 │   │   └── tools/handlers/     # Tool implementations
-│   ├── db.ts                   # SQLite operations
+│   ├── db/                     # Database module
+│   │   ├── index.ts            # SQLite operations (main)
+│   │   └── utils.ts            # Shared helpers
+│   ├── db.ts                   # Backwards-compatible shim
+│   ├── oracle/                 # Oracle Intelligence
+│   │   ├── orchestrator.ts     # Workload analysis, auto-rebalancing
+│   │   ├── task-router.ts      # LLM-driven task routing
+│   │   └── task-decomposer.ts  # Complex task breakdown
 │   ├── vector-db.ts            # ChromaDB with resilience
 │   ├── ws-server.ts            # WebSocket server for real-time tasks
 │   ├── matrix-hub.ts           # Cross-matrix communication hub

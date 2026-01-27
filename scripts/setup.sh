@@ -162,6 +162,17 @@ bun memory index once 2>&1 | tail -3
 echo -e "${GREEN}✓${NC} Codebase indexed"
 echo ""
 
+# Start indexer daemon for auto-updates
+echo -e "${YELLOW}Starting indexer daemon...${NC}"
+bun memory indexer start > /dev/null 2>&1 &
+sleep 1
+if bun memory indexer status 2>/dev/null | grep -qi "running\|watching"; then
+    echo -e "${GREEN}✓${NC} Indexer daemon started"
+else
+    echo -e "${YELLOW}⚠${NC} Indexer daemon not started (run 'bun memory indexer start' manually)"
+fi
+echo ""
+
 # Initialize Matrix Communication System
 echo -e "${YELLOW}Setting up Matrix communication...${NC}"
 
@@ -290,7 +301,7 @@ fi
 # Check 5: Code index has files
 INDEX_COUNT=$(bun -e "
 const db = require('better-sqlite3')('agents.db');
-try { console.log(db.prepare('SELECT COUNT(*) as c FROM code_index').get()?.c || 0); }
+try { console.log(db.prepare('SELECT COUNT(*) as c FROM code_files').get()?.c || 0); }
 catch { console.log(0); }
 " 2>/dev/null || echo "0")
 
@@ -298,6 +309,13 @@ if [ "$INDEX_COUNT" -gt 0 ]; then
     echo -e "  ${GREEN}✓${NC} Code Index: $INDEX_COUNT files indexed"
 else
     echo -e "  ${YELLOW}⚠${NC} Code Index: empty (run 'bun memory index once')"
+fi
+
+# Check 5b: Indexer Daemon
+if bun memory indexer status 2>/dev/null | grep -qi "running\|watching"; then
+    echo -e "  ${GREEN}✓${NC} Indexer Daemon: watching for changes"
+else
+    echo -e "  ${YELLOW}⚠${NC} Indexer Daemon: not running (optional - run 'bun memory indexer start')"
 fi
 
 # Check 6: Embedding model works (quick test)

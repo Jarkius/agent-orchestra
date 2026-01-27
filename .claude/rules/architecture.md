@@ -5,7 +5,7 @@
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | MCP Server | `src/mcp/server.ts` | Tool handlers, orchestration entry |
-| Database | `src/db.ts` | SQLite (agents, sessions, learnings) |
+| Database | `src/db/` | SQLite operations (shim at `src/db.ts` for backwards compat) |
 | Vector DB | `src/vector-db.ts` | ChromaDB semantic search |
 | Agent Spawner | `src/pty/spawner.ts` | PTY-based agent lifecycle |
 | Mission Queue | `src/pty/mission-queue.ts` | Priority task distribution |

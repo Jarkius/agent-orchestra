@@ -265,6 +265,20 @@ async function main() {
     console.log(`           Start: bun memory indexer start`);
   }
 
+  // Check ChromaDB
+  const chromaPort = process.env.CHROMA_PORT || '8100';
+  let chromaOk = false;
+  try {
+    const chromaRes = await fetch(`http://localhost:${chromaPort}/api/v2/heartbeat`, { signal: AbortSignal.timeout(2000) });
+    chromaOk = chromaRes.ok;
+  } catch {}
+  if (chromaOk) {
+    console.log(`  ChromaDB: ✅ Running (:${chromaPort})`);
+  } else {
+    console.log(`  ChromaDB: ❌ Not running`);
+    console.log(`           Start: docker start chromadb`);
+  }
+
   // Matrix info
   console.log(`  Matrix:  ${matrixId}`);
 

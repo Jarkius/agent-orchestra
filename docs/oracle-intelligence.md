@@ -453,6 +453,55 @@ bun test scripts/tests/gemini-analysis.test.ts
 
 ---
 
+## Phase 8: CLI Commands for LLM-Enhanced Learning
+
+Exposes Phase 5-7 features through convenient CLI commands.
+
+### CLI Commands
+
+```bash
+# Quality scoring
+bun memory quality                   # Score all learnings
+bun memory quality --smart           # LLM-enhanced scoring
+bun memory quality --sort            # Sort by quality score
+bun memory quality --limit 10        # Limit results
+
+# Cross-session analysis
+bun memory analyze                   # Detect patterns across sessions
+bun memory analyze --smart           # Use Gemini for deep analysis
+bun memory analyze --days 30         # Analyze last 30 days
+
+# Code correlation
+bun memory correlate                 # Link learnings to code files
+bun memory correlate --smart         # LLM-enhanced correlation
+
+# Smart distill with dedup
+bun memory distill --smart           # LLM-enhanced extraction
+bun memory distill --smart --dedupe  # With smart deduplication
+```
+
+### Quality Dimensions
+
+The `quality` command scores learnings on four dimensions (0-1 each):
+
+| Dimension | Description |
+|-----------|-------------|
+| Specificity | How concrete and actionable is the learning? |
+| Actionability | Can someone act on this immediately? |
+| Evidence | Is there supporting data or metrics? |
+| Novelty | Is this new knowledge vs. common knowledge? |
+
+### Files Changed
+
+| File | Purpose |
+|------|---------|
+| `scripts/memory/quality.ts` | Quality scoring CLI |
+| `scripts/memory/analyze.ts` | Cross-session analysis CLI |
+| `scripts/memory/correlate.ts` | Code correlation CLI |
+| `scripts/memory/llm.ts` | Direct LLM completion CLI |
+
+---
+
 ## Research Sources
 
 Based on Anthropic's official multi-agent patterns:
