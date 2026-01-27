@@ -199,8 +199,8 @@ const briefing = {
 The Oracle system has comprehensive test coverage:
 
 ```bash
-# Run all tests (89 tests: 74 Oracle + 15 Phase 5)
-bun test scripts/tests/task-routing.test.ts scripts/tests/oracle-spawning.test.ts scripts/tests/simulation.test.ts scripts/tests/chaos.test.ts scripts/tests/sonnet-extraction.test.ts
+# Run all tests (111 tests: 74 Oracle + 15 Phase 5 + 22 Phase 6)
+bun test scripts/tests/task-routing.test.ts scripts/tests/oracle-spawning.test.ts scripts/tests/simulation.test.ts scripts/tests/chaos.test.ts scripts/tests/sonnet-extraction.test.ts scripts/tests/relationship-reasoning.test.ts
 
 # Individual test suites
 bun test scripts/tests/task-routing.test.ts      # 27 tests - routing & decomposition
@@ -218,6 +218,7 @@ bun test scripts/tests/chaos.test.ts             # 13 tests - failure resilience
 | Simulation | 17 | Multi-agent workflows, token efficiency |
 | Chaos | 13 | Agent crashes, timeouts, recovery |
 | Sonnet Extraction | 15 | Quality scoring, smart distill, smart dedup |
+| Relationship Reasoning | 22 | Entity extraction, relationships, hierarchy |
 
 ## Token Efficiency
 
@@ -314,6 +315,73 @@ Uses Sonnet to:
 ```bash
 # Run Phase 5 tests (15 tests)
 bun test scripts/tests/sonnet-extraction.test.ts
+```
+
+---
+
+## Phase 6: Knowledge Graph Enhancement (NEW)
+
+Enhanced entity extraction and relationship reasoning using Claude Sonnet:
+
+### Entity Extraction
+
+LLM-based extraction with heuristic fallback:
+
+```typescript
+import { EntityExtractor, extractAndPersistEntities } from './src/learning/entity-extractor';
+
+// Extract entities and relationships
+const extractor = new EntityExtractor({ enableLLM: true });
+const result = await extractor.extractFromText(
+  "WebSocket server depends on HTTP server. The authentication middleware enables secure connections."
+);
+
+// result.entities: [{ name: "websocket", type: "tool", confidence: 0.9 }, ...]
+// result.relationships: [{ source: "websocket", target: "http", type: "depends_on", ... }]
+```
+
+### Enhanced Relationship Types
+
+| Type | Description |
+|------|-------------|
+| `depends_on` | Target is required for source to work |
+| `enables` | Source makes target possible |
+| `conflicts_with` | Source and target are incompatible |
+| `alternative_to` | Source can replace target |
+| `specializes` | Source is a specific type of target |
+| `generalizes` | Source is a generalization of target |
+| `precedes` | Source comes before target in sequence |
+| `follows` | Source comes after target in sequence |
+| `complements` | Source and target work well together |
+
+### Entity Hierarchy
+
+Build and traverse concept hierarchies:
+
+```typescript
+import { getEntityHierarchy, findEntitiesByRelationship } from './src/db';
+
+// Get parent/child relationships
+const hierarchy = getEntityHierarchy('jwt');
+// { ancestors: ["authentication", "token"], descendants: ["refresh-token"] }
+
+// Find related entities
+const related = findEntitiesByRelationship('websocket', 'depends_on');
+// [{ name: "http", type: "tool" }, ...]
+```
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/learning/entity-extractor.ts` | LLM-based entity extraction |
+| `src/db.ts` | Added entity_relationships table and functions |
+
+### Testing
+
+```bash
+# Run Phase 6 tests (22 tests)
+bun test scripts/tests/relationship-reasoning.test.ts
 ```
 
 ---

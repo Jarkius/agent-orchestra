@@ -425,6 +425,28 @@ db.run(`
   )
 `);
 
+// Entity relationships table for knowledge graph edges between entities
+db.run(`
+  CREATE TABLE IF NOT EXISTS entity_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_entity_id INTEGER NOT NULL,
+    target_entity_id INTEGER NOT NULL,
+    relationship_type TEXT NOT NULL CHECK(relationship_type IN (
+      'depends_on', 'enables', 'conflicts_with', 'alternative_to',
+      'specializes', 'generalizes', 'precedes', 'follows', 'complements'
+    )),
+    strength REAL DEFAULT 1.0,
+    bidirectional INTEGER DEFAULT 0,
+    reasoning TEXT,
+    source_learning_id INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_entity_id, target_entity_id, relationship_type),
+    FOREIGN KEY (source_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_learning_id) REFERENCES learnings(id) ON DELETE SET NULL
+  )
+`);
+
 // Session tasks table for tracking work items per session
 db.run(`
   CREATE TABLE IF NOT EXISTS session_tasks (
@@ -3056,6 +3078,251 @@ export function findEntityPath(
   }
 
   return null; // No path found
+}
+
+// ============ Entity Relationship Functions ============
+
+export type RelationshipType =
+  | 'depends_on' | 'enables' | 'conflicts_with' | 'alternative_to'
+  | 'specializes' | 'generalizes' | 'precedes' | 'follows' | 'complements';
+
+export interface EntityRelationship {
+  id?: number;
+  source_entity_id: number;
+  target_entity_id: number;
+  relationship_type: RelationshipType;
+  strength: number;
+  bidirectional: boolean;
+  reasoning?: string;
+  source_learning_id?: number;
+  created_at?: string;
+}
+
+export interface EntityRelationshipWithNames extends EntityRelationship {
+  source_name: string;
+  target_name: string;
+}
+
+/**
+ * Add a relationship between two entities
+ */
+export function addEntityRelationship(
+  sourceEntityId: number,
+  targetEntityId: number,
+  type: RelationshipType,
+  options: {
+    strength?: number;
+    bidirectional?: boolean;
+    reasoning?: string;
+    sourceLearningId?: number;
+  } = {}
+): number {
+  const { strength = 1.0, bidirectional = false, reasoning, sourceLearningId } = options;
+
+  db.run(
+    `INSERT INTO entity_relationships
+     (source_entity_id, target_entity_id, relationship_type, strength, bidirectional, reasoning, source_learning_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_entity_id, target_entity_id, relationship_type) DO UPDATE SET
+       strength = excluded.strength,
+       bidirectional = excluded.bidirectional,
+       reasoning = excluded.reasoning`,
+    [sourceEntityId, targetEntityId, type, strength, bidirectional ? 1 : 0, reasoning, sourceLearningId]
+  );
+
+  const row = db.query(`SELECT last_insert_rowid() as id`).get() as { id: number };
+  return row.id;
+}
+
+/**
+ * Get all relationships for an entity (outgoing and optionally incoming)
+ */
+export function getEntityRelationships(
+  entityId: number,
+  options: { includeIncoming?: boolean; types?: RelationshipType[] } = {}
+): EntityRelationshipWithNames[] {
+  const { includeIncoming = true, types } = options;
+
+  let sql = `
+    SELECT r.*,
+           es.name as source_name,
+           et.name as target_name
+    FROM entity_relationships r
+    JOIN entities es ON r.source_entity_id = es.id
+    JOIN entities et ON r.target_entity_id = et.id
+    WHERE r.source_entity_id = ?`;
+
+  if (includeIncoming) {
+    sql += ` OR r.target_entity_id = ?`;
+  }
+
+  if (types && types.length > 0) {
+    const typePlaceholders = types.map(() => '?').join(', ');
+    sql += ` AND r.relationship_type IN (${typePlaceholders})`;
+  }
+
+  sql += ` ORDER BY r.strength DESC`;
+
+  const params: any[] = includeIncoming ? [entityId, entityId] : [entityId];
+  if (types && types.length > 0) {
+    params.push(...types);
+  }
+
+  const results = db.query(sql).all(...params) as any[];
+
+  return results.map(row => ({
+    id: row.id,
+    source_entity_id: row.source_entity_id,
+    target_entity_id: row.target_entity_id,
+    relationship_type: row.relationship_type as RelationshipType,
+    strength: row.strength,
+    bidirectional: row.bidirectional === 1,
+    reasoning: row.reasoning,
+    source_learning_id: row.source_learning_id,
+    created_at: row.created_at,
+    source_name: row.source_name,
+    target_name: row.target_name,
+  }));
+}
+
+/**
+ * Get entity hierarchy (generalizes/specializes chains)
+ */
+export function getEntityHierarchy(
+  entityName: string,
+  direction: 'up' | 'down' | 'both' = 'both'
+): { ancestors: EntityRecord[]; descendants: EntityRecord[] } {
+  const entity = getEntityByName(entityName);
+  if (!entity || !entity.id) {
+    return { ancestors: [], descendants: [] };
+  }
+
+  const ancestors: EntityRecord[] = [];
+  const descendants: EntityRecord[] = [];
+
+  // Go up (generalizes)
+  if (direction === 'up' || direction === 'both') {
+    const visited = new Set<number>([entity.id]);
+    const queue = [entity.id];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      const parents = db.query(`
+        SELECT e.* FROM entities e
+        JOIN entity_relationships r ON e.id = r.target_entity_id
+        WHERE r.source_entity_id = ? AND r.relationship_type = 'specializes'
+      `).all(currentId) as EntityRecord[];
+
+      for (const parent of parents) {
+        if (parent.id && !visited.has(parent.id)) {
+          visited.add(parent.id);
+          ancestors.push(parent);
+          queue.push(parent.id);
+        }
+      }
+    }
+  }
+
+  // Go down (specializes)
+  if (direction === 'down' || direction === 'both') {
+    const visited = new Set<number>([entity.id]);
+    const queue = [entity.id];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      const children = db.query(`
+        SELECT e.* FROM entities e
+        JOIN entity_relationships r ON e.id = r.source_entity_id
+        WHERE r.target_entity_id = ? AND r.relationship_type = 'specializes'
+      `).all(currentId) as EntityRecord[];
+
+      for (const child of children) {
+        if (child.id && !visited.has(child.id)) {
+          visited.add(child.id);
+          descendants.push(child);
+          queue.push(child.id);
+        }
+      }
+    }
+  }
+
+  return { ancestors, descendants };
+}
+
+/**
+ * Find entities by relationship type
+ */
+export function findEntitiesByRelationship(
+  entityName: string,
+  relationshipType: RelationshipType,
+  direction: 'outgoing' | 'incoming' | 'both' = 'both'
+): EntityRecord[] {
+  const entity = getEntityByName(entityName);
+  if (!entity || !entity.id) return [];
+
+  const results: EntityRecord[] = [];
+  const visited = new Set<number>();
+
+  if (direction === 'outgoing' || direction === 'both') {
+    const outgoing = db.query(`
+      SELECT e.* FROM entities e
+      JOIN entity_relationships r ON e.id = r.target_entity_id
+      WHERE r.source_entity_id = ? AND r.relationship_type = ?
+    `).all(entity.id, relationshipType) as EntityRecord[];
+
+    for (const e of outgoing) {
+      if (e.id && !visited.has(e.id)) {
+        visited.add(e.id);
+        results.push(e);
+      }
+    }
+  }
+
+  if (direction === 'incoming' || direction === 'both') {
+    const incoming = db.query(`
+      SELECT e.* FROM entities e
+      JOIN entity_relationships r ON e.id = r.source_entity_id
+      WHERE r.target_entity_id = ? AND r.relationship_type = ?
+    `).all(entity.id, relationshipType) as EntityRecord[];
+
+    for (const e of incoming) {
+      if (e.id && !visited.has(e.id)) {
+        visited.add(e.id);
+        results.push(e);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get relationship statistics
+ */
+export function getRelationshipStats(): {
+  total: number;
+  byType: Record<RelationshipType, number>;
+  avgStrength: number;
+} {
+  const total = db.query(`SELECT COUNT(*) as count FROM entity_relationships`).get() as { count: number };
+  const avgStrength = db.query(`SELECT AVG(strength) as avg FROM entity_relationships`).get() as { avg: number | null };
+
+  const byType: Record<RelationshipType, number> = {} as any;
+  const types = db.query(`
+    SELECT relationship_type, COUNT(*) as count
+    FROM entity_relationships
+    GROUP BY relationship_type
+  `).all() as Array<{ relationship_type: RelationshipType; count: number }>;
+
+  for (const row of types) {
+    byType[row.relationship_type] = row.count;
+  }
+
+  return {
+    total: total.count,
+    byType,
+    avgStrength: avgStrength.avg ?? 0,
+  };
 }
 
 // ============ Analytics Functions ============
