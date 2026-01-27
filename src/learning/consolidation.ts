@@ -1,6 +1,10 @@
 /**
  * Memory Consolidation Engine
  * Finds and merges duplicate learnings to reduce noise and maintain single source of truth
+ *
+ * Two modes:
+ * 1. Simple mode: Uses semantic similarity threshold (fast, no API cost)
+ * 2. Smart mode: Uses Claude Sonnet to reason about duplicates (higher quality)
  */
 
 import {
@@ -19,6 +23,7 @@ import {
 } from '../vector-db';
 import { Database } from 'bun:sqlite';
 import { ChromaClient } from 'chromadb';
+import { ExternalLLM, type LLMProvider } from '../services/external-llm';
 
 // Types
 export interface ConsolidationCandidate {
@@ -48,6 +53,27 @@ export interface ConsolidationStats {
   merged: number;
   errors: string[];
 }
+
+// Smart deduplication types
+export interface SmartDeduplicationResult {
+  keep: LearningRecord;
+  merge: LearningRecord[];
+  reasoning: string;
+  mergedContent: string;  // Combined best parts
+  isDuplicate: boolean;   // LLM confirmed these are duplicates
+}
+
+export interface SmartDeduplicationConfig {
+  provider: LLMProvider;
+  model?: string;
+  enableLLM: boolean;
+}
+
+const DEFAULT_SMART_DEDUP_CONFIG: SmartDeduplicationConfig = {
+  provider: 'anthropic',
+  model: 'claude-3-5-sonnet-20241022',
+  enableLLM: true,
+};
 
 // Confidence ordering for comparison
 const CONFIDENCE_ORDER: Record<string, number> = {
@@ -365,9 +391,251 @@ export async function runConsolidation(options?: {
   return stats;
 }
 
+// ============ Smart Deduplication (Sonnet-based) ============
+
+/**
+ * Use LLM to determine if learnings are truly duplicates
+ * and merge their best content
+ */
+export async function smartDeduplicate(
+  primary: LearningRecord,
+  candidates: LearningRecord[],
+  config: Partial<SmartDeduplicationConfig> = {}
+): Promise<SmartDeduplicationResult> {
+  const mergedConfig = { ...DEFAULT_SMART_DEDUP_CONFIG, ...config };
+
+  // If LLM disabled or no candidates, return primary as-is
+  if (!mergedConfig.enableLLM || candidates.length === 0) {
+    return {
+      keep: primary,
+      merge: [],
+      reasoning: 'No LLM or no candidates',
+      mergedContent: primary.description || primary.lesson || '',
+      isDuplicate: false,
+    };
+  }
+
+  let llm: ExternalLLM;
+  try {
+    llm = new ExternalLLM(mergedConfig.provider);
+  } catch (error) {
+    console.error(`[SmartDedup] LLM init failed: ${error}`);
+    return {
+      keep: primary,
+      merge: [],
+      reasoning: 'LLM unavailable',
+      mergedContent: primary.description || primary.lesson || '',
+      isDuplicate: false,
+    };
+  }
+
+  const prompt = buildDeduplicationPrompt(primary, candidates);
+
+  try {
+    const response = await llm.query(prompt, {
+      model: mergedConfig.model,
+      maxOutputTokens: 2048,
+      temperature: 0.3,
+    });
+
+    return parseDeduplicationResponse(response.text, primary, candidates);
+  } catch (error) {
+    console.error(`[SmartDedup] LLM query failed: ${error}`);
+    return {
+      keep: primary,
+      merge: [],
+      reasoning: `LLM error: ${error}`,
+      mergedContent: primary.description || primary.lesson || '',
+      isDuplicate: false,
+    };
+  }
+}
+
+/**
+ * Build prompt for LLM deduplication analysis
+ */
+function buildDeduplicationPrompt(
+  primary: LearningRecord,
+  candidates: LearningRecord[]
+): string {
+  const candidateText = candidates.map((c, i) => `
+### Candidate ${i + 1} (ID: ${c.id})
+Title: ${c.title}
+Category: ${c.category}
+Content: ${c.description || c.lesson || ''}
+Confidence: ${c.confidence}
+Validated: ${c.times_validated || 0} times`).join('\n');
+
+  return `Analyze whether these learnings are duplicates and should be merged.
+
+## Primary Learning (ID: ${primary.id})
+Title: ${primary.title}
+Category: ${primary.category}
+Content: ${primary.description || primary.lesson || ''}
+Confidence: ${primary.confidence}
+Validated: ${primary.times_validated || 0} times
+
+## Candidate Duplicates
+${candidateText}
+
+## Analysis Tasks
+
+1. **Determine duplicates**: Are any candidates saying the same thing as the primary?
+   - TRUE duplicate: Same core insight, just different wording
+   - FALSE duplicate: Related but distinct insights (should NOT merge)
+
+2. **Select best version**: Which has the clearest, most complete explanation?
+
+3. **Merge content**: Combine unique valuable parts from all true duplicates.
+
+Respond in this exact JSON format:
+{
+  "isDuplicate": [true/false for each candidate],
+  "keepId": ID of the best version to keep,
+  "mergeIds": [IDs of learnings to merge into the kept one],
+  "mergedContent": "Combined best explanation (keep unique valuable parts from each)",
+  "reasoning": "Brief explanation of the decision"
+}
+
+Be conservative - only mark as duplicate if they're truly redundant.`;
+}
+
+/**
+ * Parse LLM response into deduplication result
+ */
+function parseDeduplicationResponse(
+  response: string,
+  primary: LearningRecord,
+  candidates: LearningRecord[]
+): SmartDeduplicationResult {
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('No JSON found');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    const allLearnings = [primary, ...candidates];
+
+    // Find the learning to keep
+    const keepId = typeof parsed.keepId === 'number' ? parsed.keepId : primary.id;
+    const keepLearning = allLearnings.find(l => l.id === keepId) || primary;
+
+    // Find learnings to merge
+    const mergeIds: number[] = Array.isArray(parsed.mergeIds) ? parsed.mergeIds : [];
+    const mergeLearnings = allLearnings.filter(l => mergeIds.includes(l.id!));
+
+    // Check if any duplicates were found
+    const isDuplicate = Array.isArray(parsed.isDuplicate)
+      ? parsed.isDuplicate.some((d: boolean) => d)
+      : mergeIds.length > 0;
+
+    return {
+      keep: keepLearning,
+      merge: mergeLearnings,
+      reasoning: parsed.reasoning || 'LLM decision',
+      mergedContent: parsed.mergedContent || keepLearning.description || keepLearning.lesson || '',
+      isDuplicate,
+    };
+  } catch (error) {
+    console.error(`[SmartDedup] Parse error: ${error}`);
+    return {
+      keep: primary,
+      merge: [],
+      reasoning: `Parse error: ${error}`,
+      mergedContent: primary.description || primary.lesson || '',
+      isDuplicate: false,
+    };
+  }
+}
+
+/**
+ * Run smart consolidation using LLM
+ */
+export async function runSmartConsolidation(options?: {
+  dryRun?: boolean;
+  minSimilarity?: number;
+  category?: string;
+  limit?: number;
+  llmConfig?: Partial<SmartDeduplicationConfig>;
+}): Promise<ConsolidationStats> {
+  const {
+    dryRun = true,
+    minSimilarity = 0.85,  // Lower threshold since LLM will verify
+    category,
+    limit = 10,
+    llmConfig = {},
+  } = options || {};
+
+  const stats: ConsolidationStats = {
+    candidatesFound: 0,
+    totalDuplicates: 0,
+    merged: 0,
+    errors: [],
+  };
+
+  // Find candidates using similarity search
+  const candidates = await findConsolidationCandidates({
+    minSimilarity,
+    category,
+    limit,
+  });
+
+  stats.candidatesFound = candidates.length;
+
+  if (dryRun) {
+    console.log('\n=== SMART DEDUP DRY RUN ===\n');
+  }
+
+  for (const candidate of candidates) {
+    try {
+      // Use LLM to verify and merge
+      const result = await smartDeduplicate(
+        candidate.primary,
+        candidate.duplicates,
+        llmConfig
+      );
+
+      if (result.isDuplicate && result.merge.length > 0) {
+        stats.totalDuplicates += result.merge.length;
+
+        if (dryRun) {
+          console.log(`Primary: #${candidate.primary.id} "${candidate.primary.title}"`);
+          console.log(`  LLM says: ${result.isDuplicate ? 'DUPLICATE' : 'NOT duplicate'}`);
+          console.log(`  Keep: #${result.keep.id}`);
+          console.log(`  Merge: ${result.merge.map(m => `#${m.id}`).join(', ')}`);
+          console.log(`  Reasoning: ${result.reasoning}`);
+          console.log(`  Merged content: ${result.mergedContent.slice(0, 100)}...`);
+          console.log('');
+        } else {
+          // Execute merge
+          const strategy = calculateMergeStrategy(result.keep, result.merge);
+          strategy.mergedDescription = result.mergedContent;
+          const mergeResult = await consolidateLearnings(strategy);
+          stats.merged += mergeResult.mergedCount;
+          console.log(
+            `Merged ${mergeResult.mergedCount} learnings into #${mergeResult.keptId} (${result.reasoning})`
+          );
+        }
+      } else if (dryRun) {
+        console.log(`Primary: #${candidate.primary.id} - LLM says NOT a duplicate`);
+        console.log(`  Reasoning: ${result.reasoning}`);
+        console.log('');
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      stats.errors.push(`Smart dedup failed for #${candidate.primary.id}: ${msg}`);
+    }
+  }
+
+  return stats;
+}
+
 export default {
   findConsolidationCandidates,
   calculateMergeStrategy,
   consolidateLearnings,
   runConsolidation,
+  smartDeduplicate,
+  runSmartConsolidation,
 };

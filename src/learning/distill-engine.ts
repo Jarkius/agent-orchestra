@@ -1,18 +1,22 @@
 /**
  * Distill Engine - Extract actionable learnings from raw content
  *
- * Parses markdown structure and extracts individual learnings from:
- * - Section headers with their content
- * - List items
- * - Blockquotes
- * - Code blocks with descriptions
+ * Two modes:
+ * 1. Smart mode: Uses Claude Sonnet for high-quality extraction
+ * 2. Heuristic mode: Uses regex-based parsing (fallback)
  *
  * Usage:
- *   import { distillFromContent } from './distill-engine';
- *   const result = await distillFromContent(markdownContent, { sourcePath: './README.md' });
+ *   import { distillFromContent, smartDistill } from './distill-engine';
+ *
+ *   // Heuristic mode (fast, no API cost)
+ *   const result = distillFromContent(markdownContent, { sourcePath: './README.md' });
+ *
+ *   // Smart mode (higher quality, uses Sonnet)
+ *   const result = await smartDistill(markdownContent, { sourcePath: './README.md' });
  */
 
 import type { LearningCategory } from '../interfaces/learning';
+import { ExternalLLM, type LLMProvider } from '../services/external-llm';
 
 // ============ Interfaces ============
 
@@ -49,6 +53,29 @@ export interface ExtractedLearning {
   confidence: 'low';
   metrics?: ExtractedMetric[];
 }
+
+// Enhanced learning with Sonnet-generated fields
+export interface EnhancedLearning extends ExtractedLearning {
+  reasoning?: string;           // Why this is worth learning
+  prerequisites?: string[];     // What you need to know first
+  applicability?: string[];     // When to apply this
+  counterexamples?: string[];   // When NOT to apply
+  relatedConcepts?: string[];   // Links to other learnings
+}
+
+export interface SmartDistillConfig {
+  provider: LLMProvider;
+  model?: string;
+  enableLLM: boolean;
+  maxLearnings?: number;
+}
+
+const DEFAULT_SMART_CONFIG: SmartDistillConfig = {
+  provider: 'anthropic',
+  model: 'claude-3-5-sonnet-20241022',
+  enableLLM: true,
+  maxLearnings: 15,
+};
 
 export interface DistillOptions {
   deep?: boolean;
@@ -524,9 +551,167 @@ export function distillFromContent(
   };
 }
 
+// ============ Smart Distill (Sonnet-based) ============
+
+/**
+ * Extract learnings using Claude Sonnet for higher quality
+ */
+export async function smartDistill(
+  content: string,
+  options: DistillOptions & Partial<SmartDistillConfig> = {}
+): Promise<{ learnings: EnhancedLearning[]; stats: DistillStats }> {
+  const config: SmartDistillConfig = {
+    ...DEFAULT_SMART_CONFIG,
+    provider: options.provider || DEFAULT_SMART_CONFIG.provider,
+    model: options.model || DEFAULT_SMART_CONFIG.model,
+    enableLLM: options.enableLLM ?? DEFAULT_SMART_CONFIG.enableLLM,
+    maxLearnings: options.maxLearnings || DEFAULT_SMART_CONFIG.maxLearnings,
+  };
+
+  // If LLM is disabled, fall back to heuristic extraction
+  if (!config.enableLLM) {
+    const result = distillFromContent(content, options);
+    return {
+      learnings: result.learnings as EnhancedLearning[],
+      stats: result.stats,
+    };
+  }
+
+  // Try LLM extraction
+  let llm: ExternalLLM;
+  try {
+    llm = new ExternalLLM(config.provider);
+  } catch (error) {
+    console.error(`[SmartDistill] LLM init failed, falling back to heuristics: ${error}`);
+    const result = distillFromContent(content, options);
+    return {
+      learnings: result.learnings as EnhancedLearning[],
+      stats: result.stats,
+    };
+  }
+
+  const prompt = buildSmartDistillPrompt(content, config.maxLearnings!);
+
+  try {
+    const response = await llm.query(prompt, {
+      model: config.model,
+      maxOutputTokens: 4096,
+      temperature: 0.4,
+    });
+
+    const learnings = parseSmartDistillResponse(response.text);
+
+    return {
+      learnings,
+      stats: {
+        sectionsProcessed: 1, // LLM processes as one unit
+        itemsAnalyzed: content.split('\n').length,
+        learningsExtracted: learnings.length,
+        skippedLowRelevance: 0,
+      },
+    };
+  } catch (error) {
+    console.error(`[SmartDistill] LLM extraction failed: ${error}`);
+    const result = distillFromContent(content, options);
+    return {
+      learnings: result.learnings as EnhancedLearning[],
+      stats: result.stats,
+    };
+  }
+}
+
+/**
+ * Build prompt for Sonnet-based extraction
+ */
+function buildSmartDistillPrompt(content: string, maxLearnings: number): string {
+  // Truncate content if too long (keep under ~10k tokens)
+  const maxChars = 30000;
+  const truncatedContent = content.length > maxChars
+    ? content.slice(0, maxChars) + '\n\n[Content truncated...]'
+    : content;
+
+  return `You are an expert at extracting valuable learnings from technical content. Analyze the following content and extract actionable learnings.
+
+## Content to Analyze
+${truncatedContent}
+
+## Extraction Guidelines
+
+Extract learnings that are:
+1. **Specific** - Not generic advice, but concrete observations
+2. **Actionable** - Someone can DO something with this
+3. **Evidence-backed** - Has reasoning or data behind it
+4. **Novel** - Not obvious common knowledge
+
+For each learning, provide:
+- **title**: Imperative statement, <10 words (e.g., "Use bulk inserts with transactions")
+- **category**: One of: performance, architecture, tooling, process, debugging, security, testing, philosophy, principle, insight, pattern, retrospective
+- **lesson**: The core learning (1-2 sentences)
+- **reasoning**: Why this matters (1 sentence)
+- **applicability**: When to apply this (list of scenarios)
+- **counterexamples**: When NOT to apply this (list of exceptions)
+- **relatedConcepts**: Related topics/technologies (list)
+
+Extract up to ${maxLearnings} learnings. Quality over quantity - skip generic or obvious items.
+
+Respond with a JSON array:
+[
+  {
+    "title": "...",
+    "category": "...",
+    "lesson": "...",
+    "reasoning": "...",
+    "applicability": ["when X", "when Y"],
+    "counterexamples": ["not when Z"],
+    "relatedConcepts": ["concept1", "concept2"],
+    "confidence": "low"
+  }
+]
+
+Only output valid JSON, no additional text.`;
+}
+
+/**
+ * Parse Sonnet response into enhanced learnings
+ */
+function parseSmartDistillResponse(response: string): EnhancedLearning[] {
+  try {
+    // Extract JSON array from response
+    const jsonMatch = response.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      console.error('[SmartDistill] No JSON array found in response');
+      return [];
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as any[];
+    const validCategories: LearningCategory[] = [
+      'performance', 'architecture', 'tooling', 'process', 'debugging',
+      'security', 'testing', 'philosophy', 'principle', 'insight',
+      'pattern', 'retrospective',
+    ];
+
+    return parsed
+      .filter(item => item.title && item.lesson)
+      .map(item => ({
+        title: String(item.title).slice(0, 200),
+        category: validCategories.includes(item.category) ? item.category : 'insight',
+        lesson: String(item.lesson),
+        reasoning: item.reasoning,
+        applicability: Array.isArray(item.applicability) ? item.applicability : undefined,
+        counterexamples: Array.isArray(item.counterexamples) ? item.counterexamples : undefined,
+        relatedConcepts: Array.isArray(item.relatedConcepts) ? item.relatedConcepts : undefined,
+        confidence: 'low' as const,
+      }));
+  } catch (error) {
+    console.error(`[SmartDistill] Failed to parse response: ${error}`);
+    return [];
+  }
+}
+
 export default {
   parseMarkdownStructure,
   distillFromContent,
+  smartDistill,
   extractMetrics,
   scoreRelevance,
   suggestCategoryFromContext,

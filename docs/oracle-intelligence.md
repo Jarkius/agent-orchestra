@@ -199,8 +199,8 @@ const briefing = {
 The Oracle system has comprehensive test coverage:
 
 ```bash
-# Run all Oracle tests (74 tests)
-bun test scripts/tests/task-routing.test.ts scripts/tests/oracle-spawning.test.ts scripts/tests/simulation.test.ts scripts/tests/chaos.test.ts
+# Run all tests (89 tests: 74 Oracle + 15 Phase 5)
+bun test scripts/tests/task-routing.test.ts scripts/tests/oracle-spawning.test.ts scripts/tests/simulation.test.ts scripts/tests/chaos.test.ts scripts/tests/sonnet-extraction.test.ts
 
 # Individual test suites
 bun test scripts/tests/task-routing.test.ts      # 27 tests - routing & decomposition
@@ -217,6 +217,7 @@ bun test scripts/tests/chaos.test.ts             # 13 tests - failure resilience
 | Oracle Spawning | 17 | Proactive spawning, complexity analysis |
 | Simulation | 17 | Multi-agent workflows, token efficiency |
 | Chaos | 13 | Agent crashes, timeouts, recovery |
+| Sonnet Extraction | 15 | Quality scoring, smart distill, smart dedup |
 
 ## Token Efficiency
 
@@ -267,6 +268,55 @@ console.log('Utilization:', analysis.overallUtilization);
 console.log('Bottlenecks:', analysis.bottlenecks);
 console.log('Recommendations:', analysis.recommendations);
 ```
+
+## Phase 5: LLM-Enhanced Learning (NEW)
+
+The learning system now supports Claude Sonnet for higher-quality extraction:
+
+### Smart Distill
+
+```bash
+# Use Sonnet for extraction (higher quality)
+bun memory distill --smart
+
+# Also run smart deduplication
+bun memory distill --smart --dedupe
+
+# Auto-accept all (batch mode)
+bun memory distill --smart --yes
+```
+
+### Quality Scoring
+
+Learnings are scored on four dimensions:
+- **Specificity** (0-1): How specific vs generic
+- **Actionability** (0-1): Can someone act on this?
+- **Evidence** (0-1): Supporting data/metrics
+- **Novelty** (0-1): New insight vs common knowledge
+
+### Smart Deduplication
+
+Uses Sonnet to:
+1. Verify if candidates are true duplicates
+2. Select the best version to keep
+3. Merge unique content from all versions
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/learning/quality-scorer.ts` | Quality scoring for learnings |
+| `src/learning/distill-engine.ts` | Enhanced with `smartDistill()` |
+| `src/learning/consolidation.ts` | Enhanced with `smartDeduplicate()` |
+
+### Testing
+
+```bash
+# Run Phase 5 tests (15 tests)
+bun test scripts/tests/sonnet-extraction.test.ts
+```
+
+---
 
 ## Research Sources
 

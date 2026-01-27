@@ -3,18 +3,27 @@
  * /distill - Extract learnings from sessions
  *
  * Usage:
- *   bun memory distill                     # From last session
+ *   bun memory distill                     # From last session (heuristic)
+ *   bun memory distill --smart             # Use Claude Sonnet for extraction
+ *   bun memory distill --smart --dedupe    # Also run smart deduplication
  *   bun memory distill session_123         # From specific session
  *   bun memory distill --last 5            # From last N sessions
  *   bun memory distill --yes               # Auto-accept all suggestions
  */
 
-// Check for --yes flag early
+// Check for flags early
 const autoAccept = process.argv.includes('--yes') || process.argv.includes('-y');
-// Remove flag from argv for downstream parsing
-process.argv = process.argv.filter(a => a !== '--yes' && a !== '-y');
+const useSmartMode = process.argv.includes('--smart');
+const runDedupe = process.argv.includes('--dedupe');
+
+// Remove flags from argv for downstream parsing
+process.argv = process.argv.filter(a =>
+  a !== '--yes' && a !== '-y' && a !== '--smart' && a !== '--dedupe'
+);
 
 import { initVectorDB, saveLearning as saveLearningToChroma, findSimilarLearnings } from '../../src/vector-db';
+import { smartDistill } from '../../src/learning/distill-engine';
+import { runSmartConsolidation } from '../../src/learning/consolidation';
 import { getSessionById, listSessionsFromDb, createLearning, createLearningLink, type SessionRecord } from '../../src/db';
 import * as readline from 'readline';
 
@@ -296,7 +305,11 @@ async function distillSession(session: SessionRecord) {
 async function main() {
   const args = process.argv.slice(2);
 
-  console.log('\n🧪 Distill Learnings from Sessions\n');
+  if (useSmartMode) {
+    console.log('\n🧠 Smart Distill (Claude Sonnet)\n');
+  } else {
+    console.log('\n🧪 Distill Learnings from Sessions\n');
+  }
   console.log('═'.repeat(60));
 
   // Note: Vector DB init moved to saveLearningFromDistill (SQLite-first pattern)
@@ -306,7 +319,9 @@ async function main() {
   if (args[0] === '--help' || args[0] === '-h') {
     console.log(`
 Usage:
-  bun memory distill                     # From last session
+  bun memory distill                     # From last session (heuristic)
+  bun memory distill --smart             # Use Claude Sonnet for extraction
+  bun memory distill --smart --dedupe    # Also run smart deduplication
   bun memory distill session_123         # From specific session
   bun memory distill --last 5            # From last N sessions
   bun memory distill --all               # From ALL sessions
@@ -314,11 +329,19 @@ Usage:
   bun memory distill --all --yes         # Distill all with auto-accept
 
 Options:
+  --smart      Use Claude Sonnet for higher-quality extraction
+  --dedupe     Run smart deduplication after extraction (requires --smart)
   --yes, -y    Auto-accept all suggestions (no prompts)
   --all        Process ALL sessions (use with --yes for batch mode)
 
 This extracts learnings, wins, and challenges from session context
 and saves them as proper learnings with category and confidence.
+
+Smart mode uses Claude Sonnet to extract more nuanced learnings with:
+- Reasoning: Why this learning matters
+- Applicability: When to apply this
+- Counterexamples: When NOT to apply
+- Related concepts: Links to other knowledge
 `);
     return;
   }
@@ -348,11 +371,135 @@ and saves them as proper learnings with category and confidence.
   }
 
   for (const session of sessions) {
-    await distillSession(session);
+    if (useSmartMode) {
+      await smartDistillSession(session);
+    } else {
+      await distillSession(session);
+    }
   }
 
-  console.log('═'.repeat(60));
+  // Run smart deduplication if requested
+  if (runDedupe && useSmartMode) {
+    console.log('\n🔍 Running Smart Deduplication...\n');
+    console.log('─'.repeat(60));
+
+    const dedupeStats = await runSmartConsolidation({
+      dryRun: !autoAccept,  // Dry run unless --yes
+      minSimilarity: 0.85,
+      limit: 20,
+    });
+
+    console.log(`\n   Candidates found: ${dedupeStats.candidatesFound}`);
+    console.log(`   Duplicates detected: ${dedupeStats.totalDuplicates}`);
+    if (!autoAccept) {
+      console.log('   (Dry run - use --yes to merge)');
+    } else {
+      console.log(`   Merged: ${dedupeStats.merged}`);
+    }
+  }
+
+  console.log('\n' + '═'.repeat(60));
   console.log('\n✅ Distillation complete!\n');
+}
+
+/**
+ * Smart distill using Claude Sonnet
+ */
+async function smartDistillSession(session: SessionRecord) {
+  console.log(`\n🧠 Session: ${session.id}`);
+  console.log(`   Summary: ${session.summary?.substring(0, 60)}...`);
+  console.log('─'.repeat(60));
+
+  if (!session.full_context) {
+    console.log('\n   No context to distill.\n');
+    return;
+  }
+
+  // Build content from session context
+  const ctx = session.full_context as any;
+  const contentParts: string[] = [];
+
+  if (session.summary) contentParts.push(`## Summary\n${session.summary}`);
+  if (Array.isArray(ctx.wins)) contentParts.push(`## Wins\n${ctx.wins.map((w: string) => `- ${w}`).join('\n')}`);
+  if (Array.isArray(ctx.challenges)) contentParts.push(`## Challenges\n${ctx.challenges.map((c: string) => `- ${c}`).join('\n')}`);
+  if (Array.isArray(ctx.learnings)) contentParts.push(`## Learnings\n${ctx.learnings.map((l: string) => `- ${l}`).join('\n')}`);
+  if (Array.isArray(ctx.nextSteps)) contentParts.push(`## Next Steps\n${ctx.nextSteps.map((n: string) => `- ${n}`).join('\n')}`);
+
+  const content = contentParts.join('\n\n');
+
+  if (!content.trim()) {
+    console.log('\n   No content to distill.\n');
+    return;
+  }
+
+  console.log('\n   🔄 Analyzing with Claude Sonnet...');
+
+  try {
+    const result = await smartDistill(content, {
+      sourcePath: `session:${session.id}`,
+      maxLearnings: 10,
+    });
+
+    if (result.learnings.length === 0) {
+      console.log('   No learnings extracted.\n');
+      return;
+    }
+
+    console.log(`\n   Found ${result.learnings.length} learning(s):\n`);
+
+    let saved = 0;
+
+    for (let i = 0; i < result.learnings.length; i++) {
+      const learning = result.learnings[i]!;
+      const icon = CATEGORY_ICONS[learning.category as Category] || '📝';
+
+      console.log(`   ${i + 1}. ${icon} [${learning.category}] ${learning.title}`);
+      if (learning.reasoning) {
+        console.log(`      └─ ${learning.reasoning}`);
+      }
+
+      let shouldSave = autoAccept;
+
+      if (!autoAccept) {
+        const answer = await prompt(`      Save? [Y/n/s(kip all)] `);
+        const lower = answer.toLowerCase();
+
+        if (lower === 's') {
+          console.log('\n   Skipping remaining learnings.\n');
+          break;
+        }
+        if (lower === 'n') continue;
+        shouldSave = true;
+      }
+
+      if (shouldSave) {
+        // Build structured learning
+        const structuredLearning: StructuredLearning = {
+          title: learning.title,
+          what_happened: learning.reasoning,
+          lesson: learning.lesson,
+          prevention: learning.applicability?.join('; '),
+        };
+
+        const learningId = await saveLearningFromDistill(
+          learning.category as Category,
+          structuredLearning,
+          session.id,
+          `Smart distilled from session ${session.id}. ` +
+          (learning.relatedConcepts?.length ? `Related: ${learning.relatedConcepts.join(', ')}` : '')
+        );
+
+        console.log(`      ✅ Saved as learning #${learningId}`);
+        saved++;
+      }
+    }
+
+    console.log(`\n   📊 Saved ${saved} of ${result.learnings.length} learnings (${result.stats.itemsAnalyzed} lines analyzed).\n`);
+  } catch (error) {
+    console.error(`   ❌ Smart distill failed: ${error}`);
+    console.log('   Falling back to heuristic mode...\n');
+    await distillSession(session);
+  }
 }
 
 main().catch(console.error);
