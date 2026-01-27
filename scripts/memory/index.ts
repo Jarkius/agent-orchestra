@@ -206,6 +206,27 @@ async function main() {
       break;
     }
 
+    case 'quality': {
+      // Score learnings by quality
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./quality');
+      break;
+    }
+
+    case 'analyze': {
+      // Cross-session and codebase analysis
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./analyze');
+      break;
+    }
+
+    case 'correlate': {
+      // Link learnings to code files
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./correlate');
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -269,6 +290,13 @@ Commands:
   map --update      Update CLAUDE.md with codebase map
   llm "prompt"      Query external LLMs (Gemini, OpenAI, Anthropic)
   llm providers     List available LLM providers (based on API keys)
+  quality           Score all learnings by quality (--smart for LLM)
+  analyze --sessions Cross-session pattern detection
+  analyze --codebase Codebase structure analysis
+  analyze --all      Run both analyses (--smart for LLM)
+  correlate         Link learnings to code files (--smart for LLM)
+  correlate --file   Find learnings for a specific file
+  correlate --learning Find code for a specific learning
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing
