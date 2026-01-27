@@ -766,6 +766,271 @@ export function analyzeRepository(
   };
 }
 
+// ============ Phase 7: Gemini-Powered Codebase Insights ============
+
+import { ExternalLLM, type LLMProvider } from '../services/external-llm';
+
+export interface CodePattern {
+  name: string;
+  description: string;
+  frequency: number;
+  files: string[];
+  recommendation?: string;
+}
+
+export interface AntiPattern {
+  name: string;
+  description: string;
+  severity: 'low' | 'medium' | 'high';
+  files: string[];
+  fix?: string;
+}
+
+export interface Suggestion {
+  title: string;
+  description: string;
+  priority: 'low' | 'medium' | 'high';
+  effort: 'low' | 'medium' | 'high';
+}
+
+export interface CodebaseInsight {
+  patterns: CodePattern[];
+  antiPatterns: AntiPattern[];
+  architectureNotes: string[];
+  suggestions: Suggestion[];
+  summary: string;
+}
+
+export interface GeminiAnalysisConfig {
+  provider: LLMProvider;
+  model?: string;
+  enableLLM: boolean;
+  maxFiles?: number;
+}
+
+const DEFAULT_GEMINI_CONFIG: GeminiAnalysisConfig = {
+  provider: 'gemini',
+  model: 'gemini-2.0-flash',
+  enableLLM: true,
+  maxFiles: 30,
+};
+
+const CODEBASE_INSIGHT_PROMPT = `You are an expert software architect analyzing a codebase.
+
+Given the following codebase information, provide insights about:
+1. **Patterns**: Recurring design patterns and good practices
+2. **Anti-patterns**: Problematic patterns that should be addressed
+3. **Architecture notes**: Key observations about the codebase structure
+4. **Suggestions**: Actionable improvements
+
+For each pattern/anti-pattern, specify:
+- name: Short descriptive name
+- description: What it is and why it matters
+- files: Which files exhibit this (array of paths)
+- For patterns: frequency and recommendation
+- For anti-patterns: severity (low/medium/high) and fix
+
+For suggestions, specify priority and effort (low/medium/high).
+
+Respond in JSON:
+{
+  "patterns": [...],
+  "antiPatterns": [...],
+  "architectureNotes": [...],
+  "suggestions": [...],
+  "summary": "..."
+}
+
+Codebase information:
+`;
+
+/**
+ * Analyze codebase with Gemini Pro for deep insights
+ */
+export async function analyzeCodebaseWithGemini(
+  repoPath: string,
+  config: Partial<GeminiAnalysisConfig> = {}
+): Promise<CodebaseInsight> {
+  const mergedConfig = { ...DEFAULT_GEMINI_CONFIG, ...config };
+
+  // First, do basic analysis
+  const basicResult = analyzeRepository(repoPath, {
+    maxFiles: mergedConfig.maxFiles,
+    includeTests: false,
+  });
+
+  // Prepare codebase summary for LLM
+  const codebaseSummary = buildCodebaseSummary(repoPath, basicResult);
+
+  // Try LLM analysis
+  if (mergedConfig.enableLLM) {
+    try {
+      const llm = new ExternalLLM(mergedConfig.provider);
+      const prompt = CODEBASE_INSIGHT_PROMPT + codebaseSummary;
+
+      const response = await llm.complete(prompt, {
+        model: mergedConfig.model,
+        maxOutputTokens: 4096,
+      });
+
+      // Parse JSON response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          patterns: (parsed.patterns || []).map(validatePattern),
+          antiPatterns: (parsed.antiPatterns || []).map(validateAntiPattern),
+          architectureNotes: parsed.architectureNotes || [],
+          suggestions: (parsed.suggestions || []).map(validateSuggestion),
+          summary: parsed.summary || 'Analysis complete',
+        };
+      }
+    } catch (error) {
+      console.warn('Gemini analysis failed, falling back to heuristics:', error);
+    }
+  }
+
+  // Fallback to heuristic insights
+  return buildHeuristicInsights(basicResult, repoPath);
+}
+
+function buildCodebaseSummary(repoPath: string, result: AnalysisResult): string {
+  const packageAnalysis = analyzePackageJson(join(repoPath, 'package.json'));
+  const archInsights = analyzeDirectoryStructure(repoPath);
+
+  let summary = '';
+
+  if (packageAnalysis?.purpose) {
+    summary += `Project: ${packageAnalysis.purpose}\n`;
+  }
+
+  if (packageAnalysis?.keyDependencies.length) {
+    summary += `\nDependencies:\n`;
+    for (const dep of packageAnalysis.keyDependencies.slice(0, 10)) {
+      summary += `- ${dep.name}: ${dep.purpose}\n`;
+    }
+  }
+
+  if (archInsights.length) {
+    summary += `\nArchitecture:\n`;
+    for (const insight of archInsights) {
+      summary += `- ${insight.pattern}: ${insight.description}\n`;
+    }
+  }
+
+  // Add detected patterns
+  const patternCounts = new Map<string, number>();
+  for (const learning of result.learnings) {
+    if (learning.type === 'pattern') {
+      patternCounts.set(learning.title, (patternCounts.get(learning.title) || 0) + 1);
+    }
+  }
+
+  if (patternCounts.size) {
+    summary += `\nDetected patterns:\n`;
+    for (const [pattern, count] of patternCounts) {
+      summary += `- ${pattern} (${count} occurrences)\n`;
+    }
+  }
+
+  summary += `\nFiles analyzed: ${result.stats.filesAnalyzed}\n`;
+
+  return summary;
+}
+
+function buildHeuristicInsights(result: AnalysisResult, repoPath: string): CodebaseInsight {
+  const patterns: CodePattern[] = [];
+  const antiPatterns: AntiPattern[] = [];
+  const architectureNotes: string[] = [];
+  const suggestions: Suggestion[] = [];
+
+  // Group patterns by name
+  const patternFiles = new Map<string, string[]>();
+  for (const learning of result.learnings) {
+    if (learning.type === 'pattern') {
+      const files = patternFiles.get(learning.title) || [];
+      if (learning.source_file) files.push(learning.source_file);
+      patternFiles.set(learning.title, files);
+    }
+  }
+
+  // Convert to CodePattern
+  for (const [name, files] of patternFiles) {
+    const matchingPattern = CODE_PATTERNS.find(p => p.name === name);
+    patterns.push({
+      name,
+      description: matchingPattern?.description || 'Detected pattern',
+      frequency: files.length,
+      files: [...new Set(files)],
+      recommendation: 'Continue using this pattern consistently',
+    });
+  }
+
+  // Add architecture insights
+  const archInsights = analyzeDirectoryStructure(repoPath);
+  for (const insight of archInsights) {
+    architectureNotes.push(`${insight.pattern}: ${insight.description}`);
+  }
+
+  // Generate suggestions based on findings
+  if (result.stats.patternsFound === 0) {
+    suggestions.push({
+      title: 'Consider adding design patterns',
+      description: 'No common patterns detected. Consider using established patterns for consistency.',
+      priority: 'medium',
+      effort: 'medium',
+    });
+  }
+
+  if (result.stats.gemsFound > 5) {
+    suggestions.push({
+      title: 'Document utility functions',
+      description: 'Multiple utility gems detected. Consider creating a utils documentation.',
+      priority: 'low',
+      effort: 'low',
+    });
+  }
+
+  return {
+    patterns,
+    antiPatterns,
+    architectureNotes,
+    suggestions,
+    summary: `Heuristic analysis: ${patterns.length} patterns, ${result.stats.filesAnalyzed} files analyzed`,
+  };
+}
+
+function validatePattern(p: any): CodePattern {
+  return {
+    name: String(p.name || ''),
+    description: String(p.description || ''),
+    frequency: Number(p.frequency) || 1,
+    files: Array.isArray(p.files) ? p.files.map(String) : [],
+    recommendation: p.recommendation,
+  };
+}
+
+function validateAntiPattern(p: any): AntiPattern {
+  const severities = ['low', 'medium', 'high'];
+  return {
+    name: String(p.name || ''),
+    description: String(p.description || ''),
+    severity: severities.includes(p.severity) ? p.severity : 'medium',
+    files: Array.isArray(p.files) ? p.files.map(String) : [],
+    fix: p.fix,
+  };
+}
+
+function validateSuggestion(s: any): Suggestion {
+  const levels = ['low', 'medium', 'high'];
+  return {
+    title: String(s.title || ''),
+    description: String(s.description || ''),
+    priority: levels.includes(s.priority) ? s.priority : 'medium',
+    effort: levels.includes(s.effort) ? s.effort : 'medium',
+  };
+}
+
 export default {
   analyzeRepository,
   analyzePackageJson,
@@ -774,4 +1039,5 @@ export default {
   detectGems,
   persistPatterns,
   analyzeAndPersistPatterns,
+  analyzeCodebaseWithGemini,
 };

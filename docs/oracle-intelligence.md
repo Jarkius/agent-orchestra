@@ -199,8 +199,8 @@ const briefing = {
 The Oracle system has comprehensive test coverage:
 
 ```bash
-# Run all tests (111 tests: 74 Oracle + 15 Phase 5 + 22 Phase 6)
-bun test scripts/tests/task-routing.test.ts scripts/tests/oracle-spawning.test.ts scripts/tests/simulation.test.ts scripts/tests/chaos.test.ts scripts/tests/sonnet-extraction.test.ts scripts/tests/relationship-reasoning.test.ts
+# Run all tests (129 tests: 74 Oracle + 15 Phase 5 + 22 Phase 6 + 18 Phase 7)
+bun test scripts/tests/task-routing.test.ts scripts/tests/oracle-spawning.test.ts scripts/tests/simulation.test.ts scripts/tests/chaos.test.ts scripts/tests/sonnet-extraction.test.ts scripts/tests/relationship-reasoning.test.ts scripts/tests/gemini-analysis.test.ts
 
 # Individual test suites
 bun test scripts/tests/task-routing.test.ts      # 27 tests - routing & decomposition
@@ -219,6 +219,7 @@ bun test scripts/tests/chaos.test.ts             # 13 tests - failure resilience
 | Chaos | 13 | Agent crashes, timeouts, recovery |
 | Sonnet Extraction | 15 | Quality scoring, smart distill, smart dedup |
 | Relationship Reasoning | 22 | Entity extraction, relationships, hierarchy |
+| Gemini Analysis | 18 | Cross-session, code correlation, codebase insights |
 
 ## Token Efficiency
 
@@ -382,6 +383,72 @@ const related = findEntitiesByRelationship('websocket', 'depends_on');
 ```bash
 # Run Phase 6 tests (22 tests)
 bun test scripts/tests/relationship-reasoning.test.ts
+```
+
+---
+
+## Phase 7: Gemini-Based Codebase Analysis (NEW)
+
+Uses Gemini Pro for long-context codebase analysis and cross-session pattern detection:
+
+### Cross-Session Pattern Detection
+
+Detect patterns across multiple work sessions:
+
+```typescript
+import { CrossSessionAnalyzer, analyzeRecentSessions } from './src/learning/cross-session';
+
+// Analyze patterns from last 30 days
+const result = await analyzeRecentSessions(30, { enableLLM: false });
+
+// result.patterns: [{ pattern: "...", trend: "increasing", recommendation: "..." }]
+// result.summary: "Analysis of 15 sessions found 5 patterns"
+```
+
+### Code-Learning Correlation
+
+Link learnings to relevant code files:
+
+```typescript
+import { CodeCorrelator, correlateAllLearnings } from './src/learning/code-correlation';
+
+// Correlate all learnings with code files
+const result = await correlateAllLearnings({ enableLLM: false });
+
+// result.matches: [{ learning, codeFile, linkType, relevanceScore }]
+// result.stats: { learningsAnalyzed, filesAnalyzed, linksCreated }
+```
+
+### Codebase Insights with Gemini
+
+Get deep architectural insights using Gemini's long context:
+
+```typescript
+import { analyzeCodebaseWithGemini } from './src/learning/code-analyzer';
+
+// Analyze repository with Gemini
+const insight = await analyzeCodebaseWithGemini('.', { enableLLM: true });
+
+// insight.patterns: Detected design patterns
+// insight.antiPatterns: Problematic patterns
+// insight.architectureNotes: Key observations
+// insight.suggestions: Actionable improvements
+```
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/learning/cross-session.ts` | Cross-session pattern detection |
+| `src/learning/code-correlation.ts` | Learning-code linking |
+| `src/learning/code-analyzer.ts` | Enhanced with Gemini insights |
+| `src/services/external-llm.ts` | Added `complete()` method |
+
+### Testing
+
+```bash
+# Run Phase 7 tests (18 tests)
+bun test scripts/tests/gemini-analysis.test.ts
 ```
 
 ---

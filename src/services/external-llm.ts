@@ -98,6 +98,15 @@ export class ExternalLLM {
     }
   }
 
+  /**
+   * Simple completion - returns just the text response
+   * Alias for query that returns only the text
+   */
+  async complete(prompt: string, options: LLMOptions = {}): Promise<string> {
+    const response = await this.query(prompt, options);
+    return response.text;
+  }
+
   private async queryGemini(prompt: string, options: LLMOptions): Promise<LLMResponse> {
     // Default to Gemini 2.0 Flash (stable, fast)
     const modelKey = options.model || 'gemini-2.0-flash';
