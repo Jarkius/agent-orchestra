@@ -4,6 +4,7 @@
  *
  * Supported models:
  * - multilingual-e5-base (768 dims, best multilingual/Thai support, default)
+ * - bge-m3 (1024 dims, multilingual + code, 8192 tokens, recommended)
  * - nomic-embed-text-v1 (768 dims, good quality)
  * - nomic-embed-text-v1.5 (768 dims, Matryoshka support)
  * - bge-small-en-v1.5 (384 dims, fast)
@@ -18,6 +19,10 @@ const MODEL_CONFIGS: Record<string, { id: string; dimensions: number }> = {
   "multilingual-e5-base": {
     id: "Xenova/multilingual-e5-base",
     dimensions: 768,
+  },
+  "bge-m3": {
+    id: "Xenova/bge-m3",
+    dimensions: 1024,
   },
   "nomic-embed-text-v1": {
     id: "nomic-ai/nomic-embed-text-v1",

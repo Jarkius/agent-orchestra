@@ -4,6 +4,7 @@
  *
  * Available models:
  * - multilingual-e5-base (768 dims, best multilingual/Thai support, default)
+ * - bge-m3 (1024 dims, multilingual + code, 8192 tokens, recommended)
  * - nomic-embed-text-v1.5 (768 dims, Matryoshka support)
  * - nomic-embed-text-v1 (768 dims)
  * - bge-small-en-v1.5 (384 dims, fast, use if memory constrained)
@@ -27,6 +28,7 @@ export interface EmbeddingConfig {
 // Default batch size per model (larger models need smaller batches)
 const MODEL_BATCH_SIZES: Record<string, number> = {
   'multilingual-e5-base': 32,
+  'bge-m3': 16,  // Larger model (1024 dims) needs smaller batches
   'nomic-embed-text-v1.5': 64,
   'nomic-embed-text-v1': 64,
   'bge-small-en-v1.5': 32,

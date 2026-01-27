@@ -581,7 +581,10 @@ CHROMA_PORT=8100
 CHROMA_CONTAINER=chromadb
 
 # Embedding model (local, no API costs)
-# multilingual-e5-base: 768 dims, best multilingual/Thai support
+# Available models:
+#   multilingual-e5-base: 768 dims, best Thai/multilingual (default)
+#   bge-m3: 1024 dims, recommended for code search, 8192 tokens
+# Switch model: EMBEDDING_MODEL=bge-m3 bun memory reindex
 EMBEDDING_PROVIDER=transformers
 EMBEDDING_MODEL=multilingual-e5-base
 
