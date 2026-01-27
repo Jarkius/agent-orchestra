@@ -2,6 +2,9 @@ import { Database } from "bun:sqlite";
 import { existsSync, unlinkSync, writeFileSync, readFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 
+// Re-export utilities
+export * from './utils';
+
 const DB_PATH = "./agents.db";
 const LOCK_PATH = "./agents.db.init.lock";
 const LOCK_TIMEOUT_MS = 30000; // 30 second timeout for stale locks
