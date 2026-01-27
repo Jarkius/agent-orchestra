@@ -170,25 +170,33 @@ export function createTempDb(): Database {
     )
   `);
 
-  // Agent tasks table (task history)
+  // Agent tasks table (task history) - matches production schema
   tempDb.run(`
     CREATE TABLE IF NOT EXISTS agent_tasks (
       id TEXT PRIMARY KEY,
-      agent_id INTEGER NOT NULL,
-      prompt TEXT NOT NULL,
+      agent_id INTEGER,
+      prompt TEXT,
       context TEXT,
       priority TEXT DEFAULT 'normal',
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'queued', 'processing', 'running', 'completed', 'failed', 'retrying', 'blocked', 'cancelled')),
       result TEXT,
       error TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      duration_ms INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       started_at TEXT,
       completed_at TEXT,
-      duration_ms INTEGER,
-      tokens_used INTEGER,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      type TEXT,
+      timeout_ms INTEGER DEFAULT 120000,
+      max_retries INTEGER DEFAULT 3,
+      retry_count INTEGER DEFAULT 0,
+      depends_on TEXT,
+      assigned_to INTEGER,
       session_id TEXT,
       unified_task_id INTEGER,
-      parent_mission_id TEXT
+      parent_mission_id TEXT,
+      execution_id TEXT
     )
   `);
 

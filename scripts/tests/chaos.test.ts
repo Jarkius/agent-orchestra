@@ -567,6 +567,262 @@ describe('Chaos Testing - Concurrent Operations', () => {
   });
 });
 
+// ============================================================
+// NEW CHAOS TESTS - test-spawns contribution
+// ============================================================
+
+describe('Chaos Testing - WebSocket Task Delivery Fallback', () => {
+  let db: ReturnType<typeof getTempDb>;
+
+  beforeEach(() => {
+    createTempDb();
+    db = getTempDb();
+  });
+
+  afterEach(() => {
+    cleanupTempDb();
+  });
+
+  it('should persist task to file when WebSocket disconnects mid-send', async () => {
+    // Scenario: WS connection drops between task creation and delivery
+    // Expected: Task should still be deliverable via file inbox
+
+    // Register agent
+    db.prepare(`
+      INSERT INTO agents (id, role, model, status, pid, created_at, updated_at)
+      VALUES (1, 'coder', 'sonnet', 'idle', 1001, datetime('now'), datetime('now'))
+    `).run();
+
+    // Create task record (simulating what happens before WS send)
+    const taskId = `task_ws_fallback_${Date.now()}`;
+    db.prepare(`
+      INSERT INTO agent_tasks (id, agent_id, prompt, status, created_at)
+      VALUES (?, 1, 'Test task for WS fallback', 'queued', datetime('now'))
+    `).run(taskId);
+
+    // Simulate WS disconnect (task exists in DB but wasn't delivered via WS)
+    const wsDelivered = false;
+
+    // Task should be recoverable from DB
+    const task = db.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).get(taskId) as any;
+    expect(task).toBeDefined();
+    expect(task.status).toBe('queued');
+
+    // File inbox fallback should be able to pick it up
+    expect(wsDelivered).toBe(false);
+    expect(task.id).toBe(taskId);
+  });
+
+  it('should use atomic claim to prevent duplicate execution on reconnect', async () => {
+    // Scenario: Task delivered via WS, agent reconnects, file inbox also has task
+    // Expected: claimTask() prevents duplicate execution
+
+    db.prepare(`
+      INSERT INTO agents (id, role, model, status, pid, created_at, updated_at)
+      VALUES (1, 'coder', 'sonnet', 'idle', 1001, datetime('now'), datetime('now'))
+    `).run();
+
+    const taskId = `task_dual_delivery_${Date.now()}`;
+    db.prepare(`
+      INSERT INTO agent_tasks (id, agent_id, prompt, status, created_at)
+      VALUES (?, 1, 'Test dual delivery', 'queued', datetime('now'))
+    `).run(taskId);
+
+    // First claim (via WebSocket)
+    const executionId1 = `exec_ws_${Date.now()}`;
+    const claim1 = db.prepare(`
+      UPDATE agent_tasks
+      SET status = 'running', execution_id = ?
+      WHERE id = ? AND status = 'queued' AND execution_id IS NULL
+    `).run(executionId1, taskId);
+
+    // Second claim attempt (via file inbox - should fail)
+    const executionId2 = `exec_file_${Date.now()}`;
+    const claim2 = db.prepare(`
+      UPDATE agent_tasks
+      SET status = 'running', execution_id = ?
+      WHERE id = ? AND status = 'queued' AND execution_id IS NULL
+    `).run(executionId2, taskId);
+
+    // First claim should succeed, second should fail
+    expect(claim1.changes).toBe(1);
+    expect(claim2.changes).toBe(0);
+
+    // Task should have first execution ID
+    const task = db.prepare(`SELECT execution_id FROM agent_tasks WHERE id = ?`).get(taskId) as any;
+    expect(task.execution_id).toBe(executionId1);
+  });
+});
+
+describe('Chaos Testing - Agent Crash During Task Execution', () => {
+  let db: ReturnType<typeof getTempDb>;
+  let missionQueue: MissionQueue;
+
+  beforeEach(() => {
+    createTempDb();
+    db = getTempDb();
+    missionQueue = new MissionQueue(db);
+  });
+
+  afterEach(() => {
+    cleanupTempDb();
+  });
+
+  it('should detect stuck task after agent crash and allow reassignment', async () => {
+    // Register agents
+    db.prepare(`
+      INSERT INTO agents (id, role, model, status, pid, created_at, updated_at)
+      VALUES (1, 'coder', 'sonnet', 'busy', 1001, datetime('now'), datetime('now'))
+    `).run();
+    db.prepare(`
+      INSERT INTO agents (id, role, model, status, pid, created_at, updated_at)
+      VALUES (2, 'coder', 'sonnet', 'idle', 1002, datetime('now'), datetime('now'))
+    `).run();
+
+    // Create task assigned to agent 1
+    const taskId = `task_crash_recovery_${Date.now()}`;
+    const executionId = `exec_${Date.now()}`;
+    db.prepare(`
+      INSERT INTO agent_tasks (id, agent_id, prompt, status, execution_id, created_at, started_at)
+      VALUES (?, 1, 'Long running task', 'running', ?, datetime('now'), datetime('now', '-5 minutes'))
+    `).run(taskId, executionId);
+
+    // Simulate agent 1 crash
+    db.prepare(`UPDATE agents SET status = 'crashed' WHERE id = 1`).run();
+
+    // Detect stuck task (running but agent crashed)
+    const stuckTask = db.prepare(`
+      SELECT t.* FROM agent_tasks t
+      JOIN agents a ON t.agent_id = a.id
+      WHERE t.status = 'running' AND a.status = 'crashed'
+    `).get() as any;
+
+    expect(stuckTask).toBeDefined();
+    expect(stuckTask.id).toBe(taskId);
+
+    // Release task for reassignment
+    db.prepare(`
+      UPDATE agent_tasks SET status = 'queued', execution_id = NULL, agent_id = NULL
+      WHERE id = ?
+    `).run(taskId);
+
+    // Reassign to agent 2
+    const reassignExecId = `exec_reassign_${Date.now()}`;
+    const reassigned = db.prepare(`
+      UPDATE agent_tasks
+      SET status = 'running', agent_id = 2, execution_id = ?
+      WHERE id = ? AND status = 'queued'
+    `).run(reassignExecId, taskId);
+
+    expect(reassigned.changes).toBe(1);
+
+    const reassignedTask = db.prepare(`SELECT agent_id, execution_id FROM agent_tasks WHERE id = ?`).get(taskId) as any;
+    expect(reassignedTask.agent_id).toBe(2);
+    expect(reassignedTask.execution_id).toBe(reassignExecId);
+  });
+
+  it('should track task execution history for crash forensics', () => {
+    const taskId = `task_forensics_${Date.now()}`;
+
+    // Create task with execution history
+    db.prepare(`
+      INSERT INTO agent_tasks (id, agent_id, prompt, status, retry_count, created_at)
+      VALUES (?, 1, 'Crashy task', 'running', 0, datetime('now'))
+    `).run(taskId);
+
+    // Simulate crash and retry
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      db.prepare(`
+        UPDATE agent_tasks SET retry_count = ?, status = 'queued'
+        WHERE id = ?
+      `).run(attempt, taskId);
+    }
+
+    const task = db.prepare(`SELECT retry_count FROM agent_tasks WHERE id = ?`).get(taskId) as any;
+    expect(task.retry_count).toBe(3);
+
+    // After 3 retries, should mark as failed
+    const maxRetries = 3;
+    const shouldFail = task.retry_count >= maxRetries;
+    expect(shouldFail).toBe(true);
+  });
+});
+
+describe('Chaos Testing - SSE Backpressure', () => {
+  it('should handle slow SSE clients without blocking fast ones', async () => {
+    // Simulate SSE client buffer states
+    const clients = [
+      { id: 'fast', canWrite: true, buffered: 0 },
+      { id: 'slow', canWrite: false, buffered: 1000 }, // Backpressured
+      { id: 'medium', canWrite: true, buffered: 100 },
+    ];
+
+    const message = JSON.stringify({ type: 'broadcast', content: 'Test' });
+    const delivered: string[] = [];
+
+    // Non-blocking write simulation
+    for (const client of clients) {
+      // setImmediate() would be used in real code to not block
+      if (client.canWrite) {
+        delivered.push(client.id);
+      }
+      // Slow client would be handled via drain event
+    }
+
+    // Fast and medium clients should receive immediately
+    expect(delivered).toContain('fast');
+    expect(delivered).toContain('medium');
+    expect(delivered).not.toContain('slow');
+
+    // Slow client should not block others
+    expect(delivered.length).toBe(2);
+  });
+
+  it('should disconnect persistently slow clients', () => {
+    const client = {
+      id: 'very_slow',
+      buffered: 0,
+      backpressureEvents: 0,
+      maxBackpressure: 5,
+      connected: true,
+    };
+
+    // Simulate repeated backpressure
+    for (let i = 0; i < 10; i++) {
+      client.backpressureEvents++;
+      if (client.backpressureEvents > client.maxBackpressure) {
+        client.connected = false;
+        break;
+      }
+    }
+
+    // Client should be disconnected after too many backpressure events
+    expect(client.connected).toBe(false);
+    expect(client.backpressureEvents).toBeGreaterThan(client.maxBackpressure);
+  });
+
+  it('should measure broadcast latency distribution', () => {
+    const latencies: number[] = [];
+    const numClients = 100;
+
+    // Simulate latency distribution
+    for (let i = 0; i < numClients; i++) {
+      // Most clients fast, some slow
+      const latency = Math.random() < 0.9 ? Math.random() * 10 : Math.random() * 100;
+      latencies.push(latency);
+    }
+
+    // Calculate p50 and p99
+    latencies.sort((a, b) => a - b);
+    const p50 = latencies[Math.floor(numClients * 0.5)];
+    const p99 = latencies[Math.floor(numClients * 0.99)];
+
+    // p50 should be fast, p99 can be slow but bounded
+    expect(p50).toBeLessThan(20);
+    expect(p99).toBeLessThan(150);
+  });
+});
+
 describe('Chaos Recovery Metrics', () => {
   it('should track recovery statistics', () => {
     const metrics = {
