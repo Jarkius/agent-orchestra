@@ -6,6 +6,9 @@
  */
 
 import { db } from './core';
+import type { Visibility } from './utils';
+
+// Note: Visibility is exported from utils.ts, not here (avoid duplicate exports)
 
 // ============================================================================
 // Types
@@ -112,8 +115,6 @@ export interface FullContext {
   mid_change_state?: MidChangeState;              // Work in progress
   continuation_bundle?: ContinuationBundle;       // Full handoff data
 }
-
-export type Visibility = 'private' | 'shared' | 'public';
 
 export interface SessionRecord {
   id: string;

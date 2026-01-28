@@ -301,7 +301,7 @@ export function clearInbox(matrixId: string): number {
     WHERE (to_matrix = ? OR to_matrix IS NULL OR message_type = 'broadcast')
       AND from_matrix != ?
       AND status = 'delivered'
-  `, matrixId, matrixId);
+  `, [matrixId, matrixId]);
   return result.changes;
 }
 
