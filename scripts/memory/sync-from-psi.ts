@@ -10,7 +10,7 @@
  * Imports from: ~/workspace/The-matrix/psi/memory/retrospectives/
  */
 
-import { saveSession, sessionExists, type SessionInput } from '../../src/db';
+import { createSession, getSessionById, type SessionRecord } from '../../src/db';
 import { initVectorDB, saveSession as saveSessionToVector } from '../../src/vector-db';
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join, dirname, basename } from 'path';
@@ -56,7 +56,7 @@ function findMarkdownFiles(dir: string): string[] {
 }
 
 // Parse retrospective markdown into session data
-function parseRetrospective(filepath: string, content: string): SessionInput | null {
+function parseRetrospective(filepath: string, content: string): SessionRecord | null {
   // Extract title from first heading
   const titleMatch = content.match(/^#\s+(.+)$/m);
   const title = titleMatch ? titleMatch[1].trim() : basename(filepath, '.md');
@@ -69,36 +69,44 @@ function parseRetrospective(filepath: string, content: string): SessionInput | n
   const dateMatch = filepath.match(/(\d{4}-\d{2}-\d{2})/);
   const timeMatch = filepath.match(/(\d{2}\.\d{2})/);
 
-  let createdAt: string;
+  let startedAt: string;
   if (dateMatch) {
     const date = dateMatch[1];
     const time = timeMatch ? timeMatch[1].replace('.', ':') : '12:00';
-    createdAt = `${date}T${time}:00Z`;
+    startedAt = `${date}T${time}:00Z`;
   } else {
     // Use file mtime as fallback
     const stat = statSync(filepath);
-    createdAt = stat.mtime.toISOString();
+    startedAt = stat.mtime.toISOString();
   }
 
-  // Extract key decisions or learnings
-  const decisionsMatch = content.match(/##\s*(?:Key Decisions|Decisions|Learnings?)\s*\n([\s\S]*?)(?=\n##|$)/i);
-  const decisions = decisionsMatch ? decisionsMatch[1].trim() : '';
+  // Extract challenges/decisions
+  const challengesMatch = content.match(/##\s*(?:Challenges|Key Decisions|Decisions)\s*\n([\s\S]*?)(?=\n##|$)/i);
+  const challenges = challengesMatch ? challengesMatch[1].trim().split('\n').filter(l => l.trim()) : [];
 
-  // Build context from full content (truncated)
-  const context = content.slice(0, 4000);
+  // Extract next steps
+  const nextStepsMatch = content.match(/##\s*(?:Next Steps|Action Items)\s*\n([\s\S]*?)(?=\n##|$)/i);
+  const nextSteps = nextStepsMatch ? nextStepsMatch[1].trim().split('\n').filter(l => l.trim()) : [];
 
   // Generate unique ID from filepath
   const relativePath = filepath.split('retrospectives/')[1] || basename(filepath);
   const id = `psi-retro-${relativePath.replace(/[^a-zA-Z0-9]/g, '-')}`;
 
+  // Build full context with parsed content
+  const fullContext = {
+    title,
+    content: content.slice(0, 4000),
+    source: `psi/memory/retrospectives/${relativePath}`,
+  };
+
   return {
     id,
-    name: title,
-    context: context,
-    summary: summary || `Retrospective imported from ${relativePath}`,
-    decisions: decisions ? decisions.split('\n').filter(l => l.trim()) : [],
-    createdAt,
-    source: `psi/memory/retrospectives/${relativePath}`,
+    summary: summary || `${title} - Retrospective imported from ${relativePath}`,
+    full_context: fullContext as any,
+    started_at: startedAt,
+    challenges,
+    next_steps: nextSteps,
+    tags: ['retrospective', 'psi-import'],
   };
 }
 
@@ -165,8 +173,8 @@ async function main() {
 
       // Check if already imported (unless --all)
       if (!importAll) {
-        const exists = await sessionExists(session.id);
-        if (exists) {
+        const existing = getSessionById(session.id);
+        if (existing) {
           skipped++;
           if (dryRun) {
             console.log(`  ⏭️  Skip (exists): ${relativePath}`);
@@ -175,23 +183,26 @@ async function main() {
         }
       }
 
+      // Extract title from full_context
+      const title = (session.full_context as any)?.title || session.id;
+
       if (dryRun) {
         console.log(`  📝 Would import: ${relativePath}`);
-        console.log(`     Title: ${session.name}`);
+        console.log(`     Title: ${title}`);
         console.log(`     ID: ${session.id}`);
         imported++;
         continue;
       }
 
       // Save to SQLite
-      await saveSession(session);
+      createSession(session);
 
       // Index in ChromaDB
       try {
         await saveSessionToVector({
           id: session.id,
-          name: session.name,
-          context: session.context,
+          name: title,
+          context: (session.full_context as any)?.content || session.summary,
           summary: session.summary,
         });
       } catch (e) {
@@ -214,17 +225,6 @@ async function main() {
 
   if (!dryRun && imported > 0) {
     announce(`Imported ${imported} retrospectives from psi memory.`, 'Tank');
-  }
-}
-
-// Helper: Check if session exists
-async function sessionExists(id: string): Promise<boolean> {
-  try {
-    const { getSession } = await import('../../src/db');
-    const session = await getSession(id);
-    return session !== null;
-  } catch {
-    return false;
   }
 }
 

@@ -11,7 +11,7 @@
  * Exports to: ~/workspace/The-matrix/psi/memory/learnings/{category}/
  */
 
-import { getAllLearnings, type Learning } from '../../src/db';
+import { listLearningsFromDb, type LearningRecord } from '../../src/db';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { execSync } from 'child_process';
@@ -35,23 +35,35 @@ function findPsiLearningsDir(): string | null {
 }
 
 // Format learning as markdown
-function formatLearningAsMarkdown(learning: Learning): string {
-  const date = new Date(learning.createdAt).toISOString().split('T')[0];
+function formatLearningAsMarkdown(learning: LearningRecord): string {
+  const date = learning.created_at ? new Date(learning.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
   const icon = getCategoryIcon(learning.category);
+
+  // Build content from available fields
+  let content = learning.description || learning.title;
+  if (learning.what_happened) {
+    content += `\n\n**What happened:** ${learning.what_happened}`;
+  }
+  if (learning.lesson) {
+    content += `\n\n**Lesson:** ${learning.lesson}`;
+  }
+  if (learning.prevention) {
+    content += `\n\n**Prevention:** ${learning.prevention}`;
+  }
 
   return `# ${icon} ${learning.title}
 
 > **Category**: ${learning.category}
-> **Confidence**: ${learning.confidence}
+> **Confidence**: ${learning.confidence || 'medium'}
 > **Created**: ${date}
 > **Source**: Agent Orchestra (matrix-memory-agents)
 
 ## Content
 
-${learning.content}
+${content}
 
 ${learning.context ? `## Context\n\n${learning.context}\n` : ''}
-${learning.source ? `## Source\n\n${learning.source}\n` : ''}
+${learning.source_url ? `## Source\n\n${learning.source_url}\n` : ''}
 
 ---
 
@@ -79,8 +91,8 @@ function getCategoryIcon(category: string): string {
 }
 
 // Generate filename from learning
-function generateFilename(learning: Learning): string {
-  const date = new Date(learning.createdAt).toISOString().split('T')[0];
+function generateFilename(learning: LearningRecord): string {
+  const date = learning.created_at ? new Date(learning.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
   const slug = learning.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -90,7 +102,7 @@ function generateFilename(learning: Learning): string {
 }
 
 // Check if learning already exported
-function isAlreadyExported(psiDir: string, learning: Learning): boolean {
+function isAlreadyExported(psiDir: string, learning: LearningRecord): boolean {
   const categoryDir = join(psiDir, learning.category);
   const filename = generateFilename(learning);
   const filepath = join(categoryDir, filename);
@@ -132,10 +144,10 @@ async function main() {
   console.log(`📁 Target: ${psiDir}`);
 
   // Get learnings from SQLite
-  const allLearnings = await getAllLearnings();
+  const allLearnings = listLearningsFromDb();
 
   // Filter by confidence
-  let learnings: Learning[];
+  let learnings: LearningRecord[];
   if (provenOnly) {
     learnings = allLearnings.filter(l => l.confidence === 'proven');
     console.log(`🎯 Filter: proven only`);
