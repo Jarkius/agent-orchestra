@@ -1,5 +1,5 @@
 {
-  "name": "test-spawns",
+  "name": "matrix-memory-agents",
   "module": "index.ts",
   "type": "module",
   "private": true,
@@ -15,7 +15,9 @@
     "memory:export": "bun run scripts/memory/export.ts",
     "memory:stats": "bun run scripts/memory/stats.ts",
     "memory:list": "bun run scripts/memory/list.ts",
-    "memory:context": "bun run scripts/memory/context.ts"
+    "memory:context": "bun run scripts/memory/context.ts",
+    "memory:sync-to-psi": "bun run scripts/memory/sync-to-psi.ts",
+    "memory:sync-from-psi": "bun run scripts/memory/sync-from-psi.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -27,6 +29,7 @@
     "@anthropic-ai/tokenizer": "^0.0.4",
     "@google/genai": "^1.38.0",
     "@huggingface/transformers": "^3.8.1",
+    "@img/sharp-libvips-darwin-arm64": "^1.2.4",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "chokidar": "^5.0.0",
     "chromadb": "^3.2.2",

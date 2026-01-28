@@ -227,6 +227,22 @@ async function main() {
       break;
     }
 
+    case 'sync-to-psi':
+    case 'sync:to-psi': {
+      // Export learnings to The Matrix psi/memory/
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./sync-to-psi');
+      break;
+    }
+
+    case 'sync-from-psi':
+    case 'sync:from-psi': {
+      // Import retrospectives from The Matrix psi/memory/
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./sync-from-psi');
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -297,6 +313,13 @@ Commands:
   correlate         Link learnings to code files (--smart for LLM)
   correlate --file   Find learnings for a specific file
   correlate --learning Find code for a specific learning
+
+psi/ Integration (The Matrix sync):
+  sync-to-psi       Export high-confidence learnings to psi/memory/
+  sync-to-psi --proven  Export only proven learnings
+  sync-to-psi --all     Export all learnings
+  sync-from-psi     Import retrospectives from psi/memory/
+  sync-from-psi --all   Re-import all (overwrite existing)
 
 Categories:
   Technical: performance, architecture, tooling, process, debugging, security, testing

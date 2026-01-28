@@ -1,0 +1,231 @@
+#!/usr/bin/env bun
+/**
+ * sync-from-psi.ts - Import retrospectives from The Matrix psi/memory/ into SQLite
+ *
+ * Usage:
+ *   bun memory sync-from-psi              # Import new retrospectives
+ *   bun memory sync-from-psi --all        # Re-import all (overwrite)
+ *   bun memory sync-from-psi --dry-run    # Show what would be imported
+ *
+ * Imports from: ~/workspace/The-matrix/psi/memory/retrospectives/
+ */
+
+import { saveSession, sessionExists, type SessionInput } from '../../src/db';
+import { initVectorDB, saveSession as saveSessionToVector } from '../../src/vector-db';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
+import { join, dirname, basename } from 'path';
+import { execSync } from 'child_process';
+
+// Configuration
+const PSI_RETROSPECTIVE_PATHS = [
+  '/Users/jarkius/workspace/The-matrix/psi/memory/retrospectives',
+  `${process.env.HOME}/workspace/The-matrix/psi/memory/retrospectives`,
+];
+
+const VOICE_BRIDGE = join(dirname(import.meta.path), 'voice-bridge.sh');
+
+// Find psi retrospectives directory
+function findPsiRetrospectivesDir(): string | null {
+  for (const path of PSI_RETROSPECTIVE_PATHS) {
+    if (existsSync(path)) {
+      return path;
+    }
+  }
+  return null;
+}
+
+// Recursively find all .md files
+function findMarkdownFiles(dir: string): string[] {
+  const files: string[] = [];
+
+  function walk(currentDir: string) {
+    const entries = readdirSync(currentDir);
+    for (const entry of entries) {
+      const fullPath = join(currentDir, entry);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.endsWith('.md')) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  walk(dir);
+  return files;
+}
+
+// Parse retrospective markdown into session data
+function parseRetrospective(filepath: string, content: string): SessionInput | null {
+  // Extract title from first heading
+  const titleMatch = content.match(/^#\s+(.+)$/m);
+  const title = titleMatch ? titleMatch[1].trim() : basename(filepath, '.md');
+
+  // Extract summary section
+  const summaryMatch = content.match(/##\s*Summary\s*\n([\s\S]*?)(?=\n##|$)/i);
+  const summary = summaryMatch ? summaryMatch[1].trim() : '';
+
+  // Extract date from filename or content
+  const dateMatch = filepath.match(/(\d{4}-\d{2}-\d{2})/);
+  const timeMatch = filepath.match(/(\d{2}\.\d{2})/);
+
+  let createdAt: string;
+  if (dateMatch) {
+    const date = dateMatch[1];
+    const time = timeMatch ? timeMatch[1].replace('.', ':') : '12:00';
+    createdAt = `${date}T${time}:00Z`;
+  } else {
+    // Use file mtime as fallback
+    const stat = statSync(filepath);
+    createdAt = stat.mtime.toISOString();
+  }
+
+  // Extract key decisions or learnings
+  const decisionsMatch = content.match(/##\s*(?:Key Decisions|Decisions|Learnings?)\s*\n([\s\S]*?)(?=\n##|$)/i);
+  const decisions = decisionsMatch ? decisionsMatch[1].trim() : '';
+
+  // Build context from full content (truncated)
+  const context = content.slice(0, 4000);
+
+  // Generate unique ID from filepath
+  const relativePath = filepath.split('retrospectives/')[1] || basename(filepath);
+  const id = `psi-retro-${relativePath.replace(/[^a-zA-Z0-9]/g, '-')}`;
+
+  return {
+    id,
+    name: title,
+    context: context,
+    summary: summary || `Retrospective imported from ${relativePath}`,
+    decisions: decisions ? decisions.split('\n').filter(l => l.trim()) : [],
+    createdAt,
+    source: `psi/memory/retrospectives/${relativePath}`,
+  };
+}
+
+// Voice announcement
+function announce(message: string, agent: string = 'Tank') {
+  if (existsSync(VOICE_BRIDGE)) {
+    try {
+      execSync(`sh "${VOICE_BRIDGE}" "${message}" "${agent}"`, { stdio: 'inherit' });
+    } catch {
+      // Silently fail voice - not critical
+    }
+  }
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const importAll = args.includes('--all');
+  const dryRun = args.includes('--dry-run');
+
+  console.log('🔄 Sync from psi/ - Import retrospectives from The Matrix\n');
+
+  // Find psi directory
+  const psiDir = findPsiRetrospectivesDir();
+  if (!psiDir) {
+    console.error('❌ Could not find psi/memory/retrospectives directory');
+    console.error('   Expected: ~/workspace/The-matrix/psi/memory/retrospectives/');
+    process.exit(1);
+  }
+
+  console.log(`📁 Source: ${psiDir}`);
+
+  // Initialize vector DB for indexing
+  if (!dryRun) {
+    await initVectorDB();
+  }
+
+  // Find all retrospective files
+  const files = findMarkdownFiles(psiDir);
+  console.log(`📊 Found ${files.length} retrospective files\n`);
+
+  if (files.length === 0) {
+    console.log('No retrospectives to import.');
+    return;
+  }
+
+  // Import each file
+  let imported = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const filepath of files) {
+    const relativePath = filepath.replace(psiDir + '/', '');
+
+    try {
+      // Read and parse file
+      const content = readFileSync(filepath, 'utf-8');
+      const session = parseRetrospective(filepath, content);
+
+      if (!session) {
+        console.log(`  ⚠️  Skip (parse error): ${relativePath}`);
+        errors++;
+        continue;
+      }
+
+      // Check if already imported (unless --all)
+      if (!importAll) {
+        const exists = await sessionExists(session.id);
+        if (exists) {
+          skipped++;
+          if (dryRun) {
+            console.log(`  ⏭️  Skip (exists): ${relativePath}`);
+          }
+          continue;
+        }
+      }
+
+      if (dryRun) {
+        console.log(`  📝 Would import: ${relativePath}`);
+        console.log(`     Title: ${session.name}`);
+        console.log(`     ID: ${session.id}`);
+        imported++;
+        continue;
+      }
+
+      // Save to SQLite
+      await saveSession(session);
+
+      // Index in ChromaDB
+      try {
+        await saveSessionToVector({
+          id: session.id,
+          name: session.name,
+          context: session.context,
+          summary: session.summary,
+        });
+      } catch (e) {
+        // Vector indexing is best-effort
+        console.log(`     ⚠️  Vector indexing failed (non-critical)`);
+      }
+
+      console.log(`  ✅ Imported: ${relativePath}`);
+      imported++;
+    } catch (e) {
+      console.log(`  ❌ Error: ${relativePath} - ${e}`);
+      errors++;
+    }
+  }
+
+  console.log(`\n📊 Summary:`);
+  console.log(`   Imported: ${imported}`);
+  console.log(`   Skipped:  ${skipped} (already exist)`);
+  console.log(`   Errors:   ${errors}`);
+
+  if (!dryRun && imported > 0) {
+    announce(`Imported ${imported} retrospectives from psi memory.`, 'Tank');
+  }
+}
+
+// Helper: Check if session exists
+async function sessionExists(id: string): Promise<boolean> {
+  try {
+    const { getSession } = await import('../../src/db');
+    const session = await getSession(id);
+    return session !== null;
+  } catch {
+    return false;
+  }
+}
+
+main().catch(console.error);
