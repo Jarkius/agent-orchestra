@@ -6,6 +6,7 @@
 import { $ } from 'bun';
 import type { IPTYManager, PTYHandle, PTYConfig, HealthStatus, AgentEvent, AgentStatus } from '../interfaces/pty';
 import { getWorktreeManager } from './worktree-manager';
+import { buildEnvAssignment, escapeShellPath, isValidEnvVarName } from '../utils/shell';
 
 const DEFAULT_CONFIG: Required<Omit<PTYConfig, 'worktree'>> & { worktree: undefined } = {
   cwd: process.cwd(),
@@ -83,23 +84,27 @@ export class PTYManager implements IPTYManager {
       throw new Error(`Failed to create pane for agent ${agentId}: ${error}`);
     }
 
-    // Build environment variables string for agent
+    // Build environment variables string for agent (with proper escaping to prevent injection)
     const envVars: string[] = [];
     if (process.env.CHROMA_URL) {
-      envVars.push(`CHROMA_URL='${process.env.CHROMA_URL}'`);
+      envVars.push(buildEnvAssignment('CHROMA_URL', process.env.CHROMA_URL));
     }
     if (process.env.CLAUDE_CODE_TASK_LIST_ID) {
-      envVars.push(`CLAUDE_CODE_TASK_LIST_ID='${process.env.CLAUDE_CODE_TASK_LIST_ID}'`);
+      envVars.push(buildEnvAssignment('CLAUDE_CODE_TASK_LIST_ID', process.env.CLAUDE_CODE_TASK_LIST_ID));
     }
-    // Add any custom env vars from config
+    // Add any custom env vars from config (validate names to prevent injection)
     for (const [key, value] of Object.entries(cfg.env || {})) {
-      envVars.push(`${key}='${value}'`);
+      if (!isValidEnvVarName(key)) {
+        debug(`Skipping invalid env var name: ${key}`);
+        continue;
+      }
+      envVars.push(buildEnvAssignment(key, String(value)));
     }
     const envPrefix = envVars.length > 0 ? envVars.join(' ') + ' ' : '';
 
-    // Start agent watcher in the pane with worktree cwd
+    // Start agent watcher in the pane with worktree cwd (escape path to prevent injection)
     const cmd = cfg.cwd && cfg.cwd !== process.cwd()
-      ? `cd ${cfg.cwd} && ${envPrefix}bun run src/agent-watcher.ts ${agentId}`
+      ? `cd ${escapeShellPath(cfg.cwd)} && ${envPrefix}bun run src/agent-watcher.ts ${agentId}`
       : `${envPrefix}bun run src/agent-watcher.ts ${agentId}`;
     debug(`Sending command: ${cmd}`);
     try {
