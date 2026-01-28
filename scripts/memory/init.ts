@@ -100,6 +100,17 @@ async function checkIndexer(port: string): Promise<boolean> {
   }
 }
 
+// Per-project port: hash matrix_id to get unique port in range 37890-38890
+// Must match the logic in src/indexer/indexer-daemon.ts
+function getDefaultIndexerPort(matrixId: string): number {
+  let hash = 0;
+  for (let i = 0; i < matrixId.length; i++) {
+    hash = ((hash << 5) - hash) + matrixId.charCodeAt(i);
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return 37890 + Math.abs(hash % 1000);
+}
+
 function checkDockerRunning(): boolean {
   try {
     execSync('docker info', { encoding: 'utf8', stdio: 'pipe' });
@@ -123,8 +134,8 @@ async function main() {
   const { pin: cliPin } = parseArgs();
   const hubPort = process.env.MATRIX_HUB_PORT || '8081';
   const daemonPort = process.env.MATRIX_DAEMON_PORT || config.daemon_port?.toString() || '37888';
-  const indexerPort = process.env.INDEXER_DAEMON_PORT || '37889';
   const matrixId = config.matrix_id || getMatrixId();
+  const indexerPort = process.env.INDEXER_DAEMON_PORT || String(getDefaultIndexerPort(matrixId));
   const projectRoot = process.cwd();
 
   // PIN priority: CLI > env > config
