@@ -80,6 +80,13 @@ async function main() {
       await import('./recall');
       break;
 
+    case 'reflect':
+    case 'wisdom':
+      // Get random wisdom from knowledge base
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./reflect');
+      break;
+
     case 'export':
       await import('./export');
       break;
@@ -265,6 +272,9 @@ Commands:
   recall            Resume last session (show context to continue)
   recall "query"    Semantic search for sessions and learnings
   recall "#5"       Recall specific learning by ID
+  reflect           Get random wisdom (Oracle Reflect pattern)
+  reflect -c <cat>  Filter by category (philosophy, architecture, etc.)
+  reflect -C proven Only proven learnings
   export [path]     Export learnings to LEARNINGS.md
   stats             Show session and learning statistics
   list [type]       List recent sessions or learnings

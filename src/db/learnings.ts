@@ -402,3 +402,87 @@ export function getLearningsBySession(sessionId: string): LearningRecord[] {
     `SELECT * FROM learnings WHERE source_session_id = ? ORDER BY created_at`
   ).all(sessionId) as LearningRecord[];
 }
+
+// ============================================================================
+// Random Wisdom (Oracle Reflect Pattern)
+// ============================================================================
+
+export interface RandomWisdomOptions {
+  category?: string;
+  minConfidence?: 'low' | 'medium' | 'high' | 'proven';
+  minMaturity?: MaturityStage;
+  excludeIds?: number[];
+}
+
+/**
+ * Get a random learning for serendipitous wisdom retrieval.
+ * Implements the Oracle Reflect pattern for breaking transactional coding loops.
+ *
+ * @param opts - Filter options for wisdom selection
+ * @returns A random learning matching the criteria, or null if none found
+ */
+export function getRandomWisdom(opts?: RandomWisdomOptions): LearningRecord | null {
+  const confidenceOrder = ['low', 'medium', 'high', 'proven'];
+  const maturityOrder: MaturityStage[] = ['observation', 'learning', 'pattern', 'principle', 'wisdom'];
+
+  // Build WHERE clauses
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  // Filter by minimum confidence
+  if (opts?.minConfidence) {
+    const minIdx = confidenceOrder.indexOf(opts.minConfidence);
+    const validConfidences = confidenceOrder.slice(minIdx);
+    conditions.push(`confidence IN (${validConfidences.map(() => '?').join(',')})`);
+    params.push(...validConfidences);
+  }
+
+  // Filter by minimum maturity
+  if (opts?.minMaturity) {
+    const minIdx = maturityOrder.indexOf(opts.minMaturity);
+    const validStages = maturityOrder.slice(minIdx);
+    conditions.push(`maturity_stage IN (${validStages.map(() => '?').join(',')})`);
+    params.push(...validStages);
+  }
+
+  // Filter by category
+  if (opts?.category) {
+    conditions.push(`category = ?`);
+    params.push(opts.category);
+  }
+
+  // Exclude specific IDs
+  if (opts?.excludeIds && opts.excludeIds.length > 0) {
+    conditions.push(`id NOT IN (${opts.excludeIds.map(() => '?').join(',')})`);
+    params.push(...opts.excludeIds);
+  }
+
+  // Build query
+  let query = `SELECT * FROM learnings`;
+  if (conditions.length > 0) {
+    query += ` WHERE ${conditions.join(' AND ')}`;
+  }
+  query += ` ORDER BY RANDOM() LIMIT 1`;
+
+  return db.query(query).get(...params) as LearningRecord | null;
+}
+
+/**
+ * Get multiple random learnings (for variety/batch display)
+ */
+export function getRandomWisdomBatch(count = 3, opts?: RandomWisdomOptions): LearningRecord[] {
+  const results: LearningRecord[] = [];
+  const excludeIds: number[] = [...(opts?.excludeIds || [])];
+
+  for (let i = 0; i < count; i++) {
+    const wisdom = getRandomWisdom({ ...opts, excludeIds });
+    if (wisdom && wisdom.id) {
+      results.push(wisdom);
+      excludeIds.push(wisdom.id);
+    } else {
+      break; // No more matching learnings
+    }
+  }
+
+  return results;
+}
