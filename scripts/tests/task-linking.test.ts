@@ -262,12 +262,12 @@ describe("Task Completion Sync", () => {
   it("tracks token usage per unified_task", () => {
     const unifiedTask = createTestTask(db, { title: "Token test", domain: "project" });
 
-    createTestAgentTask(db, { unified_task_id: unifiedTask.id, tokens_used: 1000 });
-    createTestAgentTask(db, { unified_task_id: unifiedTask.id, tokens_used: 2500 });
-    createTestAgentTask(db, { unified_task_id: unifiedTask.id, tokens_used: 500 });
+    createTestAgentTask(db, { unified_task_id: unifiedTask.id, input_tokens: 1000 });
+    createTestAgentTask(db, { unified_task_id: unifiedTask.id, input_tokens: 2500 });
+    createTestAgentTask(db, { unified_task_id: unifiedTask.id, input_tokens: 500 });
 
     const result = db.query(`
-      SELECT SUM(tokens_used) as total_tokens
+      SELECT SUM(input_tokens) as total_tokens
       FROM agent_tasks
       WHERE unified_task_id = ?
     `).get(unifiedTask.id) as any;
@@ -447,8 +447,8 @@ describe("Task Lineage Queries", () => {
   it("calculates stats per unified_task", () => {
     const unifiedTask = createTestTask(db, { title: "Stats test", domain: "project" });
 
-    createTestAgentTask(db, { unified_task_id: unifiedTask.id, status: "completed", tokens_used: 1000, duration_ms: 5000 });
-    createTestAgentTask(db, { unified_task_id: unifiedTask.id, status: "completed", tokens_used: 2000, duration_ms: 3000 });
+    createTestAgentTask(db, { unified_task_id: unifiedTask.id, status: "completed", input_tokens: 1000, duration_ms: 5000 });
+    createTestAgentTask(db, { unified_task_id: unifiedTask.id, status: "completed", input_tokens: 2000, duration_ms: 3000 });
     createTestAgentTask(db, { unified_task_id: unifiedTask.id, status: "failed" });
 
     const stats = db.query(`
@@ -456,7 +456,7 @@ describe("Task Lineage Queries", () => {
         COUNT(*) as total_tasks,
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-        SUM(tokens_used) as total_tokens,
+        SUM(input_tokens) as total_tokens,
         SUM(duration_ms) as total_duration_ms
       FROM agent_tasks
       WHERE unified_task_id = ?
@@ -672,20 +672,20 @@ describe("Task Linking Integration", () => {
     const feature2 = createTestTask(db, { title: "Feature 2", domain: "project" });
 
     // Feature 1: 3 tasks, various costs
-    createTestAgentTask(db, { unified_task_id: feature1.id, tokens_used: 1000, duration_ms: 10000 });
-    createTestAgentTask(db, { unified_task_id: feature1.id, tokens_used: 2000, duration_ms: 20000 });
-    createTestAgentTask(db, { unified_task_id: feature1.id, tokens_used: 500, duration_ms: 5000 });
+    createTestAgentTask(db, { unified_task_id: feature1.id, input_tokens: 1000, duration_ms: 10000 });
+    createTestAgentTask(db, { unified_task_id: feature1.id, input_tokens: 2000, duration_ms: 20000 });
+    createTestAgentTask(db, { unified_task_id: feature1.id, input_tokens: 500, duration_ms: 5000 });
 
     // Feature 2: 2 tasks, higher costs
-    createTestAgentTask(db, { unified_task_id: feature2.id, tokens_used: 5000, duration_ms: 60000 });
-    createTestAgentTask(db, { unified_task_id: feature2.id, tokens_used: 3000, duration_ms: 40000 });
+    createTestAgentTask(db, { unified_task_id: feature2.id, input_tokens: 5000, duration_ms: 60000 });
+    createTestAgentTask(db, { unified_task_id: feature2.id, input_tokens: 3000, duration_ms: 40000 });
 
     // Cost report per feature
     const costs = db.query(`
       SELECT
         ut.title,
         COUNT(at.id) as task_count,
-        SUM(at.tokens_used) as total_tokens,
+        SUM(at.input_tokens) as total_tokens,
         SUM(at.duration_ms) / 1000.0 as total_seconds
       FROM unified_tasks ut
       LEFT JOIN agent_tasks at ON ut.id = at.unified_task_id

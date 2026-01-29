@@ -66,7 +66,7 @@ describe("Flow Tests", () => {
         unified_task_id: requirement.id,
         parent_mission_id: mission.id,
         status: "completed",
-        tokens_used: 3000,
+        input_tokens: 3000,
         duration_ms: 60000,
       });
 
@@ -77,7 +77,7 @@ describe("Flow Tests", () => {
         unified_task_id: requirement.id,
         parent_mission_id: mission.id,
         status: "completed",
-        tokens_used: 1500,
+        input_tokens: 1500,
         duration_ms: 30000,
       });
 
@@ -88,7 +88,7 @@ describe("Flow Tests", () => {
         unified_task_id: requirement.id,
         parent_mission_id: mission.id,
         status: "completed",
-        tokens_used: 1000,
+        input_tokens: 1000,
         duration_ms: 20000,
       });
 
@@ -129,7 +129,7 @@ describe("Flow Tests", () => {
         SELECT
           COUNT(DISTINCT at.id) as task_count,
           COUNT(DISTINCT at.agent_id) as agent_count,
-          SUM(at.tokens_used) as total_tokens,
+          SUM(at.input_tokens) as total_tokens,
           SUM(at.duration_ms) as total_duration
         FROM agent_tasks at
         WHERE at.unified_task_id = ?
@@ -191,7 +191,7 @@ describe("Flow Tests", () => {
         parent_mission_id: mission.id,
         status: "completed",
         result: "Found circular reference in event handlers",
-        tokens_used: 2000,
+        input_tokens: 2000,
         duration_ms: 45000,
       });
 
@@ -321,7 +321,7 @@ describe("Stress Tests", () => {
 
       // Insert 1000 tasks
       const insertStmt = db.prepare(`
-        INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, tokens_used, duration_ms)
+        INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, input_tokens, duration_ms)
         VALUES (?, ?, ?, 'completed', ?, ?, ?)
       `);
 
@@ -356,7 +356,7 @@ describe("Stress Tests", () => {
       const stats = db.query(`
         SELECT
           COUNT(*) as count,
-          SUM(tokens_used) as total_tokens,
+          SUM(input_tokens) as total_tokens,
           AVG(duration_ms) as avg_duration
         FROM agent_tasks
         WHERE unified_task_id = ?
@@ -557,7 +557,7 @@ describe("Stress Tests", () => {
             for (let t = 0; t < 10; t++) {
               const taskId = `task_${u}_${m}_${t}_${randomString(4)}`;
               db.run(
-                `INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, parent_mission_id, tokens_used)
+                `INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, parent_mission_id, input_tokens)
                  VALUES (?, 1, ?, 'completed', ?, ?, ?)`,
                 [taskId, `Task ${u}-${m}-${t}`, unifiedId, missionId, 100]
               );
@@ -587,7 +587,7 @@ describe("Stress Tests", () => {
           ut.title,
           (SELECT COUNT(*) FROM missions WHERE unified_task_id = ut.id) as mission_count,
           (SELECT COUNT(*) FROM agent_tasks WHERE unified_task_id = ut.id) as task_count,
-          (SELECT SUM(tokens_used) FROM agent_tasks WHERE unified_task_id = ut.id) as total_tokens,
+          (SELECT SUM(input_tokens) FROM agent_tasks WHERE unified_task_id = ut.id) as total_tokens,
           (SELECT COUNT(*) FROM learnings WHERE source_unified_task_id = ut.id) as learning_count
         FROM unified_tasks ut
       `).all() as any[];

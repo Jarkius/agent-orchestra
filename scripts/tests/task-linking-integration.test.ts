@@ -537,13 +537,13 @@ describe("Real Workflow Simulation", () => {
     const testTask = `task_${randomString(8)}`;
 
     db.run(
-      `INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, parent_mission_id, tokens_used, duration_ms)
+      `INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, parent_mission_id, input_tokens, duration_ms)
        VALUES (?, ?, 'Write JWT middleware', 'completed', ?, ?, 2500, 45000)`,
       [codeTask, agent1.id, unifiedTask.id, mission.id]
     );
 
     db.run(
-      `INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, parent_mission_id, tokens_used, duration_ms)
+      `INSERT INTO agent_tasks (id, agent_id, prompt, status, unified_task_id, parent_mission_id, input_tokens, duration_ms)
        VALUES (?, ?, 'Write auth tests', 'completed', ?, ?, 1500, 30000)`,
       [testTask, agent2.id, unifiedTask.id, mission.id]
     );
@@ -581,7 +581,7 @@ describe("Real Workflow Simulation", () => {
     const tasks = db.query(`SELECT * FROM agent_tasks WHERE unified_task_id = ?`).all(unifiedTask.id) as any[];
     const learnings = db.query(`SELECT * FROM learnings WHERE source_unified_task_id = ?`).all(unifiedTask.id) as any[];
     const taskStats = db.query(`
-      SELECT SUM(tokens_used) as total_tokens, SUM(duration_ms) as total_duration_ms
+      SELECT SUM(input_tokens) as total_tokens, SUM(duration_ms) as total_duration_ms
       FROM agent_tasks WHERE unified_task_id = ?
     `).get(unifiedTask.id) as any;
 

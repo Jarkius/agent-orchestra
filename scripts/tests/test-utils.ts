@@ -481,7 +481,8 @@ export interface TestAgentTask {
   result?: string;
   error?: string;
   duration_ms?: number;
-  tokens_used?: number;
+  input_tokens?: number;
+  output_tokens?: number;
   session_id?: string;
   unified_task_id?: number;
   parent_mission_id?: string;
@@ -558,15 +559,16 @@ export function createTestAgentTask(db: Database, data: Partial<TestAgentTask> =
     result: data.result,
     error: data.error,
     duration_ms: data.duration_ms,
-    tokens_used: data.tokens_used,
+    input_tokens: data.input_tokens,
+    output_tokens: data.output_tokens,
     session_id: data.session_id,
     unified_task_id: data.unified_task_id,
     parent_mission_id: data.parent_mission_id,
   };
 
   db.run(
-    `INSERT INTO agent_tasks (id, agent_id, prompt, context, priority, status, result, error, duration_ms, tokens_used, session_id, unified_task_id, parent_mission_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_tasks (id, agent_id, prompt, context, priority, status, result, error, duration_ms, input_tokens, output_tokens, session_id, unified_task_id, parent_mission_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       task.id,
       task.agent_id,
@@ -577,7 +579,8 @@ export function createTestAgentTask(db: Database, data: Partial<TestAgentTask> =
       task.result ?? null,
       task.error ?? null,
       task.duration_ms ?? null,
-      task.tokens_used ?? null,
+      task.input_tokens ?? null,
+      task.output_tokens ?? null,
       task.session_id ?? null,
       task.unified_task_id ?? null,
       task.parent_mission_id ?? null,
