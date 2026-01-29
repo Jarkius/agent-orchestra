@@ -1109,3 +1109,10 @@ db.run(`
 
 // Run schema initialization at module load
 initializeSchema();
+
+// Initialize behavioral logging schema (imported lazily to avoid circular deps)
+import('./behavioral-logs').then(module => {
+  module.initBehavioralLogsSchema();
+}).catch(() => {
+  // Behavioral logs module not available yet - will be initialized on first use
+});

@@ -62,5 +62,8 @@ export * from './analytics';
 // Knowledge management
 export * from './knowledge';
 
+// Behavioral logging (search, consult, decisions, access)
+export * from './behavioral-logs';
+
 // Data management
 export * from './purge';
