@@ -233,6 +233,14 @@ async function main() {
       break;
     }
 
+    case 'web':
+    case 'search-web': {
+      // Web search via Brave Search API
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./web-search');
+      break;
+    }
+
     case 'quality': {
       // Score learnings by quality
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
@@ -343,6 +351,9 @@ Commands:
   map --update      Update CLAUDE.md with codebase map
   llm "prompt"      Query external LLMs (Gemini, OpenAI, Anthropic)
   llm providers     List available LLM providers (based on API keys)
+  web "query"       Search the web via Brave Search API
+  web "q" --recent  Recent results (past week)
+  web "q" --capture Save results as a learning
   quality           Score all learnings by quality (--smart for LLM)
   analyze --sessions Cross-session pattern detection
   analyze --codebase Codebase structure analysis
