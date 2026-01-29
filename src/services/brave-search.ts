@@ -221,16 +221,36 @@ export async function searchTech(
 // ============================================================================
 
 import { createLearning } from '../db';
+import {
+  fetchAndExtract,
+  isExtractionAvailable,
+  getBestProvider,
+  type ExtractedInsight,
+} from './content-fetcher';
+import type { LLMProvider } from './external-llm';
+
+export interface DeepSearchResult extends SearchResult {
+  insight?: ExtractedInsight;
+  extractionError?: string;
+}
+
+export interface DeepSearchOptions extends BraveSearchOptions {
+  // Deep extraction options
+  deep?: boolean;              // Enable content extraction
+  extractCount?: number;       // How many URLs to extract (default: 3)
+  provider?: LLMProvider;      // LLM provider for extraction
+  // Capture options
+  captureAsLearning?: boolean;
+  learningCategory?: string;
+  includeNews?: boolean;
+}
 
 /**
  * Search and optionally capture results as a learning
  */
 export async function searchAndCapture(
   query: string,
-  options: BraveSearchOptions & {
-    captureAsLearning?: boolean;
-    learningCategory?: string;
-  } = {}
+  options: DeepSearchOptions = {}
 ): Promise<{ results: SearchResult[]; learningId?: number }> {
   const results = await search(query, options);
 
@@ -253,4 +273,87 @@ export async function searchAndCapture(
   }
 
   return { results, learningId };
+}
+
+/**
+ * Deep search: Search, fetch content, and extract insights using LLM
+ */
+export async function deepSearch(
+  query: string,
+  options: DeepSearchOptions = {}
+): Promise<{
+  results: DeepSearchResult[];
+  learningId?: number;
+  extractionStats: { attempted: number; succeeded: number; failed: number };
+}> {
+  const {
+    extractCount = 3,
+    provider = isExtractionAvailable() ? getBestProvider() : 'gemini',
+    ...searchOptions
+  } = options;
+
+  // First, do the regular search
+  const results = await search(query, searchOptions);
+
+  // Stats tracking
+  const stats = { attempted: 0, succeeded: 0, failed: 0 };
+
+  // Extract content from top results
+  const deepResults: DeepSearchResult[] = [];
+
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i]!;
+
+    if (i < extractCount && isExtractionAvailable()) {
+      stats.attempted++;
+      try {
+        const insight = await fetchAndExtract(result.url, provider);
+        deepResults.push({ ...result, insight });
+        stats.succeeded++;
+      } catch (error: any) {
+        deepResults.push({
+          ...result,
+          extractionError: error.message || String(error),
+        });
+        stats.failed++;
+      }
+    } else {
+      deepResults.push(result);
+    }
+  }
+
+  // Optionally capture as learning (with extracted insights)
+  let learningId: number | undefined;
+
+  if (options.captureAsLearning && deepResults.length > 0) {
+    const extracted = deepResults.filter(r => r.insight);
+    const description = extracted.length > 0
+      ? extracted.map((r, i) => {
+          const insight = r.insight!;
+          const keyPointsStr = insight.keyPoints.length > 0
+            ? '\n\n**Key Points:**\n' + insight.keyPoints.map(p => `- ${p}`).join('\n')
+            : '';
+          return `### ${i + 1}. ${insight.title}\n${r.url}\n\n${insight.summary}${keyPointsStr}`;
+        }).join('\n\n---\n\n')
+      : deepResults.slice(0, 5).map((r, i) =>
+          `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description}`
+        ).join('\n\n');
+
+    learningId = createLearning({
+      category: options.learningCategory || 'insight',
+      title: `Deep research: ${query}`,
+      description: `Research findings for "${query}":\n\n${description}`,
+      source_url: deepResults.slice(0, 5).map(r => r.url).join(', '),
+      confidence: extracted.length > 0 ? 'medium' : 'low',
+    });
+  }
+
+  return { results: deepResults, learningId, extractionStats: stats };
+}
+
+/**
+ * Check if deep search (with LLM extraction) is available
+ */
+export function isDeepSearchAvailable(): boolean {
+  return isBraveSearchAvailable() && isExtractionAvailable();
 }

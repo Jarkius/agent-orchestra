@@ -234,8 +234,9 @@ async function main() {
     }
 
     case 'web':
-    case 'search-web': {
-      // Web search via Brave Search API
+    case 'search-web':
+    case 'research': {
+      // Web search via Brave Search API (research is alias for deep search)
       process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
       await import('./web-search');
       break;
@@ -354,6 +355,8 @@ Commands:
   web "query"       Search the web via Brave Search API
   web "q" --recent  Recent results (past week)
   web "q" --capture Save results as a learning
+  web "q" --deep    Fetch content & extract insights with LLM
+  web "q" -d -c     Deep search + capture as learning (research mode)
   quality           Score all learnings by quality (--smart for LLM)
   analyze --sessions Cross-session pattern detection
   analyze --codebase Codebase structure analysis
