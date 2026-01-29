@@ -24,6 +24,13 @@ import {
   type DeepSearchResult,
 } from '../../src/services/brave-search';
 import { ExternalLLM, type LLMProvider } from '../../src/services/external-llm';
+import {
+  fetchAndExtract,
+  isExtractionAvailable,
+  getBestProvider,
+  type ExtractedInsight,
+} from '../../src/services/content-fetcher';
+import { createLearning } from '../../src/db';
 
 // Parse command line arguments
 const { positionals, values } = parseArgs({
@@ -46,6 +53,11 @@ const { positionals, values } = parseArgs({
 });
 
 const query = positionals.join(' ');
+
+// Check if query looks like a URL
+function isUrl(str: string): boolean {
+  return str.startsWith('http://') || str.startsWith('https://') || str.startsWith('www.');
+}
 
 function printHelp() {
   console.log(`
@@ -77,8 +89,12 @@ Examples:
   bun memory web "ChromaDB embedding" --capture -C architecture
   bun memory web "React server components" --deep --capture
 
-Requires BRAVE_API_KEY in .env.local
-Deep extraction also requires GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY
+Direct URL extraction (no Brave API needed):
+  bun memory web https://github.com/user/repo
+  bun memory web https://example.com/article --capture
+
+Requires BRAVE_API_KEY in .env.local for web search
+Direct URL and deep extraction require GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY
 `);
 }
 
@@ -145,10 +161,85 @@ function formatDeepResult(result: DeepSearchResult, index: number): string {
   return lines.join('\n');
 }
 
+function formatInsight(insight: ExtractedInsight): string {
+  const lines: string[] = [];
+
+  lines.push(`\x1b[1m${insight.title}\x1b[0m`);
+  lines.push(`\x1b[36m${insight.url}\x1b[0m`);
+  lines.push('');
+  lines.push(`\x1b[33mSummary:\x1b[0m`);
+  lines.push(insight.summary);
+
+  if (insight.keyPoints.length > 0) {
+    lines.push('');
+    lines.push(`\x1b[33mKey Points:\x1b[0m`);
+    for (const point of insight.keyPoints) {
+      lines.push(`  • ${point}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`\x1b[2m[${insight.contentType} via ${insight.provider}/${insight.model}]\x1b[0m`);
+
+  return lines.join('\n');
+}
+
+async function handleDirectUrl(url: string) {
+  const provider = values.provider as LLMProvider | undefined;
+
+  // Check LLM availability
+  if (!isExtractionAvailable()) {
+    console.error('\n❌ No LLM API key found for content extraction.');
+    console.error('   Add GEMINI_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY to .env.local\n');
+    process.exit(1);
+  }
+
+  console.log(`\n🔗 Extracting content from: ${url}\n`);
+
+  try {
+    const insight = await fetchAndExtract(url, provider || getBestProvider());
+
+    if (values.json) {
+      console.log(JSON.stringify(insight, null, 2));
+      return;
+    }
+
+    console.log(formatInsight(insight));
+
+    // Optionally capture as learning
+    if (values.capture) {
+      const keyPointsStr = insight.keyPoints.length > 0
+        ? '\n\n**Key Points:**\n' + insight.keyPoints.map(p => `- ${p}`).join('\n')
+        : '';
+
+      const learningId = createLearning({
+        category: values.category || 'insight',
+        title: insight.title,
+        description: `${insight.summary}${keyPointsStr}`,
+        source_url: insight.url,
+        confidence: 'medium',
+      });
+
+      console.log(`\n✅ Captured as Learning #${learningId}`);
+    }
+
+    console.log('');
+  } catch (error: any) {
+    console.error(`\n❌ Extraction failed: ${error.message}\n`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   if (values.help || !query) {
     printHelp();
     process.exit(values.help ? 0 : 1);
+  }
+
+  // Handle direct URL extraction (no Brave API needed)
+  if (isUrl(query)) {
+    await handleDirectUrl(query);
+    return;
   }
 
   // Check if API key is available
