@@ -4,6 +4,14 @@
  *
  * Phase 3: Dedicated hub process for matrix-to-matrix communication
  * Follows the same patterns as ws-server.ts but for matrices instead of agents
+ *
+ * TLS Support:
+ *   Enable secure WebSocket (wss://) by setting:
+ *   - MATRIX_HUB_TLS_CERT: Path to PEM certificate file
+ *   - MATRIX_HUB_TLS_KEY: Path to PEM private key file
+ *   - MATRIX_HUB_TLS_PASSPHRASE: (optional) Passphrase for encrypted key
+ *
+ *   Or programmatically via startHub({ tls: { cert, key, passphrase } })
  */
 
 import { randomBytes, createHash } from 'crypto';
@@ -24,6 +32,12 @@ const HUB_SECRET = process.env.MATRIX_HUB_SECRET || 'default-hub-secret-change-m
 const TOKEN_EXPIRY_MS = parseInt(process.env.MATRIX_TOKEN_EXPIRY_HOURS || '2') * 60 * 60 * 1000; // Default 2 hours
 const HEARTBEAT_INTERVAL_MS = 10000; // 10 seconds
 const HEARTBEAT_TIMEOUT_MS = 30000; // 30 seconds
+
+// TLS Configuration - enables wss:// secure WebSocket connections
+// Set both MATRIX_HUB_TLS_CERT and MATRIX_HUB_TLS_KEY to enable TLS
+const TLS_CERT_PATH = process.env.MATRIX_HUB_TLS_CERT;
+const TLS_KEY_PATH = process.env.MATRIX_HUB_TLS_KEY;
+const TLS_PASSPHRASE = process.env.MATRIX_HUB_TLS_PASSPHRASE; // Optional passphrase for encrypted key
 
 // PIN Authentication - like WiFi password for the hub
 // These are read at startup but can be overridden by startHub config for testing
@@ -218,10 +232,17 @@ function notifyPresenceChange(matrixId: string, status: MatrixStatus, displayNam
 
 // ============ WebSocket Hub Server ============
 
+export interface TlsConfig {
+  cert: string;  // Path to certificate file (PEM format)
+  key: string;   // Path to private key file (PEM format)
+  passphrase?: string;  // Optional passphrase for encrypted private key
+}
+
 export interface HubConfig {
   port?: number;
   hostname?: string;
   disablePin?: boolean; // For testing - disable PIN authentication
+  tls?: TlsConfig;      // TLS/SSL configuration for secure connections (wss://)
 }
 
 /**
@@ -231,6 +252,7 @@ export function startHub(portOrConfig?: number | HubConfig, hostname?: string): 
   // Handle both legacy (port, hostname) and new (config) signatures
   let port = HUB_PORT;
   let host = HUB_HOST;
+  let tlsConfig: TlsConfig | undefined;
 
   if (typeof portOrConfig === 'object') {
     port = portOrConfig.port ?? HUB_PORT;
@@ -238,18 +260,39 @@ export function startHub(portOrConfig?: number | HubConfig, hostname?: string): 
     if (portOrConfig.disablePin) {
       pinDisabled = true;
     }
+    tlsConfig = portOrConfig.tls;
   } else if (typeof portOrConfig === 'number') {
     port = portOrConfig;
     host = hostname ?? HUB_HOST;
   }
+
+  // Check for TLS config from environment if not provided in config
+  if (!tlsConfig && TLS_CERT_PATH && TLS_KEY_PATH) {
+    tlsConfig = {
+      cert: TLS_CERT_PATH,
+      key: TLS_KEY_PATH,
+      passphrase: TLS_PASSPHRASE,
+    };
+  }
+
   if (server) {
     console.log('[Hub] Server already running');
     return;
   }
 
+  // Build TLS options for Bun.serve if configured
+  const tlsOptions = tlsConfig ? {
+    tls: {
+      cert: Bun.file(tlsConfig.cert),
+      key: Bun.file(tlsConfig.key),
+      passphrase: tlsConfig.passphrase,
+    },
+  } : {};
+
   server = Bun.serve({
     port,
     hostname: host,
+    ...tlsOptions,
 
     fetch(req, server) {
       const url = new URL(req.url);
@@ -547,6 +590,22 @@ export function isHubRunning(): boolean {
   return server !== null;
 }
 
+/**
+ * Check if TLS/SSL is enabled for secure WebSocket connections
+ * Returns true if both cert and key paths are configured
+ */
+export function isTlsEnabled(): boolean {
+  return !!(TLS_CERT_PATH && TLS_KEY_PATH);
+}
+
+/**
+ * Get the hub URL with correct protocol (ws:// or wss://)
+ */
+export function getHubUrl(): string {
+  const protocol = isTlsEnabled() ? 'wss' : 'ws';
+  return `${protocol}://${HUB_HOST}:${HUB_PORT}`;
+}
+
 // ============ Auto-start if run directly ============
 
 if (import.meta.main) {
@@ -572,8 +631,13 @@ if (import.meta.main) {
   });
 
   const displayHost = HUB_HOST === '0.0.0.0' ? 'all interfaces' : HUB_HOST;
-  console.log(`Matrix Hub running on ws://${HUB_HOST}:${HUB_PORT}`);
+  const tlsEnabled = !!(TLS_CERT_PATH && TLS_KEY_PATH);
+  const protocol = tlsEnabled ? 'wss' : 'ws';
+  console.log(`Matrix Hub running on ${protocol}://${HUB_HOST}:${HUB_PORT}`);
   console.log(`  Binding: ${displayHost}`);
+  if (tlsEnabled) {
+    console.log(`  🔒 TLS enabled (secure WebSocket)`);
+  }
   if (HUB_HOST === 'localhost') {
     console.log(`  Tip: Use MATRIX_HUB_HOST=0.0.0.0 for LAN access`);
   }
@@ -587,6 +651,14 @@ if (import.meta.main) {
     console.log(`  🔐 Hub PIN: ${hubPin}`);
     console.log(`     Share this PIN with matrices that need to connect.`);
     console.log(`     Set MATRIX_HUB_PIN=disabled for open access.`);
+  }
+
+  // TLS configuration hints
+  if (!tlsEnabled) {
+    console.log();
+    console.log('  💡 TLS disabled. To enable secure connections:');
+    console.log('     MATRIX_HUB_TLS_CERT=/path/to/cert.pem');
+    console.log('     MATRIX_HUB_TLS_KEY=/path/to/key.pem');
   }
 
   console.log();

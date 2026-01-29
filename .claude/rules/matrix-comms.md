@@ -151,16 +151,44 @@ bun run src/matrix-daemon.ts status  # Check status
 - Check `--inbox` on receiving matrix
 - SQLite fallback stores undelivered messages
 
-## Future: Internet Communication
+## TLS/SSL Secure Connections
+
+Enable secure WebSocket (wss://) for internet or sensitive LAN traffic:
+
+### Generate Certificates
+```bash
+# Self-signed cert for testing (not for production)
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+
+# For production, use Let's Encrypt or your CA
+```
+
+### Start Hub with TLS
+```bash
+# Via environment variables
+export MATRIX_HUB_TLS_CERT=/path/to/cert.pem
+export MATRIX_HUB_TLS_KEY=/path/to/key.pem
+export MATRIX_HUB_TLS_PASSPHRASE=optional  # If key is encrypted
+bun run src/matrix-hub.ts
+```
+
+### Client Connection
+```bash
+# Clients connect via wss://
+export MATRIX_HUB_URL=wss://your-hub.example.com:8081
+bun run src/matrix-daemon.ts start --pin <PIN>
+```
+
+## Internet Communication
 
 Deploy hub to cloud for remote access:
 ```bash
 # On cloud server (Fly.io, Railway, VPS)
 export MATRIX_HUB_HOST=0.0.0.0
+export MATRIX_HUB_TLS_CERT=/etc/letsencrypt/live/your-domain/fullchain.pem
+export MATRIX_HUB_TLS_KEY=/etc/letsencrypt/live/your-domain/privkey.pem
 bun run src/matrix-hub.ts
 
 # Clients connect via public URL
 export MATRIX_HUB_URL=wss://your-hub.fly.dev
 ```
-
-TLS recommended for internet traffic.
