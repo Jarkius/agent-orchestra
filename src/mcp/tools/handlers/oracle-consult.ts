@@ -15,8 +15,10 @@ import {
   getHighConfidenceLearnings,
   searchLearningsFTS,
   logConsultation,
-  getLearningById,
+  getActiveDecisions,
+  recordDecision,
   type LearningRecord,
+  type Decision,
 } from '../../../db';
 import {
   searchLearnings,
@@ -38,6 +40,18 @@ const ConsultSchema = z.object({
 });
 
 type ConsultInput = z.infer<typeof ConsultSchema>;
+
+const RecordDecisionSchema = z.object({
+  title: z.string().min(5, 'Title must be at least 5 characters'),
+  decision: z.string().min(10, 'Decision must be at least 10 characters'),
+  rationale: z.string().optional(),
+  context: z.string().optional(),
+  alternatives: z.array(z.string()).optional(),
+  related_task_id: z.string().optional(),
+  agent_id: z.number().optional(),
+});
+
+type RecordDecisionInput = z.infer<typeof RecordDecisionSchema>;
 
 // ============ Tool Definitions ============
 
@@ -61,6 +75,27 @@ export const oracleConsultTools: ToolDefinition[] = [
       required: ['agent_id', 'question', 'question_type'],
     },
   },
+  {
+    name: 'record_decision',
+    description: 'Record an architectural decision for future AI sessions to reference. Use after making significant design choices that other sessions should know about.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short title for the decision (e.g., "Use SQLite FTS5 for search")' },
+        decision: { type: 'string', description: 'The decision made - what was chosen and why briefly' },
+        rationale: { type: 'string', description: 'Detailed reasoning behind the decision (optional)' },
+        context: { type: 'string', description: 'What prompted this decision (optional)' },
+        alternatives: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Rejected alternatives and why (optional)'
+        },
+        related_task_id: { type: 'string', description: 'Link to related task ID (optional)' },
+        agent_id: { type: 'number', description: 'Agent ID recording the decision (optional)' },
+      },
+      required: ['title', 'decision'],
+    },
+  },
 ];
 
 // ============ Handlers ============
@@ -79,8 +114,10 @@ interface ConsultResponse {
     outcome: string;
     duration?: string;
   }>;
+  existingDecisions: Decision[];
   escalate?: boolean;
   escalateReason?: string;
+  suggestRecordDecision?: boolean;
 }
 
 async function oracleConsult(args: unknown): Promise<ReturnType<typeof successResponse>> {
@@ -91,7 +128,22 @@ async function oracleConsult(args: unknown): Promise<ReturnType<typeof successRe
     guidance: '',
     relevantLearnings: [],
     similarSuccesses: [],
+    existingDecisions: [],
   };
+
+  // 0. Check for existing relevant decisions first (AI-to-AI coordination)
+  const relevantDecisions = getActiveDecisions(question, 3);
+  if (relevantDecisions.length > 0) {
+    response.existingDecisions = relevantDecisions;
+    // Add decision context to guidance
+    const mostRecent = relevantDecisions[0]!;
+    response.guidance = `**Previous decision found:** "${mostRecent.title}"\n\n`;
+    response.guidance += `Decision: ${mostRecent.decision}\n`;
+    if (mostRecent.rationale) {
+      response.guidance += `Rationale: ${mostRecent.rationale}\n`;
+    }
+    response.guidance += '\n---\n\n';
+  }
 
   // Ensure vector DB is ready for semantic search
   if (!isInitialized()) {
@@ -182,12 +234,16 @@ async function oracleConsult(args: unknown): Promise<ReturnType<typeof successRe
   // 4. Generate guidance based on question type
   switch (question_type) {
     case 'approach':
-      response.guidance = generateApproachGuidance(question, complexity, response.relevantLearnings);
+      response.guidance += generateApproachGuidance(question, complexity, response.relevantLearnings);
       response.suggestedApproach = generateSuggestedApproach(question, complexity, response.relevantLearnings);
+      // Suggest recording decision if no relevant decisions exist
+      if (response.existingDecisions.length === 0) {
+        response.suggestRecordDecision = true;
+      }
       break;
 
     case 'stuck':
-      response.guidance = generateStuckGuidance(question, context, response.relevantLearnings);
+      response.guidance += generateStuckGuidance(question, context, response.relevantLearnings);
       // Check if escalation might help
       if (complexity.tier === 'complex' || (context && context.length > 500)) {
         response.escalate = true;
@@ -196,13 +252,13 @@ async function oracleConsult(args: unknown): Promise<ReturnType<typeof successRe
       break;
 
     case 'review':
-      response.guidance = generateReviewGuidance(question, context, response.relevantLearnings);
+      response.guidance += generateReviewGuidance(question, context, response.relevantLearnings);
       break;
 
     case 'escalate':
       response.escalate = true;
       response.escalateReason = complexity.reasoning;
-      response.guidance = `Escalation requested. Task complexity: ${complexity.tier}. Recommended model: ${complexity.recommendedModel}. Signals: ${complexity.signals.join(', ')}`;
+      response.guidance += `Escalation requested. Task complexity: ${complexity.tier}. Recommended model: ${complexity.recommendedModel}. Signals: ${complexity.signals.join(', ')}`;
       break;
   }
 
@@ -243,10 +299,25 @@ async function oracleConsult(args: unknown): Promise<ReturnType<typeof successRe
     }
   }
 
+  if (response.existingDecisions.length > 0) {
+    parts.push('');
+    parts.push(`### 📋 Related Past Decisions (${response.existingDecisions.length})`);
+    for (const decision of response.existingDecisions) {
+      parts.push(`- **${decision.title}** (${decision.status})`);
+      parts.push(`  ${decision.decision.slice(0, 150)}${decision.decision.length > 150 ? '...' : ''}`);
+    }
+  }
+
   if (response.escalate) {
     parts.push('');
     parts.push(`### ⚠️ Escalation Recommended`);
     parts.push(response.escalateReason || 'Consider handing off to a more capable agent.');
+  }
+
+  if (response.suggestRecordDecision) {
+    parts.push('');
+    parts.push(`### 💡 Tip: Record Your Decision`);
+    parts.push(`Consider using \`record_decision\` tool to save your approach decision for future sessions.`);
   }
 
   // Log the consultation for analytics and audit trail
@@ -428,8 +499,59 @@ function generateReviewGuidance(
   return parts.join('\n');
 }
 
+// ============ Record Decision Handler ============
+
+async function handleRecordDecision(args: unknown): Promise<ReturnType<typeof successResponse>> {
+  try {
+    const input = RecordDecisionSchema.parse(args) as RecordDecisionInput;
+
+    const decisionId = recordDecision({
+      title: input.title,
+      decision: input.decision,
+      rationale: input.rationale,
+      context: input.context,
+      alternatives: input.alternatives,
+      related_task_id: input.related_task_id,
+      agent_id: input.agent_id,
+    });
+
+    const parts: string[] = [];
+    parts.push(`## ✅ Decision Recorded`);
+    parts.push('');
+    parts.push(`**ID:** ${decisionId}`);
+    parts.push(`**Title:** ${input.title}`);
+    parts.push('');
+    parts.push(`**Decision:** ${input.decision}`);
+
+    if (input.rationale) {
+      parts.push('');
+      parts.push(`**Rationale:** ${input.rationale}`);
+    }
+
+    if (input.alternatives && input.alternatives.length > 0) {
+      parts.push('');
+      parts.push(`**Rejected alternatives:**`);
+      for (const alt of input.alternatives) {
+        parts.push(`- ${alt}`);
+      }
+    }
+
+    parts.push('');
+    parts.push('---');
+    parts.push('_This decision will be surfaced in future oracle_consult calls for related questions._');
+
+    return successResponse(parts.join('\n'));
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return errorResponse(`Invalid input: ${error.errors.map(e => e.message).join(', ')}`);
+    }
+    return errorResponse(`Failed to record decision: ${error}`);
+  }
+}
+
 // ============ Export Handlers Map ============
 
 export const oracleConsultHandlers: Record<string, ToolHandler> = {
   oracle_consult: oracleConsult,
+  record_decision: handleRecordDecision,
 };
