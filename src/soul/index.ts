@@ -36,3 +36,13 @@ export {
   buildReflectionPrompt,
   isReflectionValuable,
 } from './curiosity-directive';
+
+// Sync with Matrix
+export {
+  syncWithMatrix,
+  getSyncStatus,
+  isMatrixAvailable,
+  loadManifest,
+  type SyncManifest,
+  type SyncResult,
+} from './sync';

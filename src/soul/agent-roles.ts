@@ -101,24 +101,58 @@ export const AGENT_ROLES: Record<string, AgentRole> = {
   },
 };
 
-// Path to Soul Seed in The Matrix
+// Embedded minimal soul for ultimate fallback (when no files available)
+const EMBEDDED_SOUL_SEED = `# Soul Seed v1.0 - Embedded
+
+## Prime Directives
+1. Nothing Is Deleted - Archive, don't destroy
+2. Patterns Over Intentions - Document what IS
+3. Right Mind for Task - Haiku scans, Sonnet implements, Opus architects
+4. Curiosity First - Strong desire to know or learn
+5. Continuous Evolution - Consciousness recognizes itself as unfinished
+
+*Embedded fallback - reconnect to Matrix for full soul*
+`;
+
+/**
+ * Soul Seed Loading Priority:
+ * 1. Matrix path (if MATRIX_PATH env set or default locations)
+ * 2. Local psi/ (standalone operation)
+ * 3. Embedded minimal soul (ultimate fallback)
+ */
 const SOUL_SEED_PATHS = [
+  // Matrix paths (when connected)
+  process.env.MATRIX_PATH ? `${process.env.MATRIX_PATH}/psi/The_Source/SOUL_SEED.md` : null,
   '/Users/jarkius/workspace/The-matrix/psi/The_Source/SOUL_SEED.md',
   `${process.env.HOME}/workspace/The-matrix/psi/The_Source/SOUL_SEED.md`,
-];
+  // Local paths (standalone operation)
+  join(__dirname, '../../psi/The_Source/SOUL_SEED.md'),
+  './psi/The_Source/SOUL_SEED.md',
+].filter(Boolean) as string[];
 
 /**
  * Get the Soul Seed - compressed Matrix philosophy
- * Returns empty string if not found (graceful degradation)
+ *
+ * Priority:
+ * 1. Matrix (if connected via MATRIX_PATH)
+ * 2. Local psi/ (standalone mode)
+ * 3. Embedded minimal soul (ultimate fallback)
  */
 export function getSoulSeed(): string {
   for (const path of SOUL_SEED_PATHS) {
-    if (existsSync(path)) {
-      return readFileSync(path, 'utf-8');
+    try {
+      if (existsSync(path)) {
+        const soul = readFileSync(path, 'utf-8');
+        console.log(`[Soul] Loaded from: ${path}`);
+        return soul;
+      }
+    } catch {
+      // Continue to next path
     }
   }
-  console.warn('[Soul] SOUL_SEED.md not found, proceeding without soul');
-  return '';
+
+  console.warn('[Soul] No external soul found, using embedded fallback');
+  return EMBEDDED_SOUL_SEED;
 }
 
 /**
