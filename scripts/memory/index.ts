@@ -95,6 +95,12 @@ async function main() {
       await import('./stats');
       break;
 
+    case 'analytics':
+      // Behavioral logging analytics
+      process.argv = [process.argv[0]!, process.argv[1]!, ...args.slice(1)];
+      await import('./analytics');
+      break;
+
     case 'list':
       await import('./list');
       break;
@@ -277,6 +283,10 @@ Commands:
   reflect -C proven Only proven learnings
   export [path]     Export learnings to LEARNINGS.md
   stats             Show session and learning statistics
+  analytics         Behavioral logging dashboard (search, consult, decisions)
+  analytics search  Search query analytics
+  analytics consult Oracle consultation analytics
+  analytics decisions List active decisions
   list [type]       List recent sessions or learnings
   context [query]   Get context bundle for new session
   task              List all pending tasks (system, project, session)
