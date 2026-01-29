@@ -91,6 +91,20 @@ async function main() {
       await import('./export');
       break;
 
+    case 'export-md':
+    case 'export-markdown':
+      // Export to queryable markdown (External Brain)
+      process.argv = [process.argv[0]!, process.argv[1]!, 'export', ...args.slice(1)];
+      await import('./memory-export');
+      break;
+
+    case 'import-md':
+    case 'import-markdown':
+      // Import from markdown files
+      process.argv = [process.argv[0]!, process.argv[1]!, 'import', ...args.slice(1)];
+      await import('./memory-export');
+      break;
+
     case 'stats':
       await import('./stats');
       break;
@@ -282,6 +296,9 @@ Commands:
   reflect -c <cat>  Filter by category (philosophy, architecture, etc.)
   reflect -C proven Only proven learnings
   export [path]     Export learnings to LEARNINGS.md
+  export-md         Export to queryable markdown (External Brain)
+  export-md -t <t>  Export type: all, learnings, sessions, decisions, resonance
+  import-md <path>  Import markdown files into database
   stats             Show session and learning statistics
   analytics         Behavioral logging dashboard (search, consult, decisions)
   analytics search  Search query analytics
