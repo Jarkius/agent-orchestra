@@ -16,6 +16,7 @@ import {
   findFilesBySymbol,
   getFilesByLanguage,
   getCodeFileStats,
+  logSearch,
   type CodeFileRecord,
 } from '../db';
 import { searchCodeVector, getCodeIndexStats } from '../vector-db';
@@ -198,26 +199,48 @@ export async function hybridSearch(
     const sqliteResults = searchSqlite(query, options);
 
     if (sqliteResults.length > 0) {
-      return {
-        source: 'sqlite',
+      const result = {
+        source: 'sqlite' as const,
         query,
         total_results: sqliteResults.length,
         results: sqliteResults,
         query_time_ms: Date.now() - startTime,
       };
+
+      // Log the search for analytics
+      logSearch({
+        query,
+        query_type: 'code',
+        result_count: result.total_results,
+        latency_ms: result.query_time_ms,
+        source: 'hybrid-search-sqlite',
+      });
+
+      return result;
     }
   }
 
   // Fall back to semantic search
   const semanticResults = await searchSemantic(query, options);
 
-  return {
-    source: 'semantic',
+  const result = {
+    source: 'semantic' as const,
     query,
     total_results: semanticResults.length,
     results: semanticResults,
     query_time_ms: Date.now() - startTime,
   };
+
+  // Log the search for analytics
+  logSearch({
+    query,
+    query_type: 'semantic',
+    result_count: result.total_results,
+    latency_ms: result.query_time_ms,
+    source: 'hybrid-search-semantic',
+  });
+
+  return result;
 }
 
 /**

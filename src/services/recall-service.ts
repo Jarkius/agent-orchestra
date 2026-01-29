@@ -17,6 +17,7 @@ import {
   listSessionsFromDb,
   listLearningsFromDb,
   searchLearningsFTS,
+  logSearch,
   type SessionRecord,
   type LearningRecord,
   type SessionTask,
@@ -287,6 +288,7 @@ export async function hybridSearchLearnings(
     mmrLambda?: number;
   } = {}
 ): Promise<Array<{ id: number; score: number; vectorScore: number; keywordScore: number }>> {
+  const startTime = Date.now();
   const {
     limit = 10,
     vectorWeight = DEFAULT_VECTOR_WEIGHT,
@@ -374,6 +376,16 @@ export async function hybridSearchLearnings(
 
   // Cache results for future queries
   setCachedResults(cacheKey, results);
+
+  // Log the search for analytics
+  logSearch({
+    query,
+    query_type: 'hybrid',
+    result_count: results.length,
+    latency_ms: Date.now() - startTime,
+    source: 'recall-service',
+    agent_id: agentId,
+  });
 
   return results;
 }

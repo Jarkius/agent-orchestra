@@ -14,6 +14,8 @@ import { successResponse, errorResponse } from '../../utils/response';
 import {
   getHighConfidenceLearnings,
   searchLearningsFTS,
+  logConsultation,
+  getLearningById,
   type LearningRecord,
 } from '../../../db';
 import {
@@ -246,6 +248,17 @@ async function oracleConsult(args: unknown): Promise<ReturnType<typeof successRe
     parts.push(`### ⚠️ Escalation Recommended`);
     parts.push(response.escalateReason || 'Consider handing off to a more capable agent.');
   }
+
+  // Log the consultation for analytics and audit trail
+  logConsultation({
+    agent_id,
+    task_id,
+    question,
+    question_type,
+    guidance_given: response.guidance,
+    learnings_cited: [], // TODO: Track learning IDs when we have them
+    escalated: response.escalate,
+  });
 
   return successResponse(parts.join('\n'));
 }

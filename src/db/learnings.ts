@@ -6,6 +6,7 @@
  */
 
 import { db } from './core';
+import { logLearningEvent } from './behavioral-logs';
 import type { Visibility } from './sessions';
 
 // ============================================================================
@@ -102,7 +103,19 @@ export function createLearning(learning: LearningRecord): number {
       learning.source_unified_task_id || null,
     ]
   );
-  return Number(result.lastInsertRowid);
+
+  const learningId = Number(result.lastInsertRowid);
+
+  // Log the creation event for analytics
+  logLearningEvent({
+    learning_id: learningId,
+    event_type: 'created',
+    new_value: learning.category,
+    source_event: learning.source_session_id || learning.source_task_id || 'manual',
+    agent_id: learning.agent_id ?? undefined,
+  });
+
+  return learningId;
 }
 
 export function getLearningById(learningId: number): LearningRecord | null {
@@ -266,6 +279,26 @@ export function validateLearning(learningId: number): ValidationResult | null {
     `UPDATE learnings SET times_validated = ?, confidence = ?, maturity_stage = ?, last_validated_at = CURRENT_TIMESTAMP WHERE id = ?`,
     [newCount, newConfidence, newStage, learningId]
   );
+
+  // Log the validation event for analytics
+  logLearningEvent({
+    learning_id: learningId,
+    event_type: 'validated',
+    previous_value: String(learning.times_validated || 1),
+    new_value: String(newCount),
+    source_event: 'manual_validation',
+  });
+
+  // Log maturity advancement if promoted
+  if (promoted) {
+    logLearningEvent({
+      learning_id: learningId,
+      event_type: 'maturity_advanced',
+      previous_value: previousStage,
+      new_value: newStage,
+      source_event: 'validation_threshold',
+    });
+  }
 
   const updatedLearning = getLearningById(learningId)!;
 
