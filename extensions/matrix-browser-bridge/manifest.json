@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Matrix Browser Bridge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MQTT-to-Chrome bridge for Matrix agent browser automation with Gemini research tools",
   "permissions": [
     "tabs",
     "scripting",
     "activeTab",
     "alarms",
-    "storage"
+    "storage",
+    "debugger"
   ],
   "host_permissions": [
     "<all_urls>"

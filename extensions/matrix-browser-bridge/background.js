@@ -10,7 +10,7 @@
 
 importScripts('mqtt.min.js');
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const MQTT_URL = 'ws://localhost:9001';
 const TOPICS = {
   command: 'matrix/browser/command',
@@ -514,7 +514,7 @@ async function handleCommand(cmd) {
               responseCount: 0,
             };
           },
-          args: [cmd.maxLength || 5000],
+          args: [cmd.maxLength || 30000],
         });
         result = readResult[0]?.result || { error: 'Script failed' };
         result.tabId = tab.id;
@@ -822,6 +822,152 @@ async function handleCommand(cmd) {
         break;
       }
 
+      case 'gemini_inspect_dr': {
+        // Inspect Deep Research UI state: plan, buttons (Start research, Edit plan), status
+        const tab = await getTab(cmd.tabId);
+        const drInspResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // Scan for all buttons
+            const allButtons = Array.from(document.querySelectorAll('button'));
+            const relevantButtons = allButtons.filter(b => {
+              const text = (b.textContent || '').trim().toLowerCase();
+              const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+              return text.includes('research') || text.includes('plan') || text.includes('start')
+                || text.includes('edit') || text.includes('cancel')
+                || aria.includes('research') || aria.includes('plan') || aria.includes('start');
+            }).map(b => ({
+              text: (b.textContent || '').trim().substring(0, 80),
+              aria: b.getAttribute('aria-label'),
+              classes: b.className.substring(0, 80),
+              visible: b.getBoundingClientRect().width > 0,
+              disabled: b.disabled,
+            }));
+
+            // Look for Deep Research plan content, status indicators
+            const allLeafElements = [];
+            document.querySelectorAll('*').forEach(el => {
+              if (el.children.length > 0) return;
+              const text = (el.textContent || '').trim();
+              if (text.length < 2 || text.length > 200) return;
+              const rect = el.getBoundingClientRect();
+              if (rect.width <= 0 || rect.height <= 0) return;
+              const lower = text.toLowerCase();
+              if (lower.includes('research') || lower.includes('plan') || lower.includes('step')
+                  || lower.includes('searching') || lower.includes('thinking') || lower.includes('deep')) {
+                allLeafElements.push({
+                  text: text.substring(0, 120),
+                  tag: el.tagName,
+                  classes: (el.className || '').toString().substring(0, 60),
+                });
+              }
+            });
+
+            // Check for active spinner (Deep Research in progress)
+            const spinner = document.querySelector('mat-mdc-progress-spinner.mdc-circular-progress--indeterminate');
+            const hasSpinner = !!spinner;
+
+            return {
+              success: true,
+              buttons: relevantButtons,
+              elements: allLeafElements,
+              hasSpinner,
+              url: window.location.href,
+            };
+          },
+        });
+        result = drInspResult[0]?.result || { error: 'Script failed' };
+        result.tabId = tab.id;
+        break;
+      }
+
+      case 'gemini_dr_action': {
+        // Click Deep Research action buttons using Chrome Debugger (trusted events).
+        // Synthetic dispatchEvent won't work for Angular Material MDC buttons (isTrusted check).
+        const tab = await getTab(cmd.tabId);
+        const targetAction = cmd.button || 'Start research';
+
+        // Step 1: Find button coordinates via scripting
+        const findResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (target) => {
+            const targetLower = target.toLowerCase();
+            // Find button by text
+            const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
+            for (const b of allButtons) {
+              const text = (b.textContent || '').trim();
+              if (text.toLowerCase().includes(targetLower)) {
+                const rect = b.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 && !b.disabled) {
+                  return {
+                    found: true, text, disabled: b.disabled,
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2,
+                  };
+                }
+              }
+            }
+            // List available for debug
+            return {
+              found: false,
+              available: allButtons
+                .filter(b => b.getBoundingClientRect().width > 0)
+                .map(b => ({ text: (b.textContent || '').trim().substring(0, 60), disabled: b.disabled })),
+            };
+          },
+          args: [targetAction],
+        });
+
+        const found = findResult[0]?.result;
+        if (!found?.found) {
+          result = { error: 'Button not found: ' + targetAction, available: found?.available };
+          result.tabId = tab.id;
+          break;
+        }
+
+        // Step 2: Use chrome.debugger to send trusted mouse events
+        try {
+          await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+          const x = Math.round(found.x);
+          const y = Math.round(found.y);
+
+          await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchMouseEvent', {
+            type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+          });
+          await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+          });
+          await chrome.debugger.detach({ tabId: tab.id });
+
+          result = { success: true, clicked: found.text, method: 'debugger-trusted', x, y };
+        } catch (dbgErr) {
+          // Debugger might already be attached or fail — fallback to synthetic
+          try { await chrome.debugger.detach({ tabId: tab.id }); } catch (_) {}
+          // Fallback: synthetic click
+          const fallback = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (tx, ty) => {
+              const el = document.elementFromPoint(tx, ty);
+              if (el) {
+                el.focus();
+                el.click();
+                return { fallback: true, tag: el.tagName };
+              }
+              return { fallback: false };
+            },
+            args: [found.x, found.y],
+          });
+          result = {
+            success: true, clicked: found.text, method: 'fallback-click',
+            x: Math.round(found.x), y: Math.round(found.y),
+            debugError: dbgErr.message,
+            ...(fallback[0]?.result || {}),
+          };
+        }
+        result.tabId = tab.id;
+        break;
+      }
+
       case 'gemini_research': {
         // Compound command: open tab → set model → send query → wait → return response
         // Designed for Morpheus agent orchestration
@@ -897,7 +1043,81 @@ async function handleCommand(cmd) {
           },
         });
 
-        // 7. Wait for response (reuse gemini_wait logic inline)
+        // 7. If Deep Research, wait for plan then click "Start research"
+        let drPlanText = '';
+        if (useDeepResearch) {
+          // Deep Research shows a plan first with "Start research" / "Edit plan" buttons
+          // Wait up to 45s for the plan + button to appear, then click with debugger (trusted events)
+          const planStart = Date.now();
+          let startClicked = false;
+          while (Date.now() - planStart < 45000 && !startClicked) {
+            await new Promise(r => setTimeout(r, 2000));
+            // Find "Start research" button coordinates
+            const planPoll = await chrome.scripting.executeScript({
+              target: { tabId: rTabId },
+              func: () => {
+                const allButtons = Array.from(document.querySelectorAll('button'));
+                const startBtn = allButtons.find(b => {
+                  const text = (b.textContent || '').trim().toLowerCase();
+                  return text.includes('start research')
+                    && b.getBoundingClientRect().width > 0 && !b.disabled;
+                });
+                const planElements = [];
+                document.querySelectorAll('*').forEach(el => {
+                  if (el.children.length > 0) return;
+                  const text = (el.textContent || '').trim();
+                  if (text.length < 3 || text.length > 300) return;
+                  const lower = text.toLowerCase();
+                  if (lower.includes('step') || lower.includes('search') || lower.includes('plan')
+                      || lower.includes('research')) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) planElements.push(text.substring(0, 150));
+                  }
+                });
+                if (startBtn) {
+                  const rect = startBtn.getBoundingClientRect();
+                  return {
+                    found: true,
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2,
+                    plan: planElements,
+                  };
+                }
+                return { found: false, plan: planElements };
+              },
+            });
+            const pr = planPoll[0]?.result || {};
+            if (pr.found) {
+              // Click with chrome.debugger for trusted events
+              try {
+                await chrome.debugger.attach({ tabId: rTabId }, '1.3');
+                const x = Math.round(pr.x);
+                const y = Math.round(pr.y);
+                await chrome.debugger.sendCommand({ tabId: rTabId }, 'Input.dispatchMouseEvent', {
+                  type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+                });
+                await chrome.debugger.sendCommand({ tabId: rTabId }, 'Input.dispatchMouseEvent', {
+                  type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+                });
+                await chrome.debugger.detach({ tabId: rTabId });
+                startClicked = true;
+                drPlanText = (pr.plan || []).join(' | ');
+                console.log('[Matrix] Deep Research: clicked Start research via debugger at', x, y);
+              } catch (dbgErr) {
+                try { await chrome.debugger.detach({ tabId: rTabId }); } catch (_) {}
+                console.log('[Matrix] Deep Research: debugger click failed:', dbgErr.message);
+              }
+            }
+          }
+          if (!startClicked) {
+            console.log('[Matrix] Deep Research: no Start research button found, proceeding with wait...');
+          }
+          // Give DR time to begin after clicking start
+          await new Promise(r => setTimeout(r, 3000));
+        }
+
+        // 8. Wait for response (reuse gemini_wait logic inline)
+        // Deep Research can take much longer, so use the full timeout
         const rStart = Date.now();
         let rLastText = '';
         let rStable = 0;
@@ -905,10 +1125,10 @@ async function handleCommand(cmd) {
         let rSawGen = false;
 
         while (Date.now() - rStart < timeout) {
-          await new Promise(r => setTimeout(r, 500));
+          await new Promise(r => setTimeout(r, useDeepResearch ? 2000 : 500));
           const rPoll = await chrome.scripting.executeScript({
             target: { tabId: rTabId },
-            func: (bc, bt) => {
+            func: (bc, bt, isDR) => {
               const spinner = document.querySelector('mat-mdc-progress-spinner.mdc-circular-progress--indeterminate');
               let spinnerActive = false;
               if (spinner) {
@@ -919,14 +1139,43 @@ async function handleCommand(cmd) {
               const streaming = document.querySelector('.streaming-indicator, [data-streaming="true"]');
               const isGenerating = spinnerActive || !!stopBtn || !!streaming;
 
+              // For Deep Research, check for active progress indicators
+              let drActive = false;
+              if (isDR) {
+                // DR progress shows specific patterns: "Researched N websites", "Analyzing results..."
+                // Look for progress elements with specific patterns
+                const progressEls = document.querySelectorAll('[class*="progress"], [class*="status"], [class*="research"]');
+                for (const el of progressEls) {
+                  const t = (el.textContent || '').trim();
+                  if (t.match(/Researched?\s+\d+\s+websites?/i) || t.includes('Analyzing results')
+                      || t.includes('Create your report') || t.includes('Searching')) {
+                    drActive = true;
+                    break;
+                  }
+                }
+                // Also check for any visible spinner/loading animations
+                if (!drActive) {
+                  const animations = document.querySelectorAll('[class*="spinner"], [class*="loading"], [class*="progress-bar"]');
+                  for (const el of animations) {
+                    if (el.getBoundingClientRect().width > 0) { drActive = true; break; }
+                  }
+                }
+              }
+
               const responses = document.querySelectorAll('MESSAGE-CONTENT, message-content, [data-message-id], .model-response-text');
               const count = responses.length;
               let text = '';
               if (count > 0) text = (responses[count - 1].textContent || responses[count - 1].innerText || '').trim();
               const hasNew = count > bc || (text.length > 20 && text !== bt);
-              return { isGenerating, text: text.substring(0, 8000), textLen: text.length, hasNew };
+              return {
+                isGenerating: isGenerating || drActive,
+                text: text.substring(0, 30000),
+                textLen: text.length,
+                hasNew,
+                drActive,
+              };
             },
-            args: [rBaseData.count, rBaseData.text],
+            args: [rBaseData.count, rBaseData.text, useDeepResearch],
           });
 
           const p = rPoll[0]?.result || {};
@@ -935,7 +1184,7 @@ async function handleCommand(cmd) {
           if (p.hasNew && ct.length > 20) {
             if (ct === rLastText && !p.isGenerating) {
               rStable++;
-              if (rStable >= 3) { rFinal = ct; break; }
+              if (rStable >= (useDeepResearch ? 5 : 3)) { rFinal = ct; break; }
             } else { rStable = 0; rLastText = ct; }
           }
         }
@@ -948,6 +1197,7 @@ async function handleCommand(cmd) {
           deepResearch: useDeepResearch,
           elapsed: Date.now() - rStart,
         };
+        if (drPlanText) result.plan = drPlanText;
         if (!rFinal) result.error = 'Timeout waiting for Gemini response';
         break;
       }
