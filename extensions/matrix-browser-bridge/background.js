@@ -1,17 +1,16 @@
 /**
- * Matrix Browser Bridge - Background Service Worker
+ * Matrix Browser Bridge - Background Service Worker v0.2.0
  *
- * Minimal MQTT-to-Chrome bridge for browser automation.
- * Generic (not site-specific) - works with any website.
+ * MQTT-to-Chrome bridge for browser automation.
+ * Generic commands + Gemini-specific research commands.
  *
  * Commands arrive via MQTT, execute via Chrome APIs, responses sent back.
- *
- * Uses chrome.alarms + chrome.storage keepalive to survive MV3 service worker shutdown.
+ * Uses chrome.alarms keepalive to survive MV3 service worker shutdown.
  */
 
 importScripts('mqtt.min.js');
 
-const VERSION = '0.1.0';
+const VERSION = '0.3.0';
 const MQTT_URL = 'ws://localhost:9001';
 const TOPICS = {
   command: 'matrix/browser/command',
@@ -29,15 +28,11 @@ let connectedAt = 0;
 
 const KEEPALIVE_ALARM = 'matrix-keepalive';
 
-// Create alarm that fires every 25 seconds to keep service worker alive
 chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 25 / 60 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM) {
-    // Touch storage to keep service worker active
     chrome.storage.session.set({ keepalive: Date.now() });
-
-    // Reconnect if disconnected
     if (!isConnected || !client) {
       console.log('[Matrix] Keep-alive: reconnecting...');
       connect();
@@ -45,7 +40,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// Also wake on any chrome event
 chrome.tabs.onUpdated.addListener(() => {
   if (!isConnected || !client) connect();
 });
@@ -59,10 +53,8 @@ chrome.tabs.onCreated.addListener(() => {
 // ============================================================================
 
 function connect() {
-  // Don't double-connect
   if (client && isConnected) return;
 
-  // Clean up old client
   if (client) {
     try { client.end(true); } catch (_) {}
     client = null;
@@ -100,18 +92,14 @@ function connect() {
   client.on('message', (topic, message) => {
     try {
       const cmd = JSON.parse(message.toString());
-      if (cmd.ts && cmd.ts < connectedAt) return; // Ignore stale
+      if (cmd.ts && cmd.ts < connectedAt) return;
       handleCommand(cmd);
     } catch (e) {
       console.error('[Matrix] Parse error:', e);
     }
   });
 
-  client.on('close', () => {
-    isConnected = false;
-    updateBadge(false);
-  });
-
+  client.on('close', () => { isConnected = false; updateBadge(false); });
   client.on('error', (err) => console.error('[Matrix] Error:', err));
 }
 
@@ -122,7 +110,7 @@ function publish(topic, data) {
 }
 
 function updateBadge(connected) {
-  chrome.action.setBadgeText({ text: VERSION });
+  chrome.action.setBadgeText({ text: connected ? 'ON' : 'OFF' });
   chrome.action.setBadgeBackgroundColor({
     color: connected ? '#22c55e' : '#ef4444',
   });
@@ -138,7 +126,9 @@ async function handleCommand(cmd) {
 
   try {
     switch (cmd.action) {
-      // --- Tab Management ---
+
+      // ---- Tab Management ----
+
       case 'create_tab': {
         const tab = await chrome.tabs.create({
           url: cmd.url || 'about:blank',
@@ -178,7 +168,8 @@ async function handleCommand(cmd) {
         break;
       }
 
-      // --- Page Content ---
+      // ---- Page Content ----
+
       case 'get_url': {
         const tab = await getTab(cmd.tabId);
         result = { success: true, url: tab.url, title: tab.title, tabId: tab.id };
@@ -205,7 +196,8 @@ async function handleCommand(cmd) {
         break;
       }
 
-      // --- DOM Interaction ---
+      // ---- DOM Interaction ----
+
       case 'click': {
         const tab = await getTab(cmd.tabId);
         const clickResult = await chrome.scripting.executeScript({
@@ -262,18 +254,28 @@ async function handleCommand(cmd) {
         break;
       }
 
-      // --- JavaScript Execution ---
-      case 'execute': {
+      // ---- Script Execution (fixed) ----
+
+      case 'eval': {
         const tab = await getTab(cmd.tabId);
-        const execResult = await chrome.scripting.executeScript({
+        const evalResult = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: new Function('return (' + cmd.code + ')'),
+          func: (code) => {
+            try {
+              return { success: true, result: eval(code) };
+            } catch (e) {
+              return { error: e.message };
+            }
+          },
+          args: [cmd.code],
         });
-        result = { success: true, result: execResult[0]?.result, tabId: tab.id };
+        result = evalResult[0]?.result || { error: 'Script failed' };
+        result.tabId = tab.id;
         break;
       }
 
-      // --- Screenshot ---
+      // ---- Screenshot ----
+
       case 'screenshot': {
         const tab = await getTab(cmd.tabId);
         await chrome.tabs.update(tab.id, { active: true });
@@ -283,7 +285,8 @@ async function handleCommand(cmd) {
         break;
       }
 
-      // --- Wait for Content ---
+      // ---- Wait for Selector ----
+
       case 'wait_for': {
         const tab = await getTab(cmd.tabId);
         const waitResult = await chrome.scripting.executeScript({
@@ -294,8 +297,10 @@ async function handleCommand(cmd) {
               if (el) { resolve({ success: true, found: true }); return; }
 
               const observer = new MutationObserver(() => {
-                const el = document.querySelector(selector);
-                if (el) { observer.disconnect(); resolve({ success: true, found: true }); }
+                if (document.querySelector(selector)) {
+                  observer.disconnect();
+                  resolve({ success: true, found: true });
+                }
               });
               observer.observe(document.body, { childList: true, subtree: true });
 
@@ -312,9 +317,645 @@ async function handleCommand(cmd) {
         break;
       }
 
-      // --- Ping (health check) ---
+      // ---- Gemini-Specific Commands ----
+
+      case 'gemini_inspect': {
+        const tab = await getTab(cmd.tabId);
+        const inspResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // Find all input-like elements
+            const inputs = document.querySelectorAll(
+              'textarea, [contenteditable="true"], [role="textbox"], .ql-editor, rich-textarea, .input-area'
+            );
+            const inputInfo = Array.from(inputs).map(el => ({
+              tag: el.tagName.toLowerCase(),
+              class: el.className.toString().substring(0, 100),
+              id: el.id,
+              role: el.getAttribute('role'),
+              contentEditable: el.contentEditable,
+              ariaLabel: el.getAttribute('aria-label'),
+              placeholder: el.getAttribute('placeholder') || el.getAttribute('data-placeholder'),
+            }));
+
+            // Find send/submit buttons
+            const buttons = document.querySelectorAll('button');
+            const sendButtons = Array.from(buttons).filter(b => {
+              const label = (b.getAttribute('aria-label') || '').toLowerCase();
+              const text = (b.textContent || '').toLowerCase();
+              return label.includes('send') || label.includes('submit') || text.includes('send');
+            }).map(b => ({
+              tag: 'button',
+              class: b.className.toString().substring(0, 100),
+              ariaLabel: b.getAttribute('aria-label'),
+              text: (b.textContent || '').substring(0, 50).trim(),
+              matIcon: b.querySelector('mat-icon')?.textContent,
+            }));
+
+            // Check if it looks like Gemini
+            const isGemini = window.location.hostname.includes('gemini.google.com');
+
+            return {
+              success: true,
+              isGemini,
+              url: window.location.href,
+              inputs: inputInfo,
+              sendButtons,
+              totalButtons: buttons.length,
+            };
+          },
+        });
+        result = inspResult[0]?.result || { error: 'Script failed' };
+        result.tabId = tab.id;
+        break;
+      }
+
+      case 'gemini_chat': {
+        // Evolved from Soul-Brews-Studio/claude-browser-proxy tested selectors
+        const tab = await getTab(cmd.tabId);
+
+        // Count existing responses before sending (for wait detection)
+        const preCount = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => document.querySelectorAll('MESSAGE-CONTENT, message-content, model-response').length,
+        });
+
+        const chatResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (text) => {
+            // Priority order from battle-tested selectors:
+            const selectors = [
+              'div[aria-label="Enter a prompt here"]',        // Most stable Gemini selector
+              'rich-textarea .ql-editor',                      // Gemini rich text editor
+              'rich-textarea [contenteditable="true"]',        // Fallback rich-textarea
+              '.ql-editor[contenteditable="true"]',            // Quill editor
+              '[data-placeholder*="prompt"]',                  // Placeholder-based
+              '[contenteditable="true"]',                      // Generic contenteditable
+              'textarea',                                      // Fallback textarea
+            ];
+
+            let input = null;
+            let method = '';
+            for (const sel of selectors) {
+              input = document.querySelector(sel);
+              if (input) { method = sel; break; }
+            }
+            if (!input) return { error: 'No input element found' };
+
+            input.focus();
+            if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+              input.value = text;
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+            } else {
+              input.innerHTML = '<p>' + text + '</p>';
+              input.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
+            }
+            return { success: true, method };
+          },
+          args: [cmd.text],
+        });
+
+        const chatRes = chatResult[0]?.result || { error: 'Script failed' };
+
+        if (chatRes.success) {
+          await new Promise(r => setTimeout(r, 500));
+
+          const sendResult = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              // 1. aria-label Send button (most reliable)
+              const sendBtn = document.querySelector(
+                'button[aria-label*="Send"], button[data-test-id="send-button"], .send-button'
+              );
+              if (sendBtn && !sendBtn.disabled) {
+                sendBtn.click();
+                return { success: true, method: 'send-button', label: sendBtn.getAttribute('aria-label') };
+              }
+
+              // 2. mat-icon "send"
+              for (const btn of document.querySelectorAll('button')) {
+                const icon = btn.querySelector('mat-icon');
+                if (icon && icon.textContent.trim() === 'send') {
+                  btn.click();
+                  return { success: true, method: 'mat-icon-send' };
+                }
+              }
+
+              // 3. Button in input area container
+              const inputArea = document.querySelector('.input-area, .chat-input, .prompt-container, rich-textarea');
+              if (inputArea) {
+                const parent = inputArea.closest('.input-area-container') || inputArea.parentElement;
+                if (parent) {
+                  const btns = parent.querySelectorAll('button:not([disabled])');
+                  for (const btn of btns) {
+                    const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                    if (label.includes('send') || label.includes('submit')) {
+                      btn.click();
+                      return { success: true, method: 'parent-send-btn' };
+                    }
+                  }
+                }
+              }
+
+              // 4. Enter key on the editor
+              const editor = document.querySelector('[contenteditable="true"], textarea');
+              if (editor) {
+                editor.dispatchEvent(new KeyboardEvent('keydown', {
+                  key: 'Enter', code: 'Enter', keyCode: 13,
+                  bubbles: true, cancelable: true,
+                }));
+                return { success: true, method: 'enter-key' };
+              }
+
+              return { error: 'No send mechanism found' };
+            },
+          });
+          const sendRes = sendResult[0]?.result || { error: 'Send script failed' };
+          result = {
+            success: chatRes.success && sendRes.success,
+            typing: chatRes,
+            sending: sendRes,
+            preResponseCount: preCount[0]?.result || 0,
+            tabId: tab.id,
+          };
+        } else {
+          result = chatRes;
+          result.tabId = tab.id;
+        }
+        break;
+      }
+
+      case 'gemini_read': {
+        // Evolved: Soul-Brews proven selectors (MESSAGE-CONTENT uppercase first)
+        const tab = await getTab(cmd.tabId);
+        const readResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (maxLen) => {
+            const getResponses = () =>
+              document.querySelectorAll('MESSAGE-CONTENT, message-content, [data-message-id], .model-response-text, model-response');
+
+            const responses = getResponses();
+            if (responses.length > 0) {
+              const last = responses[responses.length - 1];
+              const text = (last.textContent || last.innerText || '').trim();
+              return {
+                success: true,
+                text: text.substring(0, maxLen || 5000),
+                selector: last.tagName,
+                responseCount: responses.length,
+              };
+            }
+
+            // Fallback: body text
+            return {
+              success: true,
+              text: document.body.innerText.substring(0, maxLen || 5000),
+              selector: 'body-fallback',
+              responseCount: 0,
+            };
+          },
+          args: [cmd.maxLength || 5000],
+        });
+        result = readResult[0]?.result || { error: 'Script failed' };
+        result.tabId = tab.id;
+        break;
+      }
+
+      case 'gemini_wait': {
+        // Evolved: Soul-Brews core pattern — snapshot baseline, detect new content, 3x stability at 500ms
+        const tab = await getTab(cmd.tabId);
+        const timeout = cmd.timeout || 60000;
+        const startTime = Date.now();
+
+        // Snapshot baseline: capture current last response text BEFORE waiting
+        const baseline = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const responses = document.querySelectorAll('MESSAGE-CONTENT, message-content, [data-message-id], .model-response-text');
+            const count = responses.length;
+            let text = '';
+            if (count > 0) {
+              text = (responses[count - 1].textContent || responses[count - 1].innerText || '').trim();
+            }
+            return { count, text: text.substring(0, 8000) };
+          },
+        });
+        const baselineData = baseline[0]?.result || { count: 0, text: '' };
+
+        let lastText = '';
+        let stableCount = 0;
+        let finalText = '';
+        let sawGeneration = false;
+
+        while (Date.now() - startTime < timeout) {
+          await new Promise(r => setTimeout(r, 500));
+
+          const pollResult = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (baseCount, baseText) => {
+              // 1. Spinner detection
+              const spinner = document.querySelector('mat-mdc-progress-spinner.mdc-circular-progress--indeterminate');
+              let spinnerActive = false;
+              if (spinner) {
+                const rect = spinner.getBoundingClientRect();
+                spinnerActive = rect.top > 100 && rect.top < window.innerHeight && rect.bottom > 0;
+              }
+
+              // 2. Stop button
+              const stopBtn = document.querySelector('button[aria-label="Stop generating"], button[aria-label*="Stop"]');
+
+              // 3. Streaming indicator
+              const streaming = document.querySelector('.streaming-indicator, [data-streaming="true"]');
+
+              const isGenerating = spinnerActive || !!stopBtn || !!streaming;
+
+              // 4. Get latest response
+              const responses = document.querySelectorAll('MESSAGE-CONTENT, message-content, [data-message-id], .model-response-text');
+              const count = responses.length;
+              let text = '';
+              if (count > 0) {
+                text = (responses[count - 1].textContent || responses[count - 1].innerText || '').trim();
+              }
+
+              // Detect new content: either more responses, or last response text changed from baseline
+              const hasNewContent = count > baseCount || (text.length > 20 && text !== baseText);
+
+              return {
+                isGenerating,
+                text: text.substring(0, 8000),
+                textLen: text.length,
+                count,
+                hasNewContent,
+              };
+            },
+            args: [baselineData.count, baselineData.text],
+          });
+
+          const poll = pollResult[0]?.result || {};
+          const currentText = poll.text || '';
+
+          // Track if we ever saw generation (spinner/stop button)
+          if (poll.isGenerating) sawGeneration = true;
+
+          // Only check stability if we see new content
+          if (poll.hasNewContent && currentText.length > 20) {
+            if (currentText === lastText && !poll.isGenerating) {
+              stableCount++;
+              if (stableCount >= 3) {
+                finalText = currentText;
+                break;
+              }
+            } else {
+              stableCount = 0;
+              lastText = currentText;
+            }
+          }
+        }
+
+        result = {
+          success: finalText.length > 0,
+          text: finalText,
+          elapsed: Date.now() - startTime,
+          sawGeneration,
+          tabId: tab.id,
+        };
+        if (!finalText) {
+          result.error = 'Timeout waiting for Gemini response';
+        }
+        break;
+      }
+
+      // ---- Gemini Model & Mode Selection ----
+
+      case 'gemini_select_model': {
+        // Select Fast / Thinking / Pro model (Soul-Brews evolved pattern)
+        const tab = await getTab(cmd.tabId);
+        const model = cmd.model; // 'Fast', 'Thinking', 'Pro'
+        if (!model) { result = { error: 'model required (Fast, Thinking, Pro)' }; break; }
+
+        const selectResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (targetModel) => {
+            return new Promise((resolve) => {
+              // 1. Find the model dropdown button
+              let dropdownBtn = null;
+
+              // Strategy A: button with class containing 'input-area-switch'
+              dropdownBtn = Array.from(document.querySelectorAll('button')).find(b =>
+                b.className.includes('input-area-switch')
+              );
+
+              // Strategy B: button text matches a model name
+              if (!dropdownBtn) {
+                dropdownBtn = Array.from(document.querySelectorAll('button')).find(b => {
+                  const text = b.textContent.trim();
+                  return text === 'Fast' || text === 'Thinking' || text === 'Pro';
+                });
+              }
+
+              // Strategy C: button in pill-ui container
+              if (!dropdownBtn) {
+                dropdownBtn = Array.from(document.querySelectorAll('button')).find(b =>
+                  b.parentElement && b.parentElement.className && b.parentElement.className.includes('pill-ui')
+                );
+              }
+
+              if (!dropdownBtn) {
+                resolve({ error: 'Model dropdown button not found' });
+                return;
+              }
+
+              // Click dropdown
+              dropdownBtn.click();
+
+              // Wait for dropdown to appear, then select model
+              setTimeout(() => {
+                const options = document.querySelectorAll(
+                  '[role="option"], [role="menuitem"], [role="listbox"] button, .mdc-list-item, mat-option'
+                );
+
+                let found = false;
+                for (const opt of options) {
+                  const text = (opt.textContent || '').trim();
+                  if (text.includes(targetModel)) {
+                    opt.click();
+                    found = true;
+                    break;
+                  }
+                }
+
+                if (!found) {
+                  // Try clicking any element that contains the model name
+                  const allEls = document.querySelectorAll('*');
+                  for (const el of allEls) {
+                    if (el.children.length === 0 && el.textContent.trim() === targetModel) {
+                      el.click();
+                      found = true;
+                      break;
+                    }
+                  }
+                }
+
+                resolve({
+                  success: found,
+                  model: targetModel,
+                  method: found ? 'dropdown-select' : 'not-found',
+                });
+              }, 600);
+            });
+          },
+          args: [model],
+        });
+        result = selectResult[0]?.result || { error: 'Script failed' };
+        result.tabId = tab.id;
+        break;
+      }
+
+      case 'gemini_deep_research': {
+        // Activate Deep Research or other Gemini tool from the tools drawer
+        const tab = await getTab(cmd.tabId);
+
+        const drResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (targetTool) => {
+            return new Promise((resolve) => {
+              // 1. Find the tools drawer toggle button
+              // It's in the input area, has a mat-icon (typically "tune" or similar)
+              const inputArea = document.querySelector('.input-area');
+              if (!inputArea) { resolve({ error: 'No .input-area found' }); return; }
+
+              const allButtons = Array.from(inputArea.querySelectorAll('button'));
+              const debug = allButtons.map((b, i) => ({
+                i,
+                aria: b.getAttribute('aria-label'),
+                text: (b.textContent || '').trim().substring(0, 30),
+                classes: b.className.substring(0, 60),
+              }));
+
+              // The drawer toggle is NOT the + button, NOT send, NOT mic
+              // Look for a button that isn't those
+              let drawerBtn = null;
+              for (const b of allButtons) {
+                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                const cls = b.className.toLowerCase();
+                // Skip known buttons
+                if (aria.includes('send') || cls.includes('send')) continue;
+                if (aria.includes('mic') || aria.includes('voice')) continue;
+                if (aria.includes('upload') || aria.includes('attach') || aria.includes('add file')) continue;
+                if (cls.includes('add-button') || cls.includes('upload')) continue;
+                // This might be the drawer toggle
+                if (cls.includes('toolbox') || cls.includes('drawer') || cls.includes('tool')
+                    || aria.includes('tool') || aria.includes('option') || aria.includes('more')) {
+                  drawerBtn = b;
+                  break;
+                }
+              }
+
+              // If not found by name, try: button with mat-icon that's not +, send, mic
+              if (!drawerBtn) {
+                for (const b of allButtons) {
+                  const icon = b.querySelector('mat-icon, .mat-icon');
+                  if (!icon) continue;
+                  const iconText = (icon.textContent || '').trim().toLowerCase();
+                  if (iconText === 'send' || iconText === 'mic' || iconText === 'add' || iconText === 'attach_file') continue;
+                  drawerBtn = b;
+                  break;
+                }
+              }
+
+              if (!drawerBtn) {
+                resolve({ error: 'Drawer toggle not found', buttons: debug });
+                return;
+              }
+
+              drawerBtn.click();
+
+              // 2. Wait for drawer to render, then find and click target tool
+              setTimeout(() => {
+                // Scan page for the target tool text
+                const allElements = document.querySelectorAll('*');
+                let found = false;
+                let availableTools = [];
+
+                for (const el of allElements) {
+                  const text = (el.textContent || '').trim();
+                  // Collect visible tool names from the drawer
+                  if (el.children.length === 0 && text.length > 2 && text.length < 50) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.top > 0) {
+                      if (text === 'Deep Research' || text === 'Canvas' || text.includes('Create')
+                          || text === 'Guided Learning' || text === 'Tools') {
+                        availableTools.push(text);
+                      }
+                    }
+                  }
+
+                  if (text === targetTool && el.children.length === 0 && !found) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                      const x = rect.left + rect.width / 2;
+                      const y = rect.top + rect.height / 2;
+                      const target = document.elementFromPoint(x, y);
+                      if (target) {
+                        target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+                      } else {
+                        el.click();
+                      }
+                      found = true;
+                    }
+                  }
+                }
+
+                resolve({
+                  success: found,
+                  tool: targetTool,
+                  availableTools,
+                  drawerButtonAria: drawerBtn.getAttribute('aria-label'),
+                });
+              }, 1200);
+            });
+          },
+          args: [cmd.tool || 'Deep Research'],
+        });
+        result = drResult[0]?.result || { error: 'Script failed' };
+        result.tabId = tab.id;
+        break;
+      }
+
+      case 'gemini_research': {
+        // Compound command: open tab → set model → send query → wait → return response
+        // Designed for Morpheus agent orchestration
+        const url = 'https://gemini.google.com/app';
+        const text = cmd.text || cmd.query;
+        const model = cmd.model; // optional: 'Fast', 'Thinking', 'Pro'
+        const useDeepResearch = cmd.deepResearch || false;
+        const timeout = cmd.timeout || 120000;
+
+        if (!text) { result = { error: 'text or query required' }; break; }
+
+        // 1. Create tab
+        const rTab = await chrome.tabs.create({ url, active: false });
+        const rTabId = rTab.id;
+
+        // 2. Wait for page to load
+        await new Promise(r => setTimeout(r, 5000));
+
+        // 3. Select model if specified
+        if (model) {
+          await handleCommand({ action: 'gemini_select_model', tabId: rTabId, model, id: cmd.id + '-model', ts: Date.now() });
+          await new Promise(r => setTimeout(r, 1000));
+        }
+
+        // 4. Activate Deep Research if requested
+        if (useDeepResearch) {
+          await handleCommand({ action: 'gemini_deep_research', tabId: rTabId, id: cmd.id + '-dr', ts: Date.now() });
+          await new Promise(r => setTimeout(r, 1500));
+        }
+
+        // 5. Snapshot baseline
+        const rBaseline = await chrome.scripting.executeScript({
+          target: { tabId: rTabId },
+          func: () => {
+            const responses = document.querySelectorAll('MESSAGE-CONTENT, message-content, [data-message-id], .model-response-text');
+            const count = responses.length;
+            let bText = '';
+            if (count > 0) bText = (responses[count - 1].textContent || '').trim();
+            return { count, text: bText.substring(0, 8000) };
+          },
+        });
+        const rBaseData = rBaseline[0]?.result || { count: 0, text: '' };
+
+        // 6. Send query
+        const rChatResult = await chrome.scripting.executeScript({
+          target: { tabId: rTabId },
+          func: (queryText) => {
+            const input = document.querySelector(
+              'div[aria-label="Enter a prompt here"], rich-textarea .ql-editor, [contenteditable="true"]'
+            );
+            if (!input) return { error: 'No input element' };
+            input.focus();
+            input.innerHTML = '<p>' + queryText + '</p>';
+            input.dispatchEvent(new InputEvent('input', { bubbles: true, data: queryText }));
+            return { success: true };
+          },
+          args: [text],
+        });
+
+        if (rChatResult[0]?.result?.error) {
+          result = { error: rChatResult[0].result.error, tabId: rTabId };
+          break;
+        }
+
+        await new Promise(r => setTimeout(r, 500));
+
+        // Click send
+        await chrome.scripting.executeScript({
+          target: { tabId: rTabId },
+          func: () => {
+            const sendBtn = document.querySelector('button[aria-label*="Send"], button[data-test-id="send-button"]');
+            if (sendBtn) sendBtn.click();
+          },
+        });
+
+        // 7. Wait for response (reuse gemini_wait logic inline)
+        const rStart = Date.now();
+        let rLastText = '';
+        let rStable = 0;
+        let rFinal = '';
+        let rSawGen = false;
+
+        while (Date.now() - rStart < timeout) {
+          await new Promise(r => setTimeout(r, 500));
+          const rPoll = await chrome.scripting.executeScript({
+            target: { tabId: rTabId },
+            func: (bc, bt) => {
+              const spinner = document.querySelector('mat-mdc-progress-spinner.mdc-circular-progress--indeterminate');
+              let spinnerActive = false;
+              if (spinner) {
+                const rect = spinner.getBoundingClientRect();
+                spinnerActive = rect.top > 100 && rect.top < window.innerHeight && rect.bottom > 0;
+              }
+              const stopBtn = document.querySelector('button[aria-label="Stop generating"], button[aria-label*="Stop"]');
+              const streaming = document.querySelector('.streaming-indicator, [data-streaming="true"]');
+              const isGenerating = spinnerActive || !!stopBtn || !!streaming;
+
+              const responses = document.querySelectorAll('MESSAGE-CONTENT, message-content, [data-message-id], .model-response-text');
+              const count = responses.length;
+              let text = '';
+              if (count > 0) text = (responses[count - 1].textContent || responses[count - 1].innerText || '').trim();
+              const hasNew = count > bc || (text.length > 20 && text !== bt);
+              return { isGenerating, text: text.substring(0, 8000), textLen: text.length, hasNew };
+            },
+            args: [rBaseData.count, rBaseData.text],
+          });
+
+          const p = rPoll[0]?.result || {};
+          if (p.isGenerating) rSawGen = true;
+          const ct = p.text || '';
+          if (p.hasNew && ct.length > 20) {
+            if (ct === rLastText && !p.isGenerating) {
+              rStable++;
+              if (rStable >= 3) { rFinal = ct; break; }
+            } else { rStable = 0; rLastText = ct; }
+          }
+        }
+
+        result = {
+          success: rFinal.length > 0,
+          text: rFinal,
+          tabId: rTabId,
+          model: model || 'default',
+          deepResearch: useDeepResearch,
+          elapsed: Date.now() - rStart,
+        };
+        if (!rFinal) result.error = 'Timeout waiting for Gemini response';
+        break;
+      }
+
+      // ---- Ping / Health ----
+
       case 'ping': {
-        result = { success: true, pong: true, uptime: Date.now() - connectedAt };
+        result = { success: true, pong: true, version: VERSION, uptime: Date.now() - connectedAt };
         break;
       }
 
@@ -325,7 +966,6 @@ async function handleCommand(cmd) {
     result = { error: err.message };
   }
 
-  // Publish response
   publish(TOPICS.response, {
     id: cmd.id,
     action: cmd.action,
