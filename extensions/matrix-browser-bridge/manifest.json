@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Matrix Browser Bridge",
+  "version": "0.1.0",
+  "description": "MQTT-to-Chrome bridge for Matrix agent browser automation",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "activeTab",
+    "alarms",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Matrix Browser Bridge"
+  }
+}

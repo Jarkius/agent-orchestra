@@ -17,7 +17,8 @@
     "memory:list": "bun run scripts/memory/list.ts",
     "memory:context": "bun run scripts/memory/context.ts",
     "memory:sync-to-psi": "bun run scripts/memory/sync-to-psi.ts",
-    "memory:sync-from-psi": "bun run scripts/memory/sync-from-psi.ts"
+    "memory:sync-from-psi": "bun run scripts/memory/sync-from-psi.ts",
+    "gemini:parallel": "bun run scripts/memory/gemini-parallel.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -37,6 +38,7 @@
     "enquirer": "^2.4.1",
     "glob": "^13.0.0",
     "gray-matter": "^4.0.3",
+    "mqtt": "^5.14.1",
     "p-queue": "^9.1.0",
     "sharp": "^0.34.5",
     "zod": "^4.3.5"

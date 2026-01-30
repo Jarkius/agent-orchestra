@@ -17,6 +17,7 @@ import { worktreeTools, worktreeHandlers } from './handlers/worktree';
 import { agentQueryTools, agentQueryHandlers } from './handlers/agent-query';
 import { oracleConsultTools, oracleConsultHandlers } from './handlers/oracle-consult';
 import { oracleReflectTools, oracleReflectHandlers } from './handlers/oracle-reflect';
+import { geminiTools, geminiHandlers } from './handlers/gemini';
 import type { ToolDefinition, ToolHandler } from '../types';
 
 // Aggregate all tools
@@ -35,6 +36,7 @@ export const allTools: ToolDefinition[] = [
   ...agentQueryTools, // Agent-to-agent query tools
   ...oracleConsultTools, // Oracle consultation tools
   ...oracleReflectTools, // Oracle wisdom reflection tools
+  ...geminiTools,       // Gemini browser automation tools
 ];
 
 // Aggregate all handlers
@@ -53,6 +55,7 @@ export const allHandlers: Record<string, ToolHandler> = {
   ...agentQueryHandlers, // Agent-to-agent query handlers
   ...oracleConsultHandlers, // Oracle consultation handlers
   ...oracleReflectHandlers, // Oracle wisdom reflection handlers
+  ...geminiHandlers,       // Gemini browser automation handlers
 };
 
 // Dynamic registration for Phase 1/2 tools
