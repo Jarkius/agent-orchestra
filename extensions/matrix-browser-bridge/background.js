@@ -285,6 +285,54 @@ async function handleCommand(cmd) {
         break;
       }
 
+      case 'extract_images': {
+        // Extract all images from the page as base64 data URLs
+        // Useful for grabbing Gemini-generated images
+        const tab = await getTab(cmd.tabId);
+        const imgResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (maxImages) => {
+            const images = document.querySelectorAll('img');
+            const results = [];
+            for (const img of images) {
+              if (results.length >= (maxImages || 5)) break;
+              const rect = img.getBoundingClientRect();
+              if (rect.width < 50 || rect.height < 50) continue; // skip tiny images
+              // Try to extract via canvas
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth || rect.width;
+                canvas.height = img.naturalHeight || rect.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                const dataUrl = canvas.toDataURL('image/png');
+                results.push({
+                  src: (img.src || '').substring(0, 200),
+                  alt: img.alt || '',
+                  width: canvas.width,
+                  height: canvas.height,
+                  dataUrl: dataUrl,
+                });
+              } catch (e) {
+                // Cross-origin images can't be extracted via canvas
+                results.push({
+                  src: (img.src || '').substring(0, 200),
+                  alt: img.alt || '',
+                  width: img.naturalWidth,
+                  height: img.naturalHeight,
+                  error: 'cross-origin: ' + e.message,
+                });
+              }
+            }
+            return { success: true, count: results.length, images: results };
+          },
+          args: [cmd.maxImages || 5],
+        });
+        result = imgResult[0]?.result || { error: 'Script failed' };
+        result.tabId = tab.id;
+        break;
+      }
+
       // ---- Wait for Selector ----
 
       case 'wait_for': {
@@ -925,44 +973,53 @@ async function handleCommand(cmd) {
           break;
         }
 
-        // Step 2: Use chrome.debugger to send trusted mouse events
-        try {
-          await chrome.debugger.attach({ tabId: tab.id }, '1.3');
-          const x = Math.round(found.x);
-          const y = Math.round(found.y);
-
-          await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchMouseEvent', {
-            type: 'mousePressed', x, y, button: 'left', clickCount: 1,
-          });
-          await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchMouseEvent', {
-            type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
-          });
-          await chrome.debugger.detach({ tabId: tab.id });
-
-          result = { success: true, clicked: found.text, method: 'debugger-trusted', x, y };
-        } catch (dbgErr) {
-          // Debugger might already be attached or fail — fallback to synthetic
-          try { await chrome.debugger.detach({ tabId: tab.id }); } catch (_) {}
-          // Fallback: synthetic click
-          const fallback = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: (tx, ty) => {
-              const el = document.elementFromPoint(tx, ty);
-              if (el) {
-                el.focus();
-                el.click();
-                return { fallback: true, tag: el.tagName };
+        // Step 2: Click using MAIN world execution (Angular Zone.js needs MAIN world)
+        // Then fallback to debugger if MAIN world fails
+        const clickResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: 'MAIN',
+          func: (targetText) => {
+            const buttons = document.querySelectorAll('button, [role="button"]');
+            for (const b of buttons) {
+              const text = (b.textContent || '').trim();
+              if (text.toLowerCase().includes(targetText.toLowerCase()) && !b.disabled) {
+                const rect = b.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  b.scrollIntoView({ block: 'center' });
+                  b.focus();
+                  b.click();
+                  return { clicked: true, text, method: 'main-world-click' };
+                }
               }
-              return { fallback: false };
-            },
-            args: [found.x, found.y],
-          });
-          result = {
-            success: true, clicked: found.text, method: 'fallback-click',
-            x: Math.round(found.x), y: Math.round(found.y),
-            debugError: dbgErr.message,
-            ...(fallback[0]?.result || {}),
-          };
+            }
+            return { clicked: false };
+          },
+          args: [targetAction],
+        });
+
+        const cr = clickResult[0]?.result;
+        if (cr?.clicked) {
+          result = { success: true, clicked: cr.text, method: cr.method, x: Math.round(found.x), y: Math.round(found.y) };
+        } else {
+          // Fallback: chrome.debugger trusted events
+          try {
+            await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+            const x = Math.round(found.x);
+            const y = Math.round(found.y);
+            await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchMouseEvent', {
+              type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+            });
+            await new Promise(r => setTimeout(r, 50));
+            await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchMouseEvent', {
+              type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+            });
+            await new Promise(r => setTimeout(r, 100));
+            await chrome.debugger.detach({ tabId: tab.id });
+            result = { success: true, clicked: found.text, method: 'debugger-trusted', x, y };
+          } catch (dbgErr) {
+            try { await chrome.debugger.detach({ tabId: tab.id }); } catch (_) {}
+            result = { success: false, clicked: found.text, method: 'all-failed', debugError: dbgErr.message };
+          }
         }
         result.tabId = tab.id;
         break;
@@ -1088,24 +1145,49 @@ async function handleCommand(cmd) {
             });
             const pr = planPoll[0]?.result || {};
             if (pr.found) {
-              // Click with chrome.debugger for trusted events
-              try {
-                await chrome.debugger.attach({ tabId: rTabId }, '1.3');
-                const x = Math.round(pr.x);
-                const y = Math.round(pr.y);
-                await chrome.debugger.sendCommand({ tabId: rTabId }, 'Input.dispatchMouseEvent', {
-                  type: 'mousePressed', x, y, button: 'left', clickCount: 1,
-                });
-                await chrome.debugger.sendCommand({ tabId: rTabId }, 'Input.dispatchMouseEvent', {
-                  type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
-                });
-                await chrome.debugger.detach({ tabId: rTabId });
+              // Click using MAIN world execution (Angular Zone.js needs MAIN world)
+              const clickRes = await chrome.scripting.executeScript({
+                target: { tabId: rTabId },
+                world: 'MAIN',
+                func: () => {
+                  const buttons = document.querySelectorAll('button');
+                  for (const b of buttons) {
+                    if (b.textContent.trim().toLowerCase().includes('start research') && !b.disabled) {
+                      b.scrollIntoView({ block: 'center' });
+                      b.focus();
+                      b.click();
+                      return true;
+                    }
+                  }
+                  return false;
+                },
+              });
+              if (clickRes[0]?.result) {
                 startClicked = true;
                 drPlanText = (pr.plan || []).join(' | ');
-                console.log('[Matrix] Deep Research: clicked Start research via debugger at', x, y);
-              } catch (dbgErr) {
-                try { await chrome.debugger.detach({ tabId: rTabId }); } catch (_) {}
-                console.log('[Matrix] Deep Research: debugger click failed:', dbgErr.message);
+                console.log('[Matrix] Deep Research: clicked Start research via MAIN world');
+              } else {
+                // Fallback: debugger
+                try {
+                  await chrome.debugger.attach({ tabId: rTabId }, '1.3');
+                  const x = Math.round(pr.x);
+                  const y = Math.round(pr.y);
+                  await chrome.debugger.sendCommand({ tabId: rTabId }, 'Input.dispatchMouseEvent', {
+                    type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+                  });
+                  await new Promise(r => setTimeout(r, 50));
+                  await chrome.debugger.sendCommand({ tabId: rTabId }, 'Input.dispatchMouseEvent', {
+                    type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+                  });
+                  await new Promise(r => setTimeout(r, 100));
+                  await chrome.debugger.detach({ tabId: rTabId });
+                  startClicked = true;
+                  drPlanText = (pr.plan || []).join(' | ');
+                  console.log('[Matrix] Deep Research: clicked Start research via debugger at', Math.round(pr.x), Math.round(pr.y));
+                } catch (dbgErr) {
+                  try { await chrome.debugger.detach({ tabId: rTabId }); } catch (_) {}
+                  console.log('[Matrix] Deep Research: debugger click failed:', dbgErr.message);
+                }
               }
             }
           }

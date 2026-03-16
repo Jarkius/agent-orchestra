@@ -17,8 +17,7 @@
     "memory:list": "bun run scripts/memory/list.ts",
     "memory:context": "bun run scripts/memory/context.ts",
     "memory:sync-to-psi": "bun run scripts/memory/sync-to-psi.ts",
-    "memory:sync-from-psi": "bun run scripts/memory/sync-from-psi.ts",
-    "gemini:parallel": "bun run scripts/memory/gemini-parallel.ts"
+    "memory:sync-from-psi": "bun run scripts/memory/sync-from-psi.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -27,6 +26,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.76.0",
     "@anthropic-ai/tokenizer": "^0.0.4",
     "@google/genai": "^1.38.0",
     "@huggingface/transformers": "^3.8.1",
@@ -37,8 +37,11 @@
     "chromadb-default-embed": "^2.14.0",
     "enquirer": "^2.4.1",
     "glob": "^13.0.0",
+    "grammy": "^1.40.0",
     "gray-matter": "^4.0.3",
-    "mqtt": "^5.14.1",
+    "hono": "^4.12.8",
+    "mqtt": "^5.15.0",
+    "openai": "^6.22.0",
     "p-queue": "^9.1.0",
     "sharp": "^0.34.5",
     "zod": "^4.3.5"

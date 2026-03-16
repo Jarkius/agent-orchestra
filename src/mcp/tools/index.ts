@@ -36,7 +36,7 @@ export const allTools: ToolDefinition[] = [
   ...agentQueryTools, // Agent-to-agent query tools
   ...oracleConsultTools, // Oracle consultation tools
   ...oracleReflectTools, // Oracle wisdom reflection tools
-  ...geminiTools,       // Gemini browser automation tools
+  ...geminiTools,       // Gemini browser automation tools (via MQTT)
 ];
 
 // Aggregate all handlers
